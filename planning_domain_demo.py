@@ -15,7 +15,7 @@
 from __future__ import annotations  # 语言设置：延迟解析类型注解；无对应优化约束。
 
 import itertools  # 组合工具：枚举节点子集、三条边组合和线型笛卡尔积。
-import json  # 结果序列化：保存割系数及实验摘要；无对应优化约束。
+import json  # 结果序列化：保存核心实验摘要；无对应优化约束。
 import math  # 数学运算：计算 tan(arccos(PF))、无穷大和费用最大公约数。
 from dataclasses import dataclass  # 数据容器：保存参数、矩阵和求解结果。
 from pathlib import Path  # 文件路径：定位并保存实验输出。
@@ -82,7 +82,6 @@ class ElectricalModel:  # 统一电气模型 Ww≤h+Tx+dλ+rη，见 README §3�
     T: np.ndarray  # T∈R^(53×15)：二元选择 x 移到右端后的系数。
     d: np.ndarray  # d∈R⁵³：负荷倍率 λ 移到右端后的系数。
     scales: np.ndarray  # r∈R⁵³：统一违反量 η 的行尺度；功率行 60、电压行 0.1351。
-    row_names: tuple[str, ...]  # 按 E01—E53 排列的 Gurobi 行名称；下标 m-1 对应 Em。
     subproblem: gp.Model  # 最小违反 LP：min η；最终只有 5 个 P、3 个 v、1 个 η。
     electrical_constraints: list[gp.Constr]  # 53 个电气约束对象，用于更新 RHS 和读取 Pi。
 
@@ -112,8 +111,6 @@ class DualCut:  # 割形式 β₀+β_xᵀx+β_λλ≥0，见 README §4。
     x_coeff: np.ndarray  # β_x=Tᵀπ：15 维割系数；代码 pi@T 存为一维数组。
     lambda_coeff: float  # β_λ=πᵀd：负荷倍率的割系数。
     source_violation: float  # ν=η*：生成该割时候选点的最小违反量。
-    dominant_row: str  # argmax_m(π_m r_m) 对应的行名；仅为诊断指标。
-    validity_margin: float = math.nan  # μ：割在所有独立设计可行区间上的最小余量；未验证时为 NaN。
 
 
 @dataclass  # 保存一次固定倍率或固定预算查询的结果。
@@ -125,7 +122,7 @@ class SolveResult:  # 求解结果容器；不增加数学约束。
     x: np.ndarray  # 求得的整数设计 x；不可行返回的零向量仅为占位值。
     cost_cny: float  # 该设计的费用 K(x)，CNY。
     lambda_value: float  # 该次查询采用的 λ，不一定等于设计的 Λ(x)。
-    trace: pd.DataFrame  # 迭代日志：候选、违反量、上下界、割数量和约束诊断。
+    trace: pd.DataFrame  # 收敛轨迹：累计割数、目标上下界和电气违反量。
     new_cuts: int  # 本次查询新增割数；等于结束割池长度减初始长度。
 
 
@@ -189,11 +186,10 @@ def build_model(config: DemoConfig = DemoConfig(), lines: tuple[LineType, ...] =
     T = -np.array([[lp.getCoeff(row, choice) for choice in choices] for row in rows])  # T_mj=−(临时 x_j 的左端系数)；移项到右端必须取负号。
     d = -np.array([lp.getCoeff(row, alpha) for row in rows])  # d_m=−(临时 λ 的左端系数)；如 E11 为 +25，E12 为 −25，E23 为 −60。
     scales = -np.array([lp.getCoeff(row, eta) for row in rows])  # r_m=−(η 的左端系数)；功率行 60，平方电压行 0.1351。
-    names = tuple(lp.getAttr("ConstrName", rows))  # 保存行名称与 E01—E53 的一一对应关系。
     # x、lambda 只用于书写参数项；移除后，LP 仅含 P、v、eta，参数通过 RHS 传入。
     lp.remove(choices + [alpha])  # 移除 15 个 x 占位变量和 λ 占位变量；固定参数由 oracle 写入 RHS。
     lp.update()  # 提交删除；最终 LP 是 Ww−rη≤rhs，η≥0，目标 min η。
-    return ElectricalModel(config, lines, corridors, costs, W, h, T, d, scales, names, lp, rows)  # 返回矩阵、参数和 LP；首次实际电气查询须先设置 rhs=h+Tx̄+dλ̄。
+    return ElectricalModel(config, lines, corridors, costs, W, h, T, d, scales, lp, rows)  # 返回矩阵、参数和 LP；首次实际电气查询须先设置 rhs=h+Tx̄+dλ̄。
 
 
 def add_dual_cut(master: gp.Model, x: gp.tupledict, alpha: gp.Var, cut: DualCut) -> None:  # （CUT）将 β₀+β_xᵀx+β_λλ≥0 加入当前 MILP 主问题。
@@ -314,9 +310,7 @@ def feasibility_oracle(model: ElectricalModel, x: np.ndarray, alpha: float) -> t
     # 最小化 LP 的 <= 约束满足 Pi <= 0；理论中的 pi = -Pi >= 0。
     pi = -np.array(lp.getAttr("Pi", model.electrical_constraints))  # （DUAL）π=−Pi≥0；Gurobi 最小化 LP 的 ≤ 行对应 Pi≤0。
     violation = lp.ObjVal  # ν(x̄,λ̄)=η*=LP 目标值；并非建设费用。
-    score = pi*model.scales  # score_m=π_m r_m；衡量归一化对偶权重，仅用于解释。
-    dominant = model.row_names[int(np.argmax(score))] if violation > model.config.feasibility_tolerance else "feasible"  # ν>ε_feas 时记录最大权重行；可行时标记 feasible，不能据此断言瓶颈唯一。
-    cut = DualCut(pi, float(pi@model.h), pi@model.T, float(pi@model.d), violation, dominant)  # 构造 β₀=πᵀh、β_x=Tᵀπ、β_λ=πᵀd 和生成点的 ν。
+    cut = DualCut(pi, float(pi@model.h), pi@model.T, float(pi@model.d), violation)  # 保留割系数、对偶向量及强对偶校验所需的源违反量。
     return violation, cut  # 返回 ν 和割；只有不可行候选的割才由外层加入主问题。
 
 
@@ -329,14 +323,30 @@ def solve_by_cuts(model: ElectricalModel, mode: Literal["min_cost", "max_lambda"
     """
     pool = [] if cuts is None else cuts  # 共享割池 Π_t；若未传入则使用新的空列表。
     initial_cut_count = len(pool); nx = model.nx; trace = []  # 记录初始割数、二元维数和迭代日志。
+    trace_columns = (  # 保留旧列，并记录每次真实主问题/子问题调用，供 notebook 逐轮回放。
+        "iteration", "cut_count_before", "lower_bound", "upper_bound", "violation",
+        "candidate_cost_cny", "candidate_lambda", "design_capacity", "design", "candidate_x",
+        "master_bound", "absolute_gap", "cut_added", "cut_id", "cut_count_after",
+        "cut_margin_at_candidate", "dual_stationarity_error", "dual_normalization",
+        "dual_min_multiplier", "strong_duality_error", "action", "master_status",
+    )
     best_lower = 0.0; best_upper = math.inf if mode == "min_cost" else model.config.lambda_search_max  # 初始化目标下界 L=0；费用上界 +∞ 或倍率上界 3。
     master, choices, multiplier = build_master(model, mode, query, pool)  # 建立包含已知割的主问题；choices=x，multiplier=λ。
     while True:  # 重复求主问题与电气 LP，直到可行候选或主问题不可行。
         master.optimize()  # 精确求解当前 MILP 外近似。
         if master.Status == GRB.INFEASIBLE:  # 若外近似已不可行，则原规划问题也不可行（割均有效）。
+            trace.append({"iteration": len(trace)+1, "cut_count_before": len(pool),
+                          "lower_bound": math.inf if mode == "min_cost" else -math.inf,
+                          "upper_bound": math.inf if mode == "min_cost" else -math.inf,
+                          "cut_added": False, "cut_count_after": len(pool),
+                          "action": "master_infeasible", "master_status": "infeasible"})
             master.dispose()  # 释放当前主问题求解器资源。
             return SolveResult(mode, query, "infeasible", math.inf if mode == "min_cost" else -math.inf,  # 不可行时目标用 +∞（费用）或 −∞（倍率）表示。
-                               np.zeros(nx), math.inf, math.nan, pd.DataFrame(trace), len(pool)-initial_cut_count)  # 其余数值为占位值；返回日志和新增割数，不代表可行零建设方案。
+                               np.zeros(nx), math.inf, math.nan, pd.DataFrame(trace, columns=trace_columns), len(pool)-initial_cut_count)  # 其余数值为占位值；返回轨迹和新增割数，不代表可行零建设方案。
+        if master.Status != GRB.OPTIMAL:  # 不把限时、中断等状态误当作已证明最优。
+            status = master.Status
+            master.dispose()
+            raise RuntimeError(f"主问题未证明最优，Gurobi status={status}")
         x = np.rint([variable.X for variable in choices.values()])  # 读取主问题二元解 x̄ 并舍入整数容差。
         alpha = multiplier.X  # 读取主问题候选倍率 λ̄。
         design = evaluate_design(model, x)  # 独立解析该合法生成树的 K(x̄)、Λ(x̄)，用于校验及倍率可行下界。
@@ -349,14 +359,30 @@ def solve_by_cuts(model: ElectricalModel, mode: Literal["min_cost", "max_lambda"
             best_upper = min(best_upper, master.ObjBound)  # U←min(U,ObjBound)。
             candidate_lower = min(design.lambda_max, model.config.lambda_search_max)  # 该候选树在 min(Λ(x̄),λ_search) 处可实施，且建设费已满足固定预算。
             best_lower = max(best_lower, candidate_lower)  # L←max(L,该树可实现倍率)；即使主问题候选 λ̄ 过大，树仍可给下界。
-        trace.append({"iteration": len(trace), "master_candidate_lambda": alpha, "candidate_cost_cny": design.cost_cny,  # 记录迭代编号、候选 λ̄ 与 K(x̄)。
-                      "violation": violation, "lower_bound": best_lower, "upper_bound": best_upper,  # 记录 ν 和当前目标上下界 [L,U]。
-                      "cut_count_before": len(pool), "dominant_constraint": cut.dominant_row, "design": design.description})  # 记录加割前池大小、对偶诊断行及设计描述。
+        accepted = violation <= model.config.feasibility_tolerance
+        margin = cut.constant + float(cut.x_coeff@x) + cut.lambda_coeff*alpha
+        trace.append({
+            "iteration": len(trace)+1, "cut_count_before": len(pool),
+            "lower_bound": best_lower, "upper_bound": best_upper, "violation": violation,
+            "candidate_cost_cny": design.cost_cny, "candidate_lambda": alpha,
+            "design_capacity": min(design.lambda_max, model.config.lambda_search_max),
+            "design": design.description, "candidate_x": json.dumps(x.astype(int).tolist()),
+            "master_bound": master.ObjBound * (1000 if mode == "min_cost" else 1),
+            "absolute_gap": best_upper-best_lower,
+            "cut_added": not accepted, "cut_id": len(pool)+1 if not accepted else None,
+            "cut_count_after": len(pool)+(not accepted),
+            "cut_margin_at_candidate": margin,  # 生成点处应为 -ν；割不是连接前沿点的直线。
+            "dual_stationarity_error": float(np.max(np.abs(model.W.T@cut.pi))),
+            "dual_normalization": float(model.scales@cut.pi),
+            "dual_min_multiplier": float(np.min(cut.pi)),
+            "strong_duality_error": abs(margin+violation),
+            "action": "accept" if accepted else "add_cut", "master_status": "optimal",
+        })
         if violation <= model.config.feasibility_tolerance:  # 接受首个电气可行的主问题最优候选；此时外近似界与可行目标闭合至容差。
             value = design.cost_cny if mode == "min_cost" else alpha  # 返回目标：O1 为费用 CNY，O2 为 λ̄。
             master.dispose()  # 释放主问题资源。
             return SolveResult(mode, query, "optimal", value, x, design.cost_cny, alpha,  # 打包最优目标、设计和倍率。
-                               pd.DataFrame(trace), len(pool)-initial_cut_count)  # 附带迭代日志及本次新增割数。
+                               pd.DataFrame(trace, columns=trace_columns), len(pool)-initial_cut_count)  # 附带收敛轨迹及本次新增割数。
         pool.append(cut)  # 不可行时保留新割；其在生成点取值 −ν<0。
         add_dual_cut(master, choices, multiplier, cut)  # 把新割（CUT）加入同一个主问题，然后重新求解。
 
@@ -367,35 +393,59 @@ def validate_cuts(cuts: Sequence[DualCut], designs: Sequence[Design]) -> float: 
     for cut in cuts:  # 逐条检查割 β₀+β_xᵀx+β_λλ≥0。
         margin = min(cut.constant+float(cut.x_coeff@design.x)+min(0.0, cut.lambda_coeff*design.lambda_max)  # 对固定 x，λ∈[0,Λ(x)] 上仿射函数的最小值为 β₀+β_xᵀx+min(0,β_λΛ(x))。
                      for design in designs)  # 再对全部 216 个设计取最小值；端点验证覆盖整个区间。
-        cut.validity_margin = margin; worst = min(worst, margin)  # 保存该割的 μ，并更新全局最小余量。
+        worst = min(worst, margin)  # 摘要只保留所有割的最小有效性余量。
         assert margin >= -1e-6, f"对偶割误删真实可行点：margin={margin}"  # 断言 μ≥−10⁻⁶；小负数允许浮点舍入。
     return worst if cuts else 0.0  # 返回最差余量；没有割时约定返回 0。
 
 
-def discover_frontier_by_cuts(model: ElectricalModel, cuts: list[DualCut]) -> pd.DataFrame:  # （EPS）预算 ε-constraint 递推：恢复完整整数前沿，公式见 README §5。
+def discover_frontier_by_cuts(model: ElectricalModel, cuts: list[DualCut], *,
+                              query_history: list[SolveResult] | None = None,
+                              round_history: list[dict] | None = None) -> pd.DataFrame:  # （EPS）预算 ε-constraint 递推。
     """不用方案穷举和预设倍率网格，以预算 ε-constraint 递推恢复本例完整 Pareto 阶梯。
 
     本合成例子的所有费用为整数 CNY，gcd 给出精确费用粒度。
     每轮先求当前预算的最大倍率，再求实现该倍率的最低费用；
     下一轮预算设为该费用减去一个费用粒度，避免任何人工倍率步长。
+    可选 history 列表只记录过程，不参与优化；原有 DataFrame 返回接口不变。
     """
     rounded = np.rint(model.cost).astype(int)  # 费用四舍五入成整数；精确费用粒度论证依赖默认整数 CNY 参数。
+    if not np.allclose(model.cost, rounded, atol=1e-8, rtol=0) or np.any(rounded < 0):
+        raise ValueError("完整前沿递推要求非负整数费用；小数费用请先统一换成精确的最小货币单位。")
     positive = [int(c) for c in rounded if c > 0]  # 取严格正费用项，排除已有 L 型的零费用。
-    quantum = math.gcd(*positive)  # g=gcd({c_ek>0})=20 CNY；所有合法总费用均为 g 的整数倍。
+    quantum = math.gcd(*positive) if positive else 1  # g=20 CNY；全零费用时一步即可完成。
     budget = float(sum(positive))  # B₀=Σ_{c_ek>0}c_ek，是覆盖所有设计费用的保守初始预算。
     rows = []  # 初始化按预算递减发现的前沿记录。
     while budget >= 0:  # 只要预算非负就继续向更低费用区域搜索。
+        cuts_before = len(cuts)
         capacity = solve_by_cuts(model, "max_lambda", budget, cuts)  # 先求 Λ*(B_t)=max λ，满足 K(x)≤B_t；与先前查询共享割池。
+        if query_history is not None:
+            query_history.append(capacity)
         if capacity.status == "infeasible":  # 若该预算已没有可行设计，则更低预算也不可能可行。
             break  # 结束预算递推。
         # 取经过独立电气验算的候选倍率，避免 LP/MILP 边界浮点误差。
         achieved = min(capacity.lambda_value, evaluate_design(model, capacity.x).lambda_max)  # λ_t 取 MILP 返回倍率与候选树解析 Λ(x) 的较小值，避免边界浮点超限。
         minimum = solve_by_cuts(model, "min_cost", achieved, cuts)  # 再求 K_t=K*(λ_t)，找到实现该倍率的最低建设费。
+        if query_history is not None:
+            query_history.append(minimum)
+        if minimum.status != "optimal":
+            raise RuntimeError("MP2 给出的可行倍率未通过 MP1，请检查数值容差和模型一致性。")
         design = evaluate_design(model, minimum.x)  # 读取该最低费设计的瓶颈及描述。
         rows.append({"cost_cny": minimum.value, "lambda_max": achieved, "bottleneck": design.bottleneck,  # 保存前沿点 (K_t,λ_t) 和瓶颈。
-                     "design": design.description, "search_budget_cny": budget,  # 保存设计及本轮查询预算。
-                     "master_solves": len(capacity.trace)+len(minimum.trace)})  # 统计本轮两个查询的主问题求解次数。
-        budget = float(round(minimum.value)-quantum)  # B_{t+1}=round(K_t)−g；排除同费用台阶，且不跳过任何默认可达费用。
+                     "design": design.description})  # 每个台阶仅保留费用、倍率、瓶颈和建设方案。
+        next_budget = float(round(minimum.value)-quantum)  # B_{t+1}=K_t−g；不是 B_t−g。
+        if next_budget >= budget:
+            raise RuntimeError("预算递推未严格下降，请检查费用粒度和求解精度。")
+        if round_history is not None:
+            round_history.append({
+                "outer_round": len(rows), "budget_cny": budget,
+                "mp2_lambda": achieved, "mp2_design_cost_cny": capacity.cost_cny,
+                "mp1_cost_cny": minimum.value, "next_budget_cny": next_budget,
+                "quantum_cny": quantum, "mp2_iterations": len(capacity.trace),
+                "mp1_iterations": len(minimum.trace), "mp2_new_cuts": capacity.new_cuts,
+                "mp1_new_cuts": minimum.new_cuts, "cuts_before": cuts_before,
+                "cuts_after": len(cuts), "design": design.description,
+            })
+        budget = next_budget
     return pd.DataFrame(rows).sort_values("cost_cny").reset_index(drop=True)  # 按费用升序输出发现的阶梯边界。
 
 
@@ -419,7 +469,7 @@ def convex_hull_cost(frontier: pd.DataFrame, lambdas: Sequence[float]) -> np.nda
 def run_experiment(output_dir: str | Path, config: DemoConfig = DemoConfig(),  # 运行完整验证实验；此函数组织查询和文件输出，不新增物理模型。
                    lines: tuple[LineType, ...] = DEFAULT_LINES,  # 所有线型参数传到 build_model，避免验证与查询使用不同数据。
                    corridors: tuple[Corridor, ...] = DEFAULT_CORRIDORS) -> dict:  # 所有走廊参数同样传递；数值展开和 216 方案结论针对默认参数。
-    """执行精确穷举、两个方向的切割求解、独立断言及机器结果保存。"""
+    """完整执行独立校验，仅保存最优前沿、冷启动收敛轨迹和核心摘要。"""
     output = Path(output_dir); output.mkdir(parents=True, exist_ok=True)  # 创建结果目录；仅文件操作。
     model = build_model(config, lines, corridors)  # 建立统一电气模型及可复用子问题。
     designs = enumerate_designs(model); frontier = frontier_table(designs)  # 独立枚举设计并提取精确前沿，作为之后断言的参照。
@@ -435,51 +485,38 @@ def run_experiment(output_dir: str | Path, config: DemoConfig = DemoConfig(),  #
             assert np.max(np.abs(model.W.T@cut.pi)) < 1e-7  # （DUAL）断言 Wᵀπ=0，容差 10⁻⁷；因为 8 个状态变量都自由。
             assert float(cut.pi@model.scales) <= 1+1e-7  # （DUAL）断言 rᵀπ≤1，容差 10⁻⁷；来自 η≥0 和目标系数 1。
             assert abs(-float(cut.pi@rhs)-cut.source_violation) < 1e-7  # （STRONG）断言 −πᵀb=ν，容差 10⁻⁷。
-    cold_cuts: list[DualCut] = []  # 初始化冷启动空割池；不使用枚举结果构造割。
-    cold = solve_by_cuts(model, "max_lambda", 33000.0, cold_cuts)  # 执行 B=33000 CNY 的 max_lambda 查询。
-    cold.trace.to_csv(output/"cold_start_cut_trace.csv", index=False)  # 保存冷启动逐割轨迹 CSV。
-    cuts = cold_cuts.copy(); validations = []  # 复制冷启动割用于后续共享，并初始化查询校验记录。
+    cuts: list[DualCut] = []  # 冷启动及后续查询共用割池；不使用枚举结果构造割。
+    cold = solve_by_cuts(model, "max_lambda", 33000.0, cuts)  # 执行 B=33000 CNY 的 max_lambda 查询。
+    validations = []  # 查询表仅供交互查看，不重复导出枚举真值和求解统计。
     for alpha in (0.4, 0.7, 1.0, 1.3, 1.6, 1.8, 2.1, 2.4):  # 检查八个固定倍率，含超过 λ_tr 的 2.4。
         result = solve_by_cuts(model, "min_cost", alpha, cuts)  # 用切割算法求该倍率下的最低建设费 K*(λ)。
         feasible = [z.cost_cny for z in designs if z.lambda_max >= alpha-1e-8]  # 独立筛出 Λ(x)≥λ 的设计费用，边界筛选容差 10⁻⁸。
         exact = min(feasible) if feasible else math.inf  # 枚举真值=min 可行设计费用；无方案则 +∞。
         assert (math.isinf(exact) and result.status == "infeasible") or abs(result.value-exact) < 1e-4  # 断言切割法与枚举的可行性/最低费用一致。
-        validations.append({"mode": "min_cost", "query": alpha, "value": result.value, "enumeration_value": exact,  # 记录固定倍率的算法值和枚举值。
-                            "status": result.status, "new_cuts": result.new_cuts, "master_solves": len(result.trace)})  # 记录状态、新割数和主问题求解次数。
+        validations.append({"mode": "min_cost", "query": alpha,  # 保留查询条件、最优值和可行状态。
+                            "value": result.value, "status": result.status})
     for budget in (0.0, 10000.0, 15000.0, 33000.0, 42000.0, 52000.0, 57000.0):  # 检查七个固定预算，包括零预算与高预算。
         result = solve_by_cuts(model, "max_lambda", budget, cuts)  # 用切割算法求 Λ*(B)。
         exact = max(z.lambda_max for z in designs if z.cost_cny <= budget+1e-8)  # 枚举真值=max_{K(x)≤B}Λ(x)；默认 λ_tr<λ_search，无需截断。
         assert abs(result.value-exact) < 2e-6  # 断言最大倍率与枚举之差<2×10⁻⁶。
-        validations.append({"mode": "max_lambda", "query": budget, "value": result.value, "enumeration_value": exact,  # 记录固定预算的算法值与枚举值。
-                            "status": result.status, "new_cuts": result.new_cuts, "master_solves": len(result.trace)})  # 记录状态、新割数和主问题求解次数。
+        validations.append({"mode": "max_lambda", "query": budget,  # 保留查询条件、最优值和可行状态。
+                            "value": result.value, "status": result.status})
     discovered = discover_frontier_by_cuts(model, cuts)  # 用预算递推和切割独立发现完整前沿，不传入枚举 designs。
     assert len(discovered) == len(frontier)  # 断言发现的前沿台阶数与独立枚举一致。
     assert np.allclose(discovered.cost_cny, frontier.cost_cny, atol=1e-6, rtol=0)  # 断言各拐点建设费相同，绝对容差 10⁻⁶ CNY。
     assert np.allclose(discovered.lambda_max, frontier.lambda_max, atol=2e-6, rtol=0)  # 断言各拐点倍率相同，绝对容差 2×10⁻⁶。
-    discovered.to_csv(output/"frontier_discovered_by_cuts.csv", index=False)  # 保存由切割法发现的前沿。
     worst = validate_cuts(cuts, designs)  # （CUT-CHECK）验证所有累计割在所有设计可行区间上有效。
-    frontier.to_csv(output/"exact_frontier.csv", index=False)  # 保存独立枚举前沿。
-    pd.DataFrame(validations).to_csv(output/"benders_validation.csv", index=False)  # 保存 15 个固定倍率/预算查询的校验表。
-    all_df = pd.DataFrame([{"design_id": i, "cost_cny": z.cost_cny, "lambda_max": z.lambda_max,  # 建立每个设计的编号、费用及最大倍率数据表。
-                            "bottleneck": z.bottleneck, "design": z.description} for i,z in enumerate(designs)])  # 附带瓶颈和描述；默认遍历全部 216 个设计。
-    all_df.to_csv(output/"all_216_designs.csv", index=False)  # 保存全部设计 CSV；文件名中的 216 对应默认算例。
-    cut_payload = [{"constant": c.constant, "x_coeff": c.x_coeff.tolist(), "lambda_coeff": c.lambda_coeff,  # 序列化每条割的 β₀、β_x、β_λ。
-                    "source_violation": c.source_violation, "dominant_row": c.dominant_row,  # 附带生成点违反量及主导诊断行。
-                    "validity_margin": c.validity_margin, "pi": c.pi.tolist()} for c in cuts]  # 附带有效性余量 μ 和完整 53 维对偶向量 π。
-    (output/"dual_cuts.json").write_text(json.dumps(cut_payload, ensure_ascii=False, indent=2), encoding="utf-8")  # 写入 UTF-8 JSON，便于复核每条割及其来源。
     target = 1.1  # 选 λ=1.1 作为整数域与凸包的比较点。
     exact_cost = min(z.cost_cny for z in designs if z.lambda_max >= target)  # 求此倍率的整数最低费用 K*(1.1)。
     hull_cost = float(convex_hull_cost(frontier, [target])[0])  # 求同一倍率的凸包最低费用 K_hull(1.1)。
-    summary = {"solver": "Gurobi", "gurobi_version": ".".join(map(str, gp.gurobi.version())),  # 构造实验摘要；记录实际求解器和版本。
-               "synthetic_case_not_jiangkou": True, "nodes": 4, "load_nodes": 3, "candidate_corridors": 5,  # 记录四节点、三负荷节点、五条候选走廊的合成规模。
-               "binary_line_choice_variables": 15, "spanning_trees": len(designs)//len(model.lines)**3,  # 记录 15 个二元变量，以及设计数/3³ 得到的生成树数。
-               "enumerated_designs": len(designs), "frontier_steps": len(frontier), "frontier_recovered_without_lambda_grid": True,  # 记录枚举规模、前沿台阶数及无倍率网格递推标志。
-               "frontier_discovery_master_solves": int(discovered.master_solves.sum()), "validation_queries": len(validations),  # 统计前沿发现的主问题总求解次数及固定查询次数。
-               "lp_checks_of_design_endpoints": 2*len(designs), "total_cuts": len(cuts), "worst_cut_margin": worst,  # 记录 2×216 个电气检查、割总数和最小有效性余量。
-               "cold_budget_cny": 33000.0, "cold_master_solves": len(cold.trace), "cold_generated_cuts": cold.new_cuts,  # 记录冷启动预算、主问题次数及新增割数。
-               "cold_lambda_max": cold.value, "nonconvex_counterexample_lambda": target,  # 记录冷启动最大倍率与凸包反例倍率。
+    summary = {"enumerated_designs": len(designs), "frontier_steps": len(frontier),  # 只保留关键结果、校验证据与适用模型。
+               "validation_queries": len(validations), "total_cuts": len(cuts), "worst_cut_margin": worst,  # 已完成的查询校验数及全局割有效性。
+               "cold_budget_cny": cold.query, "cold_lambda_max": cold.value,  # 代表性预算对应的最大可行倍率。
+               "nonconvex_counterexample_lambda": target,  # 整数域与凸包的比较倍率。
                "exact_cost_at_counterexample": exact_cost, "convex_hull_lower_cost_at_counterexample": hull_cost,  # 记录反例处整数最低费和凸包最低费。
                "ac_power_flow_validated": False, "electrical_model": "lossless fixed-PF linear squared-voltage model"}  # 明确本实验未做 AC 潮流复核；电气结论属于固定 PF 无损线性平方电压模型。
+    frontier.to_csv(output/"exact_frontier.csv", index=False)  # 两种方法核验一致后，只导出一份最优前沿。
+    cold.trace.to_csv(output/"cold_start_cut_trace.csv", index=False)  # 仅导出一次代表性的收敛轨迹。
     (output/"summary.json").write_text(json.dumps(summary, ensure_ascii=False, indent=2, allow_nan=False), encoding="utf-8")  # 保存严格 JSON 摘要；禁止 NaN 以便其他程序读取。
     return {"model": model, "designs": designs, "frontier": frontier, "cold_result": cold, "cuts": cuts,  # 返回模型、枚举、前沿、冷启动结果和割池，供 Notebook/绘图使用。
             "validation": pd.DataFrame(validations), "discovered_frontier": discovered, "summary": summary}  # 同时返回校验表、算法发现前沿和摘要。
@@ -491,6 +528,8 @@ if __name__ == "__main__":  # 仅直接运行该文件时执行实验；import �
     parser.add_argument("--output", default="results", help="本地结果目录")  # --output 指定结果目录，默认 results。
     args = parser.parse_args()  # 解析输出目录参数。
     result = run_experiment(args.output)  # 运行默认模型的完整实验和断言。
-    print(result["frontier"].to_string(index=False))  # 打印前沿费用—倍率表。
-    print(json.dumps(result["summary"], ensure_ascii=False, indent=2))  # 打印机器可读实验摘要。
+    summary = result["summary"]  # 控制台只显示完成状态、代表性结果和保存位置。
+    print(f"校验通过：{summary['enumerated_designs']} 个方案，{summary['validation_queries']} 个查询，{summary['frontier_steps']} 级最优前沿。")
+    print(f"预算 {summary['cold_budget_cny']:,.0f} CNY：最大负荷倍率 {summary['cold_lambda_max']:.6f}。")
+    print(f"结果目录：{Path(args.output).resolve()}")
     result["model"].subproblem.dispose()  # 释放返回模型中的电气 LP 资源。

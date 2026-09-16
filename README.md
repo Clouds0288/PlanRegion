@@ -89,7 +89,6 @@ $$
 | `d` | $d$ | 53 维，右端倍率系数 |
 | `scales` | $r$ | 53 维，右端 $\eta$ 系数；不是导线电阻 $R_k$ |
 | `rows`（`build_model`）、`electrical_constraints` | 电气行 $(E01,\ldots,E53)$ | 53 个 Gurobi 约束对象 |
-| `names`、`row_names` | 电气行标签 $n_m$ | 53 个名称；`row_names[m-1]` 对应 $E_m$ |
 | `rhs` | $b(\bar x,\bar\lambda)$ | $h+T\bar x+d\bar\lambda$；区别于节点 `balance` $b_i(P)$ |
 | `Pi`（Gurobi 属性） | $y$ | 最小化 LP 的 $\le$ 行对偶值，$y\le0$ |
 | `pi`、`DualCut.pi` | $\pi=-y$ | 53 维，$\pi\ge0$、$W^\top\pi=0$、$r^\top\pi\le1$ |
@@ -99,9 +98,7 @@ $$
 | `lambda_coeff` | $\beta_\lambda$ | $\pi^\top d$ |
 | `scale`（`add_dual_cut`） | $\sigma$ | $\max(1,\lVert\beta_x\rVert_\infty,\lvert\beta_\lambda\rvert,\lvert\beta_0\rvert)$；与 53 维 `scales` 不同 |
 | `expression` | $\beta_x^\top x+\beta_\lambda\lambda$ | 不含常数的割左端 |
-| `score` | $(\pi_mr_m)_{m=1}^{53}$ | 用于选择解释性诊断行的加权对偶向量 |
-| `dominant`、`dominant_row` | $n_{\arg\max_m\pi_mr_m}$ | 诊断标签；可行点标记 `feasible`，不表示唯一瓶颈 |
-| `margin`、`validity_margin` | $\mu_t$ | 第 $t$ 条割在所有独立设计可行区间的最小余量 |
+| `margin` | $\mu_t$ | 第 $t$ 条割在所有独立设计可行区间的最小余量；逐条校验，仅汇总最小值 |
 | `worst` | $\min_t\mu_t$ | 全割池的最差有效性余量 |
 | `cut`、`cuts`、`pool`、`cold_cuts` | 单条割、割池 $\mathcal C_t$ | 统一模型不变时可跨预算与倍率查询复用 |
 | `master` | 整数主问题 MP | 15 个二元变量和 1 个倍率变量 |
@@ -132,7 +129,7 @@ $$
 | `candidate_lower` | $\min(\Lambda(\bar x),\lambda_{\rm search})$ | 固定预算查询中，一个已选树能实现的倍率下界 |
 | `value`、`SolveResult.value` | $K^*(\bar\lambda)$ 或 $\Lambda^*(\bar B)$ | 按模式决定单位；不可行分别用 $+\infty$、$-\infty$ 表示 |
 | `lambda_value` | 已返回查询点的 $\lambda$ | 与固定设计的最大倍率 `lambda_max` 区别 |
-| `trace`、`initial_cut_count`、`new_cuts` | 迭代日志、初始割数、新增割数 | `cut_count_before` 是本轮加割之前的割数 |
+| `trace`、`initial_cut_count`、`new_cuts` | 收敛轨迹、初始割数、新增割数 | 轨迹仅含 `cut_count_before`、`lower_bound`、`upper_bound`、`violation` |
 | `rounded`、`positive` | 整数费用、正费用列表 | 默认数据费用本来就是整数 CNY |
 | `quantum` | $g=\gcd\{c_{e,k}>0\}$ | 默认 20 CNY，费用递推步长 |
 | `budget` | $B_t$ | 前沿发现算法当前预算 |
@@ -147,7 +144,7 @@ $$
 | `feasible`、`exact` | 枚举可行费用集、枚举真值 | 独立比较切割算法结果 |
 | `target`、`exact_cost`、`hull_cost` | 反例倍率、整数最低费、凸包最低费 | 默认在 $\lambda=1.1$ 处比较 |
 | `model`、`cold`、`result` | 模型容器、冷启动结果、当前结果 | 由数据类字段取得具体数学量 |
-| `validations`、`all_df`、`cut_payload`、`summary` | 校验记录、全方案表、割 JSON、摘要 | 不增加优化变量或约束 |
+| `validations`、`summary` | 精简查询表、核心摘要 | 查询表仅供交互查看；不再导出全部方案或逐割明细 |
 | `output_dir`、`output`、`parser`、`args` | 输出路径和命令行参数 | 程序组织，无对应数学符号 |
 | `count`、`subset`、`crossing` | $\lvert S\rvert$、$S$、$\delta(S)$ | 用于生成全部七个连通性不等式 |
 | `t`、`c`、`row`、`w`、`choice`、`variable`、`_` | 局部迭代占位名 | 含义依上下文：线型、费用/割、约束行、状态变量、选择变量、求解器变量、重复次数；不能全局赋予同一数学符号 |
@@ -1765,7 +1762,7 @@ $$
 2. 对两端查询所得对偶解，分别验证 $\pi\ge0$、$W^\top\pi=0$、$r^\top\pi\le1$ 以及 $-\pi^\top(h+Tx+d\lambda)=\nu$。
 3. 对 8 个固定倍率和 7 个固定预算查询，比较切割算法与独立枚举的可行性及目标值。
 4. 比较预算递推与枚举得到的前沿台阶数、费用和倍率。
-5. 对所有生成割执行 CUT-CHECK；再保存 CSV/JSON、打印摘要并释放求解器对象。
+5. 对所有生成割执行 CUT-CHECK；仅保存一份最优前沿、精简收敛轨迹和核心摘要，打印关键结果并释放求解器对象。
 
 这些都是结果验证语句，不是追加进规划模型的物理约束。
 
@@ -1774,18 +1771,18 @@ $$
 | 代码入口（点击跳转） | 数学内容 / 编号 |
 |---|---|
 | [`LineType` / `Corridor` / `DemoConfig`](planning_domain_demo.py#L30) | §0 参数表 |
-| [`build_model`](planning_domain_demo.py#L132) | E01—E53、O3、矩阵 $W,h,T,d,r$ |
-| [`add_dual_cut`](planning_domain_demo.py#L199) | CUT 的正数缩放与添加 |
-| [`build_master`](planning_domain_demo.py#L206) | D1/D2、S01—S13、Q1/Q2、O1/O2、MP1/MP2 |
-| [`evaluate_design`](planning_domain_demo.py#L243) | TREE-EVAL：固定树的容量、路径压降与最大倍率 |
-| [`enumerate_designs`](planning_domain_demo.py#L276) | ENUM：独立枚举 216 个设计 |
-| [`frontier_table`](planning_domain_demo.py#L297) | FRONT：离散前沿 |
-| [`feasibility_oracle`](planning_domain_demo.py#L308) | O3、DUAL、STRONG、割系数 |
-| [`solve_by_cuts`](planning_domain_demo.py#L323) | 主问题—子问题迭代及目标上下界 |
-| [`validate_cuts`](planning_domain_demo.py#L364) | CUT-CHECK |
-| [`discover_frontier_by_cuts`](planning_domain_demo.py#L375) | EPS：预算递推 |
-| [`convex_hull_cost`](planning_domain_demo.py#L402) | O4、H1/H2 和权重非负域 |
-| [`run_experiment`](planning_domain_demo.py#L419) | 解析/LP/枚举/对偶一致性校验及输出 |
+| [`build_model`](planning_domain_demo.py#L129) | E01—E53、O3、矩阵 $W,h,T,d,r$ |
+| [`add_dual_cut`](planning_domain_demo.py#L195) | CUT 的正数缩放与添加 |
+| [`build_master`](planning_domain_demo.py#L202) | D1/D2、S01—S13、Q1/Q2、O1/O2、MP1/MP2 |
+| [`evaluate_design`](planning_domain_demo.py#L239) | TREE-EVAL：固定树的容量、路径压降与最大倍率 |
+| [`enumerate_designs`](planning_domain_demo.py#L272) | ENUM：独立枚举 216 个设计 |
+| [`frontier_table`](planning_domain_demo.py#L293) | FRONT：离散前沿 |
+| [`feasibility_oracle`](planning_domain_demo.py#L304) | O3、DUAL、STRONG、割系数 |
+| [`solve_by_cuts`](planning_domain_demo.py#L317) | 主问题—子问题迭代及目标上下界 |
+| [`validate_cuts`](planning_domain_demo.py#L390) | CUT-CHECK |
+| [`discover_frontier_by_cuts`](planning_domain_demo.py#L401) | EPS：预算递推；可选记录全部内层查询与外层轮次 |
+| [`convex_hull_cost`](planning_domain_demo.py#L452) | O4、H1/H2 和权重非负域 |
+| [`run_experiment`](planning_domain_demo.py#L469) | 解析/LP/枚举/对偶一致性校验及输出 |
 
 本节编号中的 `#L` 是添加注释后的实际代码行号。核心建模语句的行尾直接写出 E/S/Q/O/CUT 编号。复合语句中的数个运算在同一条注释中依次说明；跨行表达式的各物理行也有对应说明。下面保留原 README 的运行说明、既有结果和项目背景。
 
@@ -1799,9 +1796,27 @@ $$
 
 ---
 
+### 6.2 Notebook 学习路线（2026-09-16）
+
+打开 [`planning_domain_demo.ipynb`](planning_domain_demo.ipynb)，从空内核运行全部单元。编号与本文一致：MP1 固定倍率最小化费用，MP2 固定预算最大化倍率。
+
+| Notebook 章节 | 学习内容 |
+|---|---|
+| 第 1–2 节 | 建设/运行变量、共同连续子问题、对偶可行性割及数值展开 |
+| 第 3 节 | MP1 + SP 冷启动；费用上下界、每轮候选与不可行查询 |
+| 第 4 节 | MP2 + SP 冷启动；倍率上下界、最后一次潮流与电压 |
+| 第 5 节 | MP2 → MP1 交替；全部查询记录、共享割池时间线、逐次收敛图 |
+| 第 6 节 | 自适应 ε-约束完整性、216 个设计的独立真值、跳点左右检查、粗扫描漏台阶反例 |
+| 第 7–8 节 | 完整回归验证、割的全局有效性、整数域与凸包、参数练习和源码对照 |
+
+教学结果单独保存到 `notebook_results/learning/`：`mp1_trace.csv`、`mp2_trace.csv`、`alternating_all_iterations.csv`、`alternating_rounds.csv`、前沿核验表和图件。
+`solve_by_cuts` 保留原有四个轨迹字段，并增加候选、对偶残差、割编号和停止原因；`discover_frontier_by_cuts` 的原有返回值保持为前沿 DataFrame，可额外传入 `query_history` 和 `round_history` 接收过程记录。
+
+日常学习直接编辑并运行 notebook。`build_learning_notebook.py` 用于重建这份教学模板，运行它会覆盖 notebook 的内容并清空输出；随后运行 `run_notebook.py` 可从空内核重新计算并保存输出。当前 notebook 内核名为本机已安装依赖的 `methods`，其他环境应选用对应的 Python 内核。
+
 ## 7. 原项目说明与既有实验记录
 
-下列运行记录保留原文；本次改动的独立核验结果见交付说明。
+下列说明保留原实验背景，文件清单按当前精简输出更新。
 
 ### 四节点单台区：离散建设下的负荷倍率—建设预算可规划域
 
@@ -1825,13 +1840,12 @@ $$
 - `planning_domain_demo.py`：核心模型、穷举基准、MILP+LP 对偶切割、无倍率网格前沿发现。
 - `plot_demo.py`：网络节点示意图与三个独立 Matplotlib 结果图，导出 PNG、SVG、PDF。
 - `run_notebook.py`：从空内核执行整个 Notebook，并保存全部输出。
-- `results/exact_frontier.csv`：完整枚举得到的有效边界。
-- `results/frontier_discovered_by_cuts.csv`：切割算法独立恢复的有效边界。
-- `results/benders_validation.csv`：8个固定倍率和7个固定预算的查询校验。
-- `results/cold_start_cut_trace.csv`：预算33,000 CNY 的冷启动逐割记录。
-- `results/dual_cuts.json`：完整对偶乘子、割系数及对全部整数设计的有效性检查。
-- `results/summary.json`：本次运行摘要。
+- `results/exact_frontier.csv`：经独立枚举与切割算法交叉核验的完整最优前沿，仅保留费用、倍率、瓶颈和方案。
+- `results/cold_start_cut_trace.csv`：预算33,000 CNY 的收敛轨迹，仅保留累计割数、目标上下界和违反量。
+- `results/summary.json`：前沿规模、验证结果、代表性预算结果、非凸性反例和模型适用范围。
 - `figures/`：PNG、SVG、PDF 及切割阶段绘图数据；Notebook 图件另存于 `notebook_results/figures/`。
+
+`run_experiment` 仅导出上述三份结果，`notebook_results/` 使用同样格式。全部方案枚举、15 个查询和逐割有效性检查仍完整执行；绘图所需模型、割池、精简查询表及两种前沿保留在返回值中。
 
 ### 运行
 
