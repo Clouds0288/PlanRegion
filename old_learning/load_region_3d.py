@@ -20,7 +20,7 @@ import shapely
 from gurobipy import GRB
 from shapely.geometry import Polygon
 
-import planning_domain_demo as demo
+import old_learning.planning_domain_legacy as demo
 
 
 OUTPUT = Path(__file__).resolve().parent / "notebook_results" / "three_dimensional"

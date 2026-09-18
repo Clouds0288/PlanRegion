@@ -1,0 +1,50 @@
+{
+  "iterations": 1663,
+  "cuts": 204,
+  "designs": 216,
+  "budgets": [
+    20000.0,
+    30000.0,
+    40000.0,
+    null
+  ],
+  "panels": [
+    {
+      "budget_cny": 20000.0,
+      "designs": 17,
+      "maximum_kw": 100.0,
+      "union_volume": 41523.94956061936,
+      "mesh_relative_error": 8.058723348002293e-11
+    },
+    {
+      "budget_cny": 30000.0,
+      "designs": 53,
+      "maximum_kw": 100.0,
+      "union_volume": 107687.20982337612,
+      "mesh_relative_error": 3.9407131801184285e-11
+    },
+    {
+      "budget_cny": 40000.0,
+      "designs": 105,
+      "maximum_kw": 135.0,
+      "union_volume": 152299.63457900673,
+      "mesh_relative_error": 3.230399164770663e-11
+    },
+    {
+      "budget_cny": null,
+      "designs": 216,
+      "maximum_kw": 142.5,
+      "union_volume": 360927.1511856605,
+      "mesh_relative_error": 1.5711660734151033e-11
+    }
+  ],
+  "certified_designs": 216,
+  "verified_final_vertices": 1708,
+  "frontier_steps": 5,
+  "worst_duality_gap": 5.184741524999481e-14,
+  "worst_stationarity": 2.7755575615628914e-17,
+  "worst_cut_margin": -1.4347550925108976e-13,
+  "worst_domain_constraint_error": 1.999751475523226e-10,
+  "complete": true,
+  "ac_power_flow_validated": false
+}

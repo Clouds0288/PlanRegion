@@ -5,7 +5,7 @@ import pandas as pd
 import matplotlib.pyplot as plt
 from matplotlib.lines import Line2D
 from matplotlib.patches import Circle, Rectangle
-from planning_domain_demo import ElectricalModel, build_master, convex_hull_cost
+from old_learning.planning_domain_legacy import ElectricalModel, build_master, convex_hull_cost
 
 plt.rcParams.update({
     "font.family": "sans-serif",
