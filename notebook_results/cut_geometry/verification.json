@@ -1,0 +1,26 @@
+{
+  "min_cost": {
+    "rounds": 13,
+    "cuts": 12,
+    "objective": 32360.0,
+    "every_cut_checked_against_gurobi": true,
+    "history_isolation": true,
+    "drawing_preserves_solver_state": true
+  },
+  "max_lambda": {
+    "rounds": 12,
+    "cuts": 11,
+    "objective": 1.5668874267432242,
+    "every_cut_checked_against_gurobi": true,
+    "history_isolation": true,
+    "drawing_preserves_solver_state": true
+  },
+  "edge_cases": [
+    "pure_lambda_cut",
+    "lambda_zero_coefficient",
+    "positive_lambda_coefficient",
+    "empty_remaining_set",
+    "first_round_feasible",
+    "converged_replay"
+  ]
+}
