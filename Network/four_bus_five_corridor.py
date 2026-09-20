@@ -1,26 +1,26 @@
 """四节点五走廊合成算例：根节点 0，负荷节点 1/2/3，设备 L/M/H。"""
-from . import Corridor, LineType, Network
+from . import Corridor, LineType, Network  # 读取统一的走廊、型号及母网数据结构。
 
 
-network = Network(
-    name="four_bus_five_corridor",
-    nodes=(0, 1, 2, 3),
-    root=0,
-    corridors=(
-        Corridor("01", 0, 1, 220., True),
-        Corridor("12", 1, 2, 180., True),
-        Corridor("13", 1, 3, 240., True),
-        Corridor("02", 0, 2, 300., False),
-        Corridor("23", 2, 3, 160., False),
-    ),
-    lines=(
-        LineType("L", 1.15, .08, 35., 28.),
-        LineType("M", .62, .08, 65., 43.),
-        LineType("H", .32, .08, 100., 65.),
-    ),
-    power_factor=.95,
-    voltage_kv=.4,
-    voltage_min_pu=.93,
-    transformer_kva=150.,
-    new_corridor_cny_m=45.,
-)
+network = Network(  # 定义四节点五走廊小算例的全部物理和投资输入。
+    name="four_bus_five_corridor",  # 算例名称对应当前网架文件和结果目录。
+    nodes=(0, 1, 2, 3),  # 保留包含电源的四个真实节点号。
+    root=0,  # 节点 0 是固定电压电源。
+    corridors=(  # 走廊字段依次为名称、两端节点、长度和是否既有。
+        Corridor("01", 0, 1, 220., True),  # 既有 0–1 走廊，长度 220 m。
+        Corridor("12", 1, 2, 180., True),  # 既有 1–2 走廊，长度 180 m。
+        Corridor("13", 1, 3, 240., True),  # 既有 1–3 走廊，长度 240 m。
+        Corridor("02", 0, 2, 300., False),  # 候选新建 0–2 走廊，长度 300 m。
+        Corridor("23", 2, 3, 160., False),  # 候选新建 2–3 走廊，长度 160 m。
+    ),  # 完成走廊配置；合法树由母网统一生成。
+    lines=(  # 型号字段依次为名称、Ω/km 电阻电抗、kW 上限和元/m 造价。
+        LineType("L", 1.15, .08, 35., 28.),  # L 型线路的给定物理参数与单位造价。
+        LineType("M", .62, .08, 65., 43.),  # M 型线路的给定物理参数与单位造价。
+        LineType("H", .32, .08, 100., 65.),  # H 型线路的给定物理参数与单位造价。
+    ),  # 所有走廊共享这张型号表。
+    power_factor=.95,  # 各独立负荷按统一功率因数确定 Q/P。
+    voltage_kv=.4,  # 基准线电压为 0.4 kV。
+    voltage_min_pu=.93,  # 节点电压幅值下限为 0.93 p.u.。
+    transformer_kva=150.,  # 源端视在容量为 150 kVA。
+    new_corridor_cny_m=45.,  # 新建走廊另计通道费用 45 元/m。
+)  # 该对象由 Notebook 导入，模型不重复声明参数。
