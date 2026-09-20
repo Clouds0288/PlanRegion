@@ -1,0 +1,168 @@
+{
+  "method": "Constraint-removal counterfactuals over all affordable construction plans",
+  "spacing_kw": 2.5,
+  "source_grid": "grid_57.npz",
+  "source_sha256": "47d2719a3140955329aa169884dea6a188fc0d86f61687284ca1bb52041c9622",
+  "script_sha256": "1b22f5e34e04f1ed83c7547a46d8d64169eec5d61524d3352ddade220da757e0",
+  "unique_yellow_points": 4844,
+  "design_count": 216,
+  "removed_mask": {
+    "1": "voltage lower bound",
+    "2": "line active-power limits",
+    "4": "transformer apparent-power limit",
+    "7": "all three groups"
+  },
+  "percentage_denominator": "Yellow points in the corresponding budget; categories may overlap",
+  "nonlinear_equations": "Full AC DistFlow, unchanged in every counterfactual",
+  "no_independent_ampacity_limit": true,
+  "unresolved_point_design_checks": 96,
+  "unresolved_yellow_counterfactuals": 0,
+  "original_ac_labels_reproduced": true,
+  "seconds": 7.526349700001447,
+  "results": [
+    {
+      "budget": 20000.0,
+      "yellow_points": 252,
+      "restored_points_by_removed_mask": [
+        0,
+        187,
+        54,
+        252,
+        0,
+        187,
+        54,
+        252
+      ],
+      "restored_percent_by_removed_mask": [
+        0.0,
+        74.2063492063492,
+        21.428571428571427,
+        100.0,
+        0.0,
+        74.2063492063492,
+        21.428571428571427,
+        100.0
+      ],
+      "single_relaxation_pattern_counts": [
+        11,
+        187,
+        54,
+        0,
+        0,
+        0,
+        0,
+        0
+      ],
+      "requires_combined_relaxation": 11,
+      "no_power_flow_witness": 0
+    },
+    {
+      "budget": 40000.0,
+      "yellow_points": 1133,
+      "restored_points_by_removed_mask": [
+        0,
+        585,
+        657,
+        1131,
+        0,
+        585,
+        659,
+        1133
+      ],
+      "restored_percent_by_removed_mask": [
+        0.0,
+        51.632833186231245,
+        57.98764342453663,
+        99.82347749338041,
+        0.0,
+        51.632833186231245,
+        58.16416593115622,
+        100.0
+      ],
+      "single_relaxation_pattern_counts": [
+        94,
+        382,
+        454,
+        203,
+        0,
+        0,
+        0,
+        0
+      ],
+      "requires_combined_relaxation": 94,
+      "no_power_flow_witness": 0
+    },
+    {
+      "budget": 60000.0,
+      "yellow_points": 2762,
+      "restored_points_by_removed_mask": [
+        0,
+        864,
+        829,
+        1498,
+        843,
+        1870,
+        1972,
+        2762
+      ],
+      "restored_percent_by_removed_mask": [
+        0.0,
+        31.281679942070962,
+        30.01448225923244,
+        54.23606082548878,
+        30.52136133236785,
+        67.70456191165822,
+        71.39753801593048,
+        100.0
+      ],
+      "single_relaxation_pattern_counts": [
+        439,
+        651,
+        616,
+        213,
+        843,
+        0,
+        0,
+        0
+      ],
+      "requires_combined_relaxation": 439,
+      "no_power_flow_witness": 0
+    },
+    {
+      "budget": null,
+      "yellow_points": 3014,
+      "restored_points_by_removed_mask": [
+        0,
+        485,
+        605,
+        1090,
+        1582,
+        2176,
+        2423,
+        3014
+      ],
+      "restored_percent_by_removed_mask": [
+        0.0,
+        16.091572660915727,
+        20.072992700729927,
+        36.16456536164566,
+        52.488387524883876,
+        72.19641672196417,
+        80.39150630391507,
+        100.0
+      ],
+      "single_relaxation_pattern_counts": [
+        342,
+        485,
+        605,
+        0,
+        1582,
+        0,
+        0,
+        0
+      ],
+      "requires_combined_relaxation": 342,
+      "no_power_flow_witness": 0
+    }
+  ]
+}

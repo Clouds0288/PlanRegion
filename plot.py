@@ -1,223 +1,206 @@
-"""Benders 收敛图、费用前沿、三维并集表面及交互绘图。"""
-from itertools import combinations
-
-import matplotlib.pyplot as plt
+"""区域对比与固定方案切割回放；只消费计算结果。"""
+from pathlib import Path
 import numpy as np
-import shapely
-from IPython.display import display
-from mpl_toolkits.mplot3d.art3d import Poly3DCollection
-from scipy.spatial import ConvexHull
-from shapely.geometry import Polygon
-
-from region import solid
-
-BLUE, ORANGE, GRAY = "#48799A", "#C07B48", "#AAB7BE"
-plt.rcParams.update({"font.family": "sans-serif", "font.size": 9,
-                     "svg.fonttype": "none", "pdf.fonttype": 42,
-                     "axes.spines.top": False, "axes.spines.right": False})
+import plotly.graph_objects as go
+from region import clip_polytope, polytope_vertices
 
 
-def plot_benders(solver):
-    records = [r for r in solver.history if r["query"] == solver.query_id and r["x"] is not None]
-    rounds = np.arange(1, len(records)+1)
-    maximum = solver.queries[solver.query_id]["mode"] == "MP2"
-    values = [sum(r["p"]) if maximum else solver.network.cost@r["x"] for r in records]
-    fig, axes = plt.subplots(1, 2, figsize=(9, 3), layout="constrained")
-    axes[0].plot(rounds, values, "o-", ms=3, color=BLUE,
-                 label="Master upper bound" if maximum else "Master lower bound")
-    if records and solver.finished and solver.feasible:
-        axes[0].scatter(rounds[-1], values[-1], color=ORANGE, s=35, zorder=3, label="SP feasible optimum")
-    axes[0].set(xlabel="Benders iteration", ylabel="Total load (kW)" if maximum else "Cost (CNY)")
-    axes[0].legend(fontsize=8)
-    axes[1].plot(rounds, [r["eta"] for r in records], "o-", ms=3, color=ORANGE)
-    axes[1].axhline(0, color=GRAY, lw=.8)
-    axes[1].set(xlabel="Benders iteration", ylabel=r"SP violation $\eta$")
-    for ax in axes:
-        ax.grid(alpha=.2)
-    state = "optimal" if solver.finished and solver.feasible else "infeasible" if solver.finished else "in progress"
-    fig.suptitle(f'{solver.queries[solver.query_id]["mode"]} + SP | {state}')
-    return fig
+def save_replay(result, folder, method='socp', budget_index=-1, design_index=-1):
+    record = result.regions[method][budget_index][design_index]
+    outer = np.asarray(record['initial'])
+    inner = np.zeros((1,3))
+    frames = []
+
+    def traces(point):
+        mesh = lambda p,c,o,n: go.Mesh3d(x=p[:,0],y=p[:,1],z=p[:,2],alphahull=0,
+                                       color=c,opacity=o,name=n,flatshading=True)
+        return [mesh(outer,'#AAB7BE',.2,'候选外域'), mesh(inner,'#4286AD',.7,'认证内域'),
+                go.Scatter3d(x=[point[0]],y=[point[1]],z=[point[2]],mode='markers',
+                             marker=dict(color='#C07B48',size=4),name='本轮查询点')]
+
+    # 先用三条轴向查询建立三维内域；此后每一帧对应真实的一次 SP 查询。
+    for i,row in enumerate(record['history']):
+        if row['cut'] is not None:
+            cut = np.asarray(row['cut'])
+            outer = clip_polytope(outer,cut[0],cut[1:])
+        inner = polytope_vertices(np.vstack([inner,row['witness']]))
+        if i >= 2:
+            frames.append(go.Frame(name=str(i+1),data=traces(row['p'])))
+    fig = go.Figure(data=frames[0].data,frames=frames)
+    axis = lambda k: dict(title=f'节点 {result.load_nodes[k]} 负荷 (kW)',range=[0,result.bounds[k]])
+    x = result.metadata['designs'][record['design']]['x']
+    fig.update_layout(template='plotly_white',height=670,margin=dict(l=5,r=5,t=45,b=90),
+        scene=dict(xaxis=axis(0),yaxis=axis(1),zaxis=axis(2),aspectmode='cube'),
+        annotations=[dict(text=f'固定建设方案 x={x}；灰色外域，蓝色认证内域',x=.5,y=1.04,
+                          xref='paper',yref='paper',showarrow=False)],
+        sliders=[dict(currentvalue=dict(prefix='SP 查询轮次：'),steps=[
+            dict(method='animate',label=f.name,args=[[f.name],dict(mode='immediate',
+                 frame=dict(duration=0,redraw=True),transition=dict(duration=0))]) for f in frames])],
+        updatemenus=[dict(type='buttons',direction='left',x=0,y=-.06,buttons=[
+            dict(label='播放',method='animate',args=[None,dict(fromcurrent=True,
+                frame=dict(duration=200,redraw=True),transition=dict(duration=0))]),
+            dict(label='暂停',method='animate',args=[[None],dict(mode='immediate',
+                frame=dict(duration=0,redraw=False))])])])
+    path = Path(folder)/'cutting_process.html'
+    fig.write_html(path,include_plotlyjs=True,auto_play=False,config=dict(displaylogo=False))
+    return path
 
 
-def show_benders(solver):
-    fig = plot_benders(solver)
-    display(fig)
-    plt.close(fig)
+def voxel_surface(mask, spacing):
+    """Exposed cell faces, merged into rectangles without filling holes.
 
-
-def certified_frame(polytopes):
-    points = [p.tolist() for poly in polytopes.values() if not solid(poly) for p in poly]
-    return dict(mesh=surface_mesh(union_surface(list(polytopes.values()))), points=points)
-
-
-def outer_frontier(costs, polytopes):
-    """固定设计逐一投影，保留费用—总负荷的整数台阶。"""
-    xx, yy, previous = [], [], 0.
-    for cost, poly in zip(costs, polytopes):
-        if not len(poly):
-            continue
-        capacity = float(poly.sum(axis=1).max())
-        if capacity > previous+1e-7 or not xx:
-            xx.extend([previous, capacity])
-            yy.extend([float(cost), float(cost)])
-            previous = capacity
-    return [xx, yy]
-
-
-def maximal_polytopes(polytopes):
-    ranked = sorted(((ConvexHull(p).volume, p) for p in polytopes if solid(p)), key=lambda item: -item[0])
-    kept, equations = [], []
-    for _, points in ranked:
-        if any(np.all(points@eq[:, :3].T+eq[:, 3] <= 2e-7) for eq in equations):
-            continue
-        kept.append(points)
-        equations.append(ConvexHull(points).equations)
-    return kept
-
-
-def union_surface(polytopes):
-    """扣除内部覆盖面，绘制固定设计多面体的非凸并集。"""
-    polys = maximal_polytopes(polytopes)
-    hulls = [ConvexHull(p) for p in polys]
-    surfaces = []
-    for i, (points, hull) in enumerate(zip(polys, hulls)):
-        planes = {}
-        for face, equation in zip(hull.simplices, hull.equations):
-            planes.setdefault(tuple(np.round(equation, 8)), (equation, set()))[1].update(face)
-        for equation, indices in planes.values():
-            normal, offset = equation[:3], equation[3]
-            u = np.cross(normal, [1., 0., 0.] if abs(normal[0]) < .9 else [0., 1., 0.])
-            u /= np.linalg.norm(u)
-            basis = np.array([u, np.cross(normal, u)])
-            origin = points[next(iter(indices))]
-            xy = (points[list(indices)]-origin)@basis.T
-            visible = Polygon(xy[ConvexHull(xy).vertices])
-            for j, (other, other_hull) in enumerate(zip(polys, hulls)):
-                if i == j:
-                    continue
-                signed = other@normal+offset
-                if signed.max() < -1e-7 or signed.min() > 1e-7 or (signed.max() <= 1e-7 and j > i):
-                    continue
-                section = list(other[np.abs(signed) <= 1e-7])
-                edges = {tuple(sorted(pair)) for face in other_hull.simplices
-                         for pair in combinations(face, 2)}
-                for a, b in edges:
-                    if signed[a]*signed[b] < 0:
-                        section.append(other[a]+(other[b]-other[a])*signed[a]/(signed[a]-signed[b]))
-                if len(section) < 3:
-                    continue
-                projected = np.unique(np.round((np.array(section)-origin)@basis.T, 8), axis=0)
-                if len(projected) < 3 or np.linalg.matrix_rank(projected-projected[0], tol=1e-7) < 2:
-                    continue
-                visible = visible.difference(Polygon(projected[ConvexHull(projected).vertices]))
-                if visible.is_empty:
-                    break
-            for piece in shapely.get_parts(visible):
-                if piece.geom_type != "Polygon" or piece.area < 1e-8:
-                    continue
-                patches = list(shapely.constrained_delaunay_triangles(piece).geoms) if piece.interiors else [piece]
-                for patch in patches:
-                    surfaces.append(origin+np.asarray(patch.exterior.coords)[:-1]@basis)
-    return surfaces
-
-
-def surface_mesh(faces):
+    Geometry and disagreement percentages use the very same labeled cells.
+    No global convex hull or smoothing changes the meaning of a colored region.
+    """
+    mask = np.asarray(mask, dtype=bool)
     vertices, triangles = [], []
-    for face in faces:
-        origin = face[0]
-        basis = np.linalg.svd(face-origin, full_matrices=False)[2][:2]
-        polygon = shapely.set_precision(shapely.make_valid(Polygon((face-origin)@basis.T)), 1e-8).simplify(1e-8)
-        for triangle in shapely.constrained_delaunay_triangles(polygon).geoms:
-            points = origin+np.asarray(triangle.exterior.coords)[:3]@basis
-            triangles.append(list(range(len(vertices), len(vertices)+3)))
-            vertices.extend(points.tolist())
+    for axis in range(3):
+        others = [i for i in range(3) if i != axis]
+        oriented = np.moveaxis(mask, axis, 0)
+        for side in (-1, 1):
+            neighbour = np.zeros_like(oriented)
+            if side == 1:
+                neighbour[:-1] = oriented[1:]
+            else:
+                neighbour[1:] = oriented[:-1]
+            faces = oriented & ~neighbour
+            for plane in range(len(faces)):
+                cells = faces[plane].copy()
+                for row in range(cells.shape[0]):
+                    while cells[row].any():
+                        left = int(np.flatnonzero(cells[row])[0])
+                        right = left+1
+                        while right < cells.shape[1] and cells[row, right]:
+                            right += 1
+                        bottom = row+1
+                        while bottom < cells.shape[0] and cells[bottom, left:right].all():
+                            bottom += 1
+                        cells[row:bottom, left:right] = False
+                        face = np.zeros((4, 3), dtype=float)
+                        face[:, axis] = plane+(side == 1)
+                        face[:, others[0]] = [row, bottom, bottom, row]
+                        face[:, others[1]] = [left, left, right, right]
+                        normal = np.cross(face[1]-face[0], face[2]-face[0])
+                        if normal[axis]*side < 0:
+                            face = face[::-1]
+                        first = len(vertices)
+                        vertices.extend((face*spacing).tolist())
+                        triangles.extend([[first, first+1, first+2], [first, first+2, first+3]])
     return dict(vertices=vertices, triangles=triangles)
 
 
-def frame_data(costs, designs, polytopes, cut=None):
-    faces = union_surface(polytopes)
-    boundary = []
-    if cut is not None:
-        nx = designs.shape[1]
-        offsets = cut[0]+designs@cut[1:1+nx]
-        boundary = [face for face in faces
-                    if np.min(np.max(np.abs(offsets[:, None]+face@cut[1+nx:]), axis=1)) < 2e-7]
-    return dict(frontier=outer_frontier(costs, polytopes), mesh=surface_mesh(faces),
-                boundary=surface_mesh(boundary))
+def plot_method_comparison(result, budget_index=0):
+    """同一预算的四方法对比；曲面与 FR/MR 使用同一份网格标签。"""
+    from plotly.subplots import make_subplots
+    from vertify import METHOD_NAMES
 
-
-def plot_frontier(process):
-    fig, ax = plt.subplots(figsize=(7, 3), layout="constrained")
-    xx, yy = outer_frontier(process.costs, process.polytopes)
-    ax.plot(xx, yy, color=GRAY, label="Candidate outer bound")
-    points = process.frontier
-    if points:
-        ax.scatter([p[0] for p in points], [p[1] for p in points], color=ORANGE, s=22,
-                   label="Certified frontier points", zorder=3)
-    limit = process.network.power_limit
-    margin = .02*limit
-    ax.set(xlim=(-margin, limit+margin),
-           xlabel="Total load (kW)", ylabel="Minimum budget (CNY)")
-    ax.grid(alpha=.2)
-    ax.legend(fontsize=8)
+    fig = make_subplots(rows=2, cols=2, specs=[[{"type": "scene"}]*2]*2,
+                        subplot_titles=[f"{letter}  {name}" for letter, name in zip("abcd", METHOD_NAMES)],
+                        horizontal_spacing=.02, vertical_spacing=.08)
+    categories = [(3, "与 AC 重合", "#4286AD", 1., "common"),
+                  (2, "遗漏", "#D43D3D", 1., "missed"),
+                  (1, "多余", "#E9B72F", 1., "extra")]
+    for panel, labels in enumerate(result.labels[:, budget_index]):
+        for code, name, color, opacity, group in categories:
+            mesh = voxel_surface(labels == code, result.spacing)
+            points = np.asarray(mesh["vertices"]).reshape(-1, 3)
+            faces = np.asarray(mesh["triangles"], dtype=int).reshape(-1, 3)
+            if len(points):
+                trace = go.Mesh3d(x=points[:, 0], y=points[:, 1], z=points[:, 2],
+                                 i=faces[:, 0], j=faces[:, 1], k=faces[:, 2],
+                                 name="AC 参考域" if panel == 2 else name,
+                                 color=color, opacity=opacity, flatshading=True,
+                                 legendgroup=group, showlegend=panel == 0,
+                                 lighting=dict(ambient=1., diffuse=.25, specular=.05, roughness=.95),
+                                 hovertemplate="节点负荷 (%{x:.2f}, %{y:.2f}, %{z:.2f}) kW<extra>%{fullData.name}</extra>")
+            else:
+                trace = go.Scatter3d(x=[None], y=[None], z=[None], mode="markers", name=name,
+                                    marker=dict(color=color, size=7), legendgroup=group,
+                                    showlegend=panel == 0, hoverinfo="skip")
+            fig.add_trace(trace, row=panel//2+1, col=panel % 2+1)
+    axis = lambda node, bound: dict(title=dict(text=f"节点 {node} 负荷 (kW)", font=dict(size=11)),
+                             range=[0, bound], nticks=5,
+                             tickfont=dict(size=10), backgroundcolor="white", gridcolor="#E2E6E9",
+                             zerolinecolor="#B8C1C6", showbackground=True)
+    scenes = {"scene" if i == 0 else f"scene{i+1}": dict(
+        xaxis=axis(result.load_nodes[0], result.bounds[0]),
+        yaxis=axis(result.load_nodes[1], result.bounds[1]),
+        zaxis=axis(result.load_nodes[2], result.bounds[2]), aspectmode="cube",
+        camera=dict(eye=dict(x=1.5, y=1.6, z=1.2), projection=dict(type="orthographic")))
+        for i in range(4)}
+    buttons = [dict(label=name, method="update", args=[{
+        "visible": [trace.legendgroup in groups for trace in fig.data]}])
+        for name, groups in [("全部", {"common", "missed", "extra"}),
+                             ("仅差异", {"missed", "extra"}),
+                             ("计算域", {"common", "extra"}),
+                             ("AC 参考域", {"common", "missed"})]]
+    fig.update_layout(**scenes, height=900, template="plotly_white",
+                      margin=dict(l=5, r=5, t=72, b=45),
+                      font=dict(family="Arial, Microsoft YaHei, sans-serif", size=12),
+                      legend=dict(orientation="h", x=.5, xanchor="center", y=-.04,
+                                  groupclick="togglegroup"),
+                      updatemenus=[dict(type="buttons", direction="right", buttons=buttons,
+                                        x=.5, xanchor="center", y=1.09, yanchor="top")],
+                      uirevision="method-comparison")
+    fig.update_annotations(font=dict(size=13))
     return fig
 
 
-def plot_regions(process, outer=False):
-    fig = plt.figure(figsize=(7, 6))
-    fig.subplots_adjust(left=.02, right=.88, bottom=.16, top=.94)
-    ax = fig.add_subplot(projection="3d")
-    ax.add_collection3d(Poly3DCollection(union_surface(list(process.certified.values())),
-                       facecolor=BLUE, edgecolor=BLUE, alpha=.3, linewidth=.3), autolim=False)
-    if outer:
-        ax.add_collection3d(Poly3DCollection(union_surface(process.polytopes),
-                           facecolor=GRAY, edgecolor=GRAY, alpha=.1, linewidth=.2), autolim=False)
-    for poly in process.certified.values():
-        if not solid(poly):
-            ax.scatter(*poly.T, color=BLUE, s=10)
-    limit = process.network.power_limit
-    labels = [f"Node {node} load (kW)" for node in process.network.load_nodes]
-    ax.set(xlim=(0, limit), ylim=(0, limit), zlim=(0, limit),
-           xlabel=labels[0], ylabel=labels[1], zlabel=labels[2])
-    ax.set_box_aspect((1, 1, 1))
-    ax.set_title("Certified planning domain" if process.finished else "Certified inner approximation")
-    return fig
+def save_method_comparison(result, folder):
+    import plotly.io as pio
+    from vertify import METHODS, METHOD_NAMES
 
-
-# 交互绘图也集中在本模块；replay.py 只负责数据打包与播放控制。
-PLOT_SCRIPT = r"""
-const blue='#48799A', orange='#C07B48', gray='#AAB7BE';
-const frontierCeiling=1.05*Math.max(1,...experiment.scenarios.flatMap(s=>s.frames.flatMap(f=>f.frontier[1])));
-const meshTrace=(mesh,color,opacity)=>({type:'mesh3d',
- x:mesh.vertices.map(v=>v[0]),y:mesh.vertices.map(v=>v[1]),z:mesh.vertices.map(v=>v[2]),
- i:mesh.triangles.map(t=>t[0]),j:mesh.triangles.map(t=>t[1]),k:mesh.triangles.map(t=>t[2]),
- color,opacity,flatshading:true,hoverinfo:'skip',showscale:false});
-function drawFrame(frame, previous, certified, record, points) {
- const frontier=[{x:frame.frontier[0],y:frame.frontier[1],type:'scatter',mode:'lines',
-   line:{color:gray,width:2},name:'候选能力上界'},
-  {x:points.map(p=>p[0]),y:points.map(p=>p[1]),type:'scatter',mode:'markers',
-   marker:{color:orange,size:7},name:'已认证前沿点'}];
- Plotly.react('frontier',frontier,{margin:{l:75,r:25,t:15,b:50},
-   xaxis:{title:{text:'总负荷 (kW)'},range:[0,experiment.limit]},
-   yaxis:{title:{text:'最低预算 (元)'},range:[0,frontierCeiling]},
-   legend:{orientation:'h',y:1.15},uirevision:'frontier'}, {responsive:true,displaylogo:false});
- const traces=[{...meshTrace(certified.mesh,blue,.55),name:'已认证可行区域'}];
- if(certified.points.length)traces.push({type:'scatter3d',mode:'markers',
-   x:certified.points.map(p=>p[0]),y:certified.points.map(p=>p[1]),z:certified.points.map(p=>p[2]),
-   marker:{color:blue,size:3},name:'已认证可行点'});
- if(document.getElementById('outer').checked){
-   traces.unshift(meshTrace(frame.mesh,gray,.13));
-   traces.push(meshTrace(frame.boundary,orange,.7));
- }
- if(document.getElementById('before').checked) traces.unshift(meshTrace(previous.mesh,gray,.08));
- if(record && record.p) traces.push({type:'scatter3d',mode:'markers',
-   x:[record.p[0]],y:[record.p[1]],z:[record.p[2]],marker:{color:orange,size:4},
-   name:record.cut===null?'本轮方案 SP 可行':'本轮方案 SP 不满足',
-   hovertemplate:'节点负荷 (%{x:.2f}, %{y:.2f}, %{z:.2f}) kW<extra>%{fullData.name}</extra>'});
- const axis=k=>({title:{text:`节点 ${experiment.load_nodes[k]} 负荷 (kW)`},
-   range:[0,experiment.limit],nticks:5});
- Plotly.react('region',traces,{margin:{l:0,r:0,t:5,b:0},showlegend:false,
-   scene:{xaxis:axis(0),yaxis:axis(1),zaxis:axis(2),
-   aspectmode:'cube'},uirevision:'keep-camera'}, {responsive:true,displaylogo:false});
-}
-"""
+    folder = Path(folder)
+    folder.mkdir(parents=True, exist_ok=True)
+    filenames = ['region_comparison.html']+[
+        f'methods_{"unlimited" if np.isinf(b) else int(b)}.html' for b in result.budgets[1:]]
+    synchronize = r'''
+const chart = document.getElementById('{plot_id}');
+const scenes = ['scene', 'scene2', 'scene3', 'scene4'];
+let synchronizing = false;
+chart.on('plotly_relayout', event => {
+  if (synchronizing) return;
+  const key = Object.keys(event).find(k => /^scene[2-4]?\.camera$/.test(k));
+  if (!key) return;
+  synchronizing = true;
+  const update = Object.fromEntries(scenes.filter(s => s+'.camera' !== key).map(s => [s+'.camera', event[key]]));
+  Plotly.relayout(chart, update).finally(() => { synchronizing = false; });
+});
+'''
+    rows = result.summary
+    scope = '可规划域' if result.metadata['planning'] else '固定方案可调度域截面'
+    spacing = ' × '.join(f'{value:g}' for value in result.spacing)
+    cost_unit = result.metadata['cost_unit']
+    for index, (budget, filename) in enumerate(zip(result.budgets, filenames)):
+        links = ' · '.join(
+            f'<a href="{name}" aria-current="{"page" if i == index else "false"}">'
+            f'{"无限预算" if np.isinf(b) else f"{b:g} {cost_unit}"}</a>'
+            for i, (b, name) in enumerate(zip(result.budgets, filenames)))
+        navigation = f'<nav>预算：{links}</nav>' if result.metadata['planning'] else ''
+        table = []
+        for method, name in zip(METHODS, METHOD_NAMES):
+            row = next(row for row in rows if row['method'] == method
+                       and row['budget'] == (None if np.isinf(budget) else budget))
+            rate = lambda key: '—' if row[key] is None else f'{row[key]:.4f}%'
+            table.append(f'<tr><td>{name}</td><td>{rate("fr_percent")}</td>'
+                         f'<td>{rate("mr_percent")}</td><td>{row["total_seconds"]:.3f}</td></tr>')
+        chart = pio.to_html(plot_method_comparison(result, index), include_plotlyjs=True, full_html=False,
+                           div_id='method-comparison', post_script=synchronize,
+                           config=dict(responsive=True, displaylogo=False, scrollZoom=True))
+        html = f'''<!doctype html><html lang="zh-CN"><head><meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>{result.metadata['network']} · {scope}</title><style>
+body{{font-family:Arial,"Microsoft YaHei",sans-serif;color:#263641;margin:12px auto;max-width:1200px;padding:0 12px}}
+nav{{text-align:center;padding:8px}}a{{color:#426985;text-decoration:none}}a[aria-current=page]{{font-weight:700;text-decoration:underline}}
+table{{border-collapse:collapse;margin:10px auto;font-size:14px;min-width:520px}}td,th{{padding:7px 18px;text-align:right;border-bottom:1px solid #dce2e7}}td:first-child,th:first-child{{text-align:left}}
+p{{font-size:12px;color:#56616a;line-height:1.7;text-align:center}}
+</style></head><body>{navigation}{chart}
+<table><thead><tr><th>方法</th><th>FR</th><th>MR</th><th>总计算时间（秒）</th></tr></thead><tbody>{''.join(table)}</tbody></table>
+<p>图：{result.metadata['network']} 的{scope}；节点负荷单位为 kW，各面板使用同一组刻度。<br>
+网格步长 {spacing} kW；蓝色为重合部分，AC 面板为完整参考域；红色遗漏，黄色多余。<br>
+FR = 多余 / 计算域；MR = 遗漏 / AC 域。AC 自比较的零仅表示它是基准；有限网格上的零不表示连续误差严格为零。<br>
+总时间含建模、求解、构域及网格判定，混合方法计入线性阶段，AC 扫描成本单列。绘图和导出不计。<br>
+SOCP 两法展示切割外域，统一径向精度 {result.metadata['radial_tolerance']:g}。时间来自本次实验记录；AC 各预算为同一独立扫描的累计耗时。</p>
+</body></html>'''
+        (folder/filename).write_text(html, encoding='utf-8')
+    return folder/filenames[0]
