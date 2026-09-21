@@ -1,6 +1,8 @@
 # 四方法区域与求解时间比较
 
-实验日期：2026-09-19。网络为当前四节点五走廊算例，预算为 20,000、40,000、60,000 元和无限。每档预算重新求解全部方法；原始结果已无损迁移到 `results/four_bus_five_corridor/result.npz`，该记录采用重构前实现，当前统一入口为 `main.ipynb`。
+> 历史实验记录：本文对应的旧 NPZ 和 HTML 已于 2026-09-21 清理，可从 Git 历史查阅。当前保留的四节点五走廊结果见 [最新交互图](../results/four_bus_five_corridor/planning_5/region_comparison.html)；本文表格不代表当前流程的新计时。
+
+实验日期：2026-09-19。网络为四节点五走廊算例，预算为 20,000、40,000、60,000 元和无限。每档预算重新求解全部方法；原始结果曾迁移到 `results/four_bus_five_corridor/result.npz`，该记录采用重构前实现，当前统一入口为 `main.ipynb`。
 
 ## FR、MR 与总计算时间
 
@@ -61,8 +63,8 @@ FR = 多余体积 / 计算域体积；MR = 遗漏体积 / AC 域体积，沿用 
 
 ## 复现与查看
 
-当前用 `main.ipynb` 设置 `CASE="four_bus_five_corridor"` 和对应预算重新求解。本文表格及原 result.npz 保留历史计算时间，不代表当前代码的新计时。
+当前用 `main.ipynb` 设置 `network = FourBus()`、`DIVISIONS = 16` 和对应预算；`RECOMPUTE=False` 读取保留结果，改为 `True` 重新求解。本文历史表格需使用 Git 历史中的对应实现和数据复现，不能用当前流程的计时替代。
 
-`region_comparison.html` 是交互入口，顶部切换四档预算，四面板同步旋转。黄色为多余，红色为遗漏，蓝色为重合；“仅差异”可以显示很薄的黄色部分。AC 面板的蓝色表示全部参考域。各预算页面均自包含，可离线打开。
+当前交互入口为 `results/four_bus_five_corridor/planning_5/region_comparison.html`，顶部切换四档预算，四面板同步旋转。黄色为多余，红色为遗漏，蓝色为重合；“仅差异”可以显示很薄的黄色部分。AC 面板的蓝色表示全部参考域。各预算页面均自包含，可离线打开。
 
 模型推导见 [socp_model.md](socp_model.md)，代码入口为 `model.SOCPSP`、`main.ipynb` 中的显式主问题—子问题和顶点切割循环。指标出处：[Chen & Zhao (2023)](https://doi.org/10.1109/TPWRS.2022.3226894)。

@@ -1,5 +1,7 @@
 # 33 节点第一步：固定方案可调度域截面
 
+> 历史实验记录：本文对应的固定方案结果与网格加密数据已于 2026-09-21 清理，可从 Git 历史查阅。当前保留的是十六候选规划结果，见 [最新交互图](../results/case33bw/planning_16/region_comparison.html) 和 [统一流程说明](eight_line_extension.md)；本文数值不代表该规划实验。
+
 ## 实验口径
 
 本次固定 MATPOWER case33bw 原始网架、设备和根节点电压，32 条支路闭合、5 条联络线断开。
@@ -24,7 +26,7 @@
 
 支路递推与 pandapower 节点导纳矩阵 Newton–Raphson 在 6 个工况上交叉核对，
 全部节点电压幅值的最大差为 **6.89×10⁻¹⁵ p.u.** 以下。
-原始工况和各节点电压已随实验无损迁移到 `results/case33bw/result.npz` 的验证记录中。
+原始工况和各节点电压曾随实验迁移到 `results/case33bw/result.npz` 的验证记录中；该旧文件现已清理。
 
 ## 四方法结果
 
@@ -69,7 +71,7 @@ FR、MR 采用与前面 Chen & Zhao (2023) 对比一致的定义：
 | 192 | 34.47973% | 0.03298% | 0.03277% | 0 |
 
 128³ 到 192³ 的 FR 最大变化为 **0.00431 个百分点**；这说明本次网格估计已较稳定，不是严格离散误差界。
-每档都重新执行四种方法，历史结果保存在 `grid_64/result.npz`、`grid_128/result.npz` 和主目录的 `result.npz`；加密表按需计算，不再重复存储。
+每档都重新执行四种方法，历史结果曾保存在 `grid_64/result.npz`、`grid_128/result.npz` 和主目录的 `result.npz`；这些旧文件现已清理，表格作为历史记录保留。
 
 ## 模型、割与 AC 判定
 
@@ -122,9 +124,8 @@ SOCP 的对偶割收缩外域，同时保存可行内点。内点取固定背景
 - 最终保存的 SOCP/混合内域共有 68 个顶点，全部通过独立 AC 检查；最大径向停止残差低于 `6e-14` kW。
 - 保存的所有割均保留独立抽样中的 1119 个 AC 可行点；完整评价网格上的 MR 同时核查外域未遗漏参考点。
 - `Network/case33bw.py`：只提供网架；`model.py`：通用 LP/SOCP；`model.py`：独立 AC；`vertify.py`：比较工具。
-- `main.ipynb`：当前入口，设置 `CASE="case33bw"`、`PLANNING=False` 重新计算；`plot.py`：共用绘图与离线 HTML 导出。
-- `results/case33bw/region_comparison.html`：四图同步旋转，支持仅显示差异；红色遗漏，黄色多余。
-- `result.npz`：唯一原始结果，保存可行掩码、计时、内外域、割及来源；FR/MR 和颜色标签按需计算。
+- 本文使用重构前的固定方案入口；复现本表需从 Git 历史恢复相应实现和数据。当前 `main.ipynb` 使用 `network = Case33(candidate_count=16)` 运行规划实验，详见统一流程说明。
+- 原 `results/case33bw/region_comparison.html` 和 `result.npz` 已清理；当时保存的可行掩码、计时、内外域、割及来源可从 Git 历史查阅。
 
 本表保留重构前实际求解的结果和计时。数据迁移逐项核对全部标签与时间；共用模型另通过 15 项测试，重新运行 64³ 实验的四种分类与原记录逐点一致。
 

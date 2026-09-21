@@ -2,7 +2,8 @@
 import unittest  # 标准回归测试。
 import numpy as np  # 物理数组和可复现查询。
 from Network.case33bw import Case33, network  # 唯一物理数据输入。
-from model import PlanningEquations, PlanningSP, ACPowerFlow  # 正式物理方程与独立 AC。
+from model import PlanningEquations, PlanningSP
+from vertify import ACPowerFlow
 from vertify import validate_power_flow  # 节点导纳矩阵潮流交叉核验。
 
 

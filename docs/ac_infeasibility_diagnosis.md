@@ -1,5 +1,7 @@
 # 线性认证域中 AC 不可行点的原因诊断
 
+> 历史诊断记录：配套的 `results/vertify/` 数据已于 2026-09-21 清理，本文结论和表格保留作记录。旧脚本及数据需从 Git 历史查阅；最新四节点五走廊结果见 [区域对比](../results/four_bus_five_corridor/planning_5/region_comparison.html)。
+
 本次仅分析原模型及已保存的验证结果，没有接入 SOCP，没有更改线性模型或 AC 参考模型。
 
 ## 结论
@@ -84,10 +86,12 @@ AC 全局求解程序虽然给电流平方设置了 \(\ell\le1/\underline v\)，
 
 ## 复现与数据
 
-- [诊断脚本](D:/GithubProject/PlanRegion/results/vertify/diagnose_causes.py)：使用现有 AC 参数与方程，单独运行。
-- [0.625 kW 统计及数据来源校验值](D:/GithubProject/PlanRegion/results/vertify/causes_228.json)。
-- [逐点可行方案、费用及未确定费用记录](D:/GithubProject/PlanRegion/results/vertify/causes_228.npz)。
-- [三个实例的完整状态与交叉验证](D:/GithubProject/PlanRegion/results/vertify/cause_examples.json)。
-- [2.5 kW 复核结果](D:/GithubProject/PlanRegion/results/vertify/causes_57.json)。
+以下为历史文件名，当前工作树不再保留，复现需从 Git 历史恢复对应版本：
 
-运行方式：在项目目录使用现有 methods 环境执行诊断脚本，并指定参数 --divisions 228；--divisions 57 对应粗网格复核。脚本读取已保存的网格，不覆盖原验证图、FR/MR 或网格标签。
+- `results/vertify/diagnose_causes.py`：独立诊断脚本。
+- `results/vertify/causes_228.json`：0.625 kW 统计及数据来源校验值。
+- `results/vertify/causes_228.npz`：逐点可行方案、费用及未确定费用记录。
+- `results/vertify/cause_examples.json`：三个实例的完整状态与交叉验证。
+- `results/vertify/causes_57.json`：2.5 kW 复核结果。
+
+历史运行方式：在项目目录使用 methods 环境执行诊断脚本，并指定参数 `--divisions 228`；`--divisions 57` 对应粗网格复核。该脚本依赖同一历史版本保存的网格。

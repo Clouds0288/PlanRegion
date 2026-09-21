@@ -1,0 +1,54 @@
+{
+  "variant": "direct_all",
+  "elapsed": 0.8101009000092745,
+  "event": "coverage",
+  "counts": {
+    "mp1": 1,
+    "mp2": 1,
+    "residual": 1,
+    "sp": 84,
+    "cuts": 29,
+    "vertices": 84,
+    "sp_skipped": 0,
+    "residual_points": 0,
+    "gap_support_sp": 0,
+    "covered_support_sp": 0,
+    "reused_schemes": 0,
+    "reused_vertices": 0,
+    "reused_cuts": 0
+  },
+  "phases": {
+    "MP2": 0.013608700013719499,
+    "MP1": 0.009173300000838935,
+    "residual": 0.13626850000582635
+  },
+  "queries": [
+    {
+      "phase": "MP2",
+      "seconds": 0.013608700013719499,
+      "status": "optimal",
+      "objective": 3163.17221313557,
+      "bound": 3163.1732131355698,
+      "feasible": true
+    },
+    {
+      "phase": "MP1",
+      "seconds": 0.009173300000838935,
+      "status": "optimal",
+      "objective": 0.0,
+      "bound": 0.0,
+      "feasible": true
+    }
+  ],
+  "max_total": 3163.17221313557,
+  "residual": {
+    "complete": true,
+    "bound": -0.0,
+    "x": null,
+    "p": null,
+    "solver_status": 2,
+    "binary_variables": 59,
+    "linear_constraints": 262,
+    "quadratic_constraints": 40
+  }
+}

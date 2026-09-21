@@ -1,0 +1,30 @@
+{
+  "counts": [
+    8
+  ],
+  "budgets": [
+    0.0
+  ],
+  "variants": [
+    "baseline",
+    "direct_mp",
+    "direct_all"
+  ],
+  "time_limit": 300.0,
+  "source_hashes": {
+    "main.py": "c161718fa6c529551bbf60bee9492b034c6552a974d2cda123ab0339ee9c9b5b",
+    "model.py": "161fb313cd132698e1e6f3e2f90920bb74ba4479696f1c1010c6596310a149ed",
+    "region.py": "77c0c29bc658b22f959138e74bba6eba41c92eca8343d26396caf2b0542c2732",
+    "vertify.py": "09fa58c8a9425cc9f0699a2cfd919733fb083e7ef85fd2fa812441a7cbd83a7a",
+    "plot.py": "fea872bca4766c3404beb75d65516da2bdf119ff4248751c4eabc82402a554fe",
+    "live_view.html": "3045dda0e39b728ad4a7ad7df57da602923639687e90c0fd8ba0322834e65f9d",
+    "Network/__init__.py": "376577cfe1c46f6389b2d65651c8ef5bbe9b6e714d97a0b6d29867cd8c059b97",
+    "Network/case33bw.py": "014c2fc78c876a4d7744c01de7d4284280d53c5000c91bad7c81e1ff9556fd4f",
+    "Network/data/case33bw.m": "60c5d6312a89607e76c86cb62268b548f37d81f1f037c1ff53aca1a8ecaf83c1"
+  },
+  "tau": 0.002,
+  "physical_tolerance": 1e-08,
+  "geometry_tolerance": 1e-08,
+  "repeats": 1,
+  "order": "Variant order rotates by case; cases run sequentially."
+}

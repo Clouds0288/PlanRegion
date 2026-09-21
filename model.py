@@ -1,17 +1,15 @@
-"""逐线路规划方程、紧凑主问题、联合割子问题及独立 AC 参考。
+"""逐线路规划方程、紧凑主问题、联合割子问题及全局残余搜索。
 
 规划割统一为 a+bᵀp+dᵀx≥0；固定网架时 x 为空，退化为负荷割。
-负荷参数 p 用 kW，运行变量 P/Q/v/ell 用标幺值；流程由 main.ipynb 组织。
+负荷参数 p 用 kW，运行变量 P/Q/v/ell 用标幺值；流程由 main.py 组织。
 """
-import gurobipy as gp  # 求解混合整数规划及必要的非凸 AC 核验。
+import gurobipy as gp  # 求解规划主问题与全局残余 MILP。
 import numpy as np  # 组装网架矩阵与潮流状态。
 from gurobipy import GRB  # 使用变量类型、优化方向和明确的求解状态。
 import clarabel  # 求解固定整数选型后的连续 LP/SOCP。
 from scipy import sparse  # 将连续子问题矩阵转换为稀疏格式。
 from time import perf_counter  # 数值复核与 phase I 共用同一个 SP 时间预算。
 
-AC_TOL = 1e-9  # AC 运行限值的标幺容差。
-FIXED_POINT_TOL = 1e-12  # AC 电流等式的收敛容差。
 PLANNING_TOL = 1e-8  # 规划 SP 的原始标幺约束容差，不是几何误差。
 
 
@@ -189,7 +187,8 @@ class PlanningEquations:  # 统一生成线性和 SOCP 系数；不承担预算�
 class PlanningModel:  # 负责单次规划查询；多次查询和切割循环由 Notebook 组织。
     """逐线路 MILP/MISOCP；cuts_only=True 时为包含 x、p 的联合割主问题。"""
 
-    def __init__(self, equations, *, power=None, budget=np.inf, direction=None, cuts_only=False):  # 多个查询复用同一网架方程。
+    def __init__(self, equations, *, power=None, budget=np.inf, direction=None, cuts_only=False,
+                 min_total=None, fixed_x=None):  # MP1 总量模式保留节点间自由分配。
         self.equations = e = equations  # MP 和 SP 共享固定系数，不在每个查询中重复推导。
         network, method = e.network, e.method  # 查询只改变负荷、预算和目标。
         self.model = m = gp.Model('compact_'+method)  # 为本次投资或边界查询创建优化模型。
@@ -202,6 +201,8 @@ class PlanningModel:  # 负责单次规划查询；多次查询和切割循环�
         m.Params.NonConvex = 0  # 若模型误写成非凸二次式，立即暴露，不能悄悄改用非凸求解。
         self.x = m.addMVar(len(e.cost),vtype=GRB.BINARY,name='line_type')  # 每个候选型号一个二进制变量，固定网架时长度为零。
         self.power = p = m.addMVar(len(network.load_nodes),lb=0.,name='p_kw')  # 独立负荷非负，单位为 kW。
+        if fixed_x is not None:
+            self.x.LB = self.x.UB = np.asarray(fixed_x)
         for group,option in zip(e.groups,network.line_options):  # 每条走廊最多投入一个方向和型号。
             total = self.x[group].sum()  # 正反向型号属于同一组选项。
             m.addConstr(total<=1. if option.optional else total==1.)  # 固定支路必须选型，可选走廊允许不投入。
@@ -214,8 +215,11 @@ class PlanningModel:  # 负责单次规划查询；多次查询和切割循环�
         m.addConstr(p.sum()/network.base<=network.power_limit/network.base)  # 把无损总负荷外界转为标幺尺度以改善数值条件。
         if np.isfinite(budget):  # 无限预算无需建立额外投资约束。
             m.addConstr(e.cost@self.x<=budget)  # 所有线路型号的增量投资之和不得超过预算。
-        if power is not None:  # 固定负荷查询求能够承载该点的最低投资。
-            m.addConstr(p==np.asarray(power))  # 锁定查询负荷，并以型号投资作为最小化目标。
+        if power is not None or min_total is not None:
+            if power is not None:
+                m.addConstr(p==np.asarray(power))
+            if min_total is not None:
+                m.addConstr(p.sum()/network.base >= float(min_total)/network.base)
             m.setObjective(e.cost@self.x,GRB.MINIMIZE)  # 锁定查询负荷，并以型号投资作为最小化目标。
             self.objective_scale = 1.  # 投资目标本来就是原单位，返回时无需缩放。
         else:  # 负荷未固定时执行预算内的负荷最大化查询。
@@ -245,6 +249,24 @@ class PlanningModel:  # 负责单次规划查询；多次查询和切割循环�
     def add_cut(self, cut):  # 向主问题追加一条同时含 p 和 x 的有效联合割。
         n = len(self.equations.network.load_nodes)  # 用负荷维数确定割中 p 与 x 系数的分界。
         self.model.addConstr(cut[0]+cut[1:1+n]@self.power+cut[1+n:]@self.x>=0.)  # 联合割对全部合法选型有效。
+
+
+    def use_incumbent(self, incumbent, *, budget, power=None, min_total=None):
+        """验证 MP1 的已有原始证书，并设置费用上界与连续初值。"""
+        equations = self.equations
+        if ((power is None and min_total is None) or not incumbent.get('feasible')
+                or incumbent.get('state') is None):
+            raise ValueError('MP1 incumbent must have a primal feasibility certificate')
+        if equations.margin(incumbent['x'], incumbent['p'], incumbent['state']) < -1e-8:
+            raise ValueError('MP1 incumbent does not satisfy these equations')
+        cost = float(equations.cost@incumbent['x'])
+        if (cost > budget+1e-7 or
+                (min_total is not None and sum(incumbent['p']) < min_total-1e-7) or
+                (power is not None and not np.allclose(incumbent['p'], power, rtol=0., atol=1e-7))):
+            raise ValueError('MP1 incumbent does not satisfy this query')
+        self.power.Start = incumbent['p']
+        self.model.addConstr(equations.cost@self.x <= cost+1e-9)
+        return cost
 
     def exclude(self, x):  # 仅在当前固定负荷查询内排除一个已证 AC 不可行的建设方案。
         self.model.addConstr((1-2*x)@self.x>=1-x.sum())  # Hamming 距离至少为一，排除且只排除这个离散建设向量。
@@ -321,6 +343,26 @@ class PlanningSP:  # 同一个连续子问题同时支持 LP 和 SOCP 认证及�
         cut /= max(scale,1e-30)  # 零乘子不形成分离割，避免在超时初始解上出现 0/0。
         if not (cut[0]+cut[1:1+len(power)]@power+cut[1+len(power):]@x < -1e-9):  # 只在割严格排除当前 (p,x) 时交给外层使用。
             cut = None  # 浮点边界可能尚未获证且无可靠割；外层必须显式处理未确定状态。
+        if cut is None and deadline>perf_counter():
+            # 原始等式用零锥精确表示，避免 phase I 的成对松弛等式在边界退化。
+            exact_rows = np.r_[np.arange(e.equal_count),
+                               rows[rows >= 2*e.equal_count]].astype(int)
+            exact_matrix = np.vstack([-e.G[np.ix_(exact_rows, columns)], -np.eye(n), np.eye(n)])
+            exact_rhs = np.r_[(e.c+e.F@power)[exact_rows], np.zeros(n), upper[columns]]
+            exact_kinds = [clarabel.ZeroConeT(e.equal_count),
+                           clarabel.NonnegativeConeT(e.linear_count-2*e.equal_count)]
+            exact_kinds += [clarabel.SecondOrderConeT(s.stop-s.start) for s in cones]
+            exact_kinds += [clarabel.NonnegativeConeT(2*n)]
+            self.settings.time_limit = max(0., deadline-perf_counter())
+            exact = clarabel.DefaultSolver(sparse.csc_matrix((n, n)), np.zeros(n),
+                                          sparse.csc_matrix(exact_matrix), exact_rhs,
+                                          exact_kinds, self.settings).solve()
+            if np.isfinite(exact.x).all():
+                candidate = np.zeros(len(e.upper))
+                candidate[columns] = exact.x
+                candidate = e.restore(x, power, candidate)
+                if e.margin(x, power, candidate) >= -PLANNING_TOL:
+                    return dict(eta=eta, cut=None, state=candidate, feasible=True, termination='equality_polish')
         if cut is None and deadline>perf_counter():  # 仅数值停滞且尚有时间时，直接复核原物理约束。
             problem = PlanningModel(e,power=power)  # 使用同一方程的原始 LP/SOCP，不带 phase-I 松弛量。
             with problem.model:  # 本次所有型号都固定，复核仍是连续问题。
@@ -331,125 +373,49 @@ class PlanningSP:  # 同一个连续子问题同时支持 LP 和 SOCP 认证及�
         return dict(eta=eta,cut=cut,state=state,feasible=False,termination=str(result.status))  # 失败状态不能认证查询点；有效割仍可在超时后保留。
 
 
-class ACPowerFlow:  # 通过另一套支路递推和完整电流等式建立 AC 参考。
-    """独立完整 AC；仅读取网架数据，不使用 LP/SOCP 的方程矩阵或乘子。
-
-    适用于非负 P/Q 负荷、正阻抗、根电压固定为 1 p.u. 的径向网络。
-    不读取 PlanningEquations 的矩阵；以支路递推独立实现 AC 电流等式。
-    """
-
-    def __init__(self, network):  # 保存网架引用，按需创建非凸核验模型。
-        self.network = network  # AC 与 LP/SOCP 只共享网架及运行限值数据。
-        self.model = None  # 非凸模型仅在不动点无法判定时创建。
-
-    def state(self, power, ell):  # 为给定负荷及电流重建独立 AC 状态。
-        p, q = self.network.loads(power)  # 补入固定背景负荷，并将 kW/kvar 换成标幺量。
-        return self._state(p, q, ell)  # 可一次重建多组负荷状态。
-
-    def _state(self, p, q, ell):  # 内部批量递推使用已换算为标幺值的完整节点负荷。
-        c = self.network  # 读取独立 AC 所需的网架参数。
-        ell = np.asarray(ell).reshape(-1, c.n)  # 行是查询样本，列是支路电流平方。
-        P, Q = p+ell*c.r, q+ell*c.reactance  # 本节点负荷加本支路有功/无功损耗。
-        for i in reversed(c.order):  # 从叶到根，先汇总子树功率。
-            if c.parent[i] >= 0:  # 接根支路不再向其他非根支路汇总。
-                P[:, c.parent[i]] += P[:, i]  # P_parent=p_parent+r_parent*ell_parent+ΣP_child。
-                Q[:, c.parent[i]] += Q[:, i]  # 无功平衡使用同样的子树汇总。
-        v, u = np.ones_like(P), np.ones_like(P)  # 根电压平方为 1。
-        for i in c.order:  # 从根到叶，根据上一级电压逐支路计算压降。
-            if c.parent[i] >= 0:  # 接根支路继续使用固定根电压。
-                u[:, i] = v[:, c.parent[i]]  # 当前支路送端电压等于父节点电压。
-            # 完整支路压降：v=u-2(rP+xQ)+(r²+x²)*ell，保留二次电流项。
-            v[:, i] = (u[:, i]-2*(c.r[i]*P[:, i]+c.reactance[i]*Q[:, i])  # 从送端电压减去一次支路压降。
-                       +(c.r[i]**2+c.reactance[i]**2)*ell[:, i])  # 加入完整 AC 压降中的电流平方修正。
-        return P, Q, v, u  # 返回送端功率、受端电压平方及送端电压平方。
-
-    def violation(self, P, Q, v):  # 计算每个样本对全部运行限值的最大违反量。
-        c = self.network  # 读取支路和电源限值。
-        ps, qs = P[:, c.roots].sum(axis=1), Q[:, c.roots].sum(axis=1)  # 含网损的电源送出功率。
-        # 所有项目均写为“违反量”：≤0 才满足全部限值，未启用上界产生 -inf。
-        return np.maximum.reduce([  # 每个样本取所有运行约束的最大违反量。
-            np.max(c.vmin-v, axis=1), np.max(v-c.vmax, axis=1),  # 电压平方下限和上限。
-            np.max(P-c.capacity, axis=1), ps-c.source_pmax, qs-c.source_qmax,  # 支路及电源 P/Q 限值。
-            np.hypot(ps, qs)-c.source_smax])  # 电源视在功率上限。
-
-    def classify(self, power, return_currents=False):  # 独立判定 AC 可行性，并可返回电流证书。
-        """1 可行，-1 已证不可行，0 未确定；不把迭代失败当作不可行。"""
-        c = self.network  # 加载同一物理网架的纯负荷参数。
-        power = np.asarray(power).reshape(-1, len(c.load_nodes))  # 每个样本包含三个独立负荷坐标。
-        p, q = c.loads(power)  # 背景负荷只组装一次，所有不动点迭代复用。
-        ell = np.zeros((len(power), c.n))  # 从零电流开始，构造单调递增的电流平方序列。
-        status = np.zeros(len(power), dtype=np.int8)  # 初始均为未确定；0 绝不能直接算作不可行。
-        active = np.arange(len(power))  # 后续仅更新尚未得到证书的样本。
-        for _ in range(160):  # 达到迭代上限仍未获证的点保持未确定。
-            if not len(active):  # 所有样本均已获得可行或不可行证书。
-                break  # 没有待判定样本时结束迭代。
-            P, Q, v, u = self._state(p[active], q[active], ell[active])  # 使用当前电流下界重建支路状态。
-            # ell 从零单调递增：功率是下界、电压是上界；仅这些越限能提前拒绝。
-            ps, qs = P[:, c.roots].sum(axis=1), Q[:, c.roots].sum(axis=1)  # 当前电源功率也是最终功率的下界。
-            bad = (np.any(v < c.vmin-AC_TOL, axis=1)  # 电压上界已低于下限，后续损耗只会进一步降压。
-                   | np.any(P > c.capacity+AC_TOL, axis=1)  # 支路功率下界已经超过上限。
-                   | (ps > c.source_pmax+AC_TOL) | (qs > c.source_qmax+AC_TOL)  # 电源 P/Q 下界已超过运行上限。
-                   | (np.hypot(ps, qs) > c.source_smax+AC_TOL) | np.any(u <= 0, axis=1))  # 视在容量越限或正电压条件已不可能满足。
-            residual = np.max(np.abs(P*P+Q*Q-u*ell[active]), axis=1)  # AC 等号残差，不能改成 SOCP 不等号。
-            good = ~bad & (residual <= FIXED_POINT_TOL) & np.all(v <= c.vmax+AC_TOL, axis=1)  # 收敛且全部运行限值满足。
-            status[active[bad]], status[active[good]] = -1, 1  # 分别保存不可行和可行证书。
-            keep = ~(bad | good)  # 仅未确定样本继续迭代。
-            ell[active[keep]] = (P[keep]**2+Q[keep]**2)/u[keep]  # 完整 AC 电流等式的不动点更新。
-            active = active[keep]  # 数值未收敛的样本在迭代结束后仍保留 0 状态。
-        return (status, ell) if return_currents else status  # 可选电流证书用于重建相量交叉核验。
 
 
-    def _build_global(self, environment):  # 为不动点未判定的情况建立独立非凸 AC 核验。
-        """显式非凸 AC 等式模型，用于未确定点和独立交叉核验。"""
-        c = self.network  # 读取网架原始参数，不导入规划方程矩阵。
-        m = gp.Model('independent_AC_reference', env=environment)  # 在共享环境中创建本方案的 AC 等式模型。
-        m.Params.OutputFlag = 0  # 关闭逐点核验日志。
-        m.Params.Threads = 1  # 固定线程数，避免不同方案计时口径变化。
-        m.Params.NonConvex = 2  # 用空间分支定界处理 P²+Q²=u*ell 的非凸等式。
-        m.Params.FeasibilityTol = m.Params.OptimalityTol = AC_TOL  # 与独立 AC 限值核验保持同级精度。
-        m.Params.DualReductions = 0  # 保留明确的不可行状态。
-        m.Params.TimeLimit = 30  # 超时无证书时仍返回未确定，不能据此判为不可行。
-        P = m.addVars(c.n, lb=0, ub=c.capacity.tolist())  # 纯负荷径向网中送端有功非负，并受已给定支路上限约束。
-        Q = m.addVars(c.n, lb=0, ub=min(c.source_qmax, c.source_smax))  # 支路无功不超过电源总无功/视在上界。
-        v = m.addVars(c.n, lb=c.vmin.tolist(), ub=c.vmax.tolist())  # 变量是电压平方，网架限值已平方。
-        bound = min(c.source_smax**2, c.source_pmax**2+c.source_qmax**2)/c.vmin.min()  # ell=(P²+Q²)/u 的有效全网上界。
-        ell = m.addVars(c.n, lb=0, ub=bound)  # 每条支路一个非负电流平方变量。
-        bp, bq = [], []  # 保存功率平衡行，后续查询只修改节点负荷 RHS。
-        for i in range(c.n):  # 对每条入边及其受端节点建立平衡与压降方程。
-            up = 1. if c.parent[i] < 0 else v[int(c.parent[i])]  # 根节点电压固定，其余取父节点变量。
-            # P_i-ΣP_child-r_i*ell_i=p_i；Q_i-ΣQ_child-x_i*ell_i=q_i。
-            bp.append(m.addConstr(P[i]-gp.quicksum(P[int(j)] for j in c.children[i])-c.r[i]*ell[i] == 0))  # 查询时 RHS 替换为 p_i。
-            bq.append(m.addConstr(Q[i]-gp.quicksum(Q[int(j)] for j in c.children[i])-c.reactance[i]*ell[i] == 0))  # 查询时 RHS 替换为 q_i。
-            m.addConstr(v[i] == up-2*(c.r[i]*P[i]+c.reactance[i]*Q[i])  # 完整 AC 支路压降。
-                        +(c.r[i]**2+c.reactance[i]**2)*ell[i])  # 补入本支路的二次电流项。
-            m.addQConstr(P[i]*P[i]+Q[i]*Q[i] == up*ell[i])  # AC 必须保留等号。
-        ps, qs = (gp.quicksum(values[int(i)] for i in c.roots) for values in (P, Q))  # 电源送出功率包含网损。
-        if np.isfinite(c.source_pmax):  # 只有给定有功上限时才建立此约束。
-            m.addConstr(ps <= c.source_pmax)  # 电源有功上限。
-        if np.isfinite(c.source_qmax):  # 只有给定无功上限时才建立此约束。
-            m.addConstr(qs <= c.source_qmax)  # 电源无功上限。
-        if np.isfinite(c.source_smax):  # 未给定变压器容量时不补造视在约束。
-            m.addQConstr(ps*ps+qs*qs <= c.source_smax**2)  # 电源视在容量圆。
-        m.setObjective(0.)  # 这里只判可行性，不额外改变运行目标。
-        m.update()  # 提交变量及约束，之后可直接更新 RHS。
-        self.model = m, ell, bp, bq  # 同一方案的不同查询复用此非凸模型。
 
-    def global_status(self, power, environment, time_limit=10.):  # 独立非凸核验在给定时限内返回证书或未确定。
-        if self.model is None:  # 不动点已能判定的方案无需创建全局求解器。
-            self._build_global(environment)  # 首次遇到未确定点时才付出建模成本。
-        m, ell, bp, bq = self.model  # 复用同一方案的电流变量和节点平衡行。
-        m.Params.TimeLimit = max(0.,time_limit)  # 设置本次独立 AC 求解的时限。
-        p, q = self.network.loads(power)  # 固定本次查询对应的全网节点功率。
-        m.setAttr('RHS', bp, p[0])  # 更新有功平衡。
-        m.setAttr('RHS', bq, q[0])  # 更新无功平衡。
-        m.optimize()  # 寻找 AC 可行证书，或证明该查询不可行。
-        if m.SolCount:  # 一个满足等式及限值的可行解就足以证明可行，无需等待最优性。
-            current = np.array([ell[i].X for i in ell])  # 提取候选电流平方。
-            P, Q, v, u = self.state(power, current)  # 通过独立支路递推重新计算，检查求解器数值误差。
-            if np.max(np.abs(P*P+Q*Q-u*current)) <= 1e-7 and self.violation(P, Q, v).max() <= 1e-7:  # 复核独立重建状态的等式残差及全部运行限值。
-                return 1  # 电流等式残差和所有运行限值都通过才接受证书。
-        return -1 if m.Status == GRB.INFEASIBLE else 0  # 只有明确的不可行证明才返回 -1。
+class RemainingRegionModel:
+    """整数联合割外域上的残余 MILP；几何半空间由 region 提供。"""
 
-    def close(self):  # 释放按需创建的非凸优化模型。
-        if self.model is not None:  # 仅不动点核验时没有需要释放的求解器。
-            self.model[0].dispose()  # 释放 Gurobi 模型及关联资源。
+    def __init__(self, equations, budget, bounds, total_bound, cuts, inner_halfspaces, tau):
+        self.problem = problem = PlanningModel(equations, budget=budget, cuts_only=True)
+        m = self.model = problem.model
+        problem.power.UB = bounds
+        m.addConstr(problem.power.sum() <= total_bound)
+        self.distance_scale = 1000.
+        for cut in cuts:
+            cut = np.asarray(cut)
+            scale = max(np.max(np.abs(np.r_[cut[0], cut[1:4]*bounds, cut[4:]])), 1e-20)
+            problem.add_cut(cut*self.distance_scale/scale)
+        # 等价缩放，避免 1e-8 的覆盖阈值与求解器绝对容差处于相近量级。
+        delta = m.addVar(lb=-4.*self.distance_scale, ub=4.*self.distance_scale, name='uncovered_distance')
+        for k, eq in enumerate(inner_halfspaces):
+            select = m.addVars(len(eq), vtype=GRB.BINARY, name=f'outside_{k}')
+            m.addConstr(select.sum() == 1)
+            for f, face in enumerate(eq):
+                a = face[:3]*(1-tau)
+                # z=p/bounds in [0,1]^3；M 由该盒的精确下界推出。
+                big_m = 4.-face[3]-np.minimum(a, 0.).sum()
+                expression = gp.quicksum(float(a[j]/bounds[j])*problem.power[j].item() for j in range(3))
+                m.addConstr(delta <= self.distance_scale*(expression+float(face[3])+float(big_m)*(1-select[f])))
+        m.setObjective(delta, GRB.MAXIMIZE)
+
+    def solve(self, tolerance, time_limit=120.):
+        m, problem = self.model, self.problem
+        m.Params.TimeLimit = time_limit
+        # 探索阶段只需一个可靠未覆盖点；停止证明仍必须检查全局上界。
+        m.Params.BestObjStop = max(10*tolerance, 1e-6)*self.distance_scale
+        started = perf_counter()
+        m.optimize()
+        seconds = perf_counter()-started
+        if m.Status == GRB.INFEASIBLE:
+            return dict(complete=True, bound=None, x=None, p=None, solve_seconds=seconds)
+        bound = float(m.ObjBound)/self.distance_scale
+        if bound <= tolerance:
+            return dict(complete=True, bound=bound, x=None, p=None, solve_seconds=seconds)
+        if not m.SolCount or m.ObjVal/self.distance_scale <= tolerance:
+            return dict(complete=False, bound=bound, x=None, p=None, solve_seconds=seconds)
+        return dict(complete=False, bound=bound, x=np.rint(problem.x.X).astype(int),
+                    p=problem.power.X, solve_seconds=seconds)

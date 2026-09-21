@@ -1,0 +1,132 @@
+{
+  "passed": true,
+  "designs": 16,
+  "support_queries": 224,
+  "regions": [
+    {
+      "method": "linear",
+      "budget": 0.0,
+      "passed": true,
+      "reference_max_total": 3415.8458956096856,
+      "maximum_error_kw": 0.000999494822735869,
+      "inner_vertices": 9,
+      "boundary_points": 7
+    },
+    {
+      "method": "linear",
+      "budget": 1.0,
+      "passed": true,
+      "reference_max_total": 4064.251525189049,
+      "maximum_error_kw": 0.0009994166271098948,
+      "inner_vertices": 29,
+      "boundary_points": 28
+    },
+    {
+      "method": "linear",
+      "budget": 2.0,
+      "passed": true,
+      "reference_max_total": 4180.835016667843,
+      "maximum_error_kw": 0.0009994231950258836,
+      "inner_vertices": 32,
+      "boundary_points": 56
+    },
+    {
+      "method": "linear",
+      "budget": null,
+      "passed": true,
+      "reference_max_total": 5131.107375774097,
+      "maximum_error_kw": 0.0009993493622459937,
+      "inner_vertices": 8,
+      "boundary_points": 112
+    },
+    {
+      "method": "socp",
+      "budget": 0.0,
+      "passed": true,
+      "reference_max_total": 3163.173214977974,
+      "maximum_error_kw": 0.0009984629900827713,
+      "inner_vertices": 41,
+      "boundary_points": 7
+    },
+    {
+      "method": "socp",
+      "budget": 1.0,
+      "passed": true,
+      "reference_max_total": 3776.7486605367917,
+      "maximum_error_kw": 0.000972539941813011,
+      "inner_vertices": 175,
+      "boundary_points": 28
+    },
+    {
+      "method": "socp",
+      "budget": 2.0,
+      "passed": true,
+      "reference_max_total": 3895.535479814102,
+      "maximum_error_kw": 0.0009536040979583049,
+      "inner_vertices": 252,
+      "boundary_points": 56
+    },
+    {
+      "method": "socp",
+      "budget": null,
+      "passed": true,
+      "reference_max_total": 4796.798663879291,
+      "maximum_error_kw": 0.0009976055780498427,
+      "inner_vertices": 284,
+      "boundary_points": 112
+    },
+    {
+      "method": "hybrid",
+      "budget": 0.0,
+      "passed": true,
+      "reference_max_total": 3163.173214977974,
+      "maximum_error_kw": 0.0009853350766206859,
+      "inner_vertices": 39,
+      "boundary_points": 7
+    },
+    {
+      "method": "hybrid",
+      "budget": 1.0,
+      "passed": true,
+      "reference_max_total": 3776.7486605367917,
+      "maximum_error_kw": 0.0009823106943258608,
+      "inner_vertices": 168,
+      "boundary_points": 28
+    },
+    {
+      "method": "hybrid",
+      "budget": 2.0,
+      "passed": true,
+      "reference_max_total": 3895.535479814102,
+      "maximum_error_kw": 0.0009884861919999821,
+      "inner_vertices": 246,
+      "boundary_points": 56
+    },
+    {
+      "method": "hybrid",
+      "budget": null,
+      "passed": true,
+      "reference_max_total": 4796.798663879291,
+      "maximum_error_kw": 0.0009857597442533006,
+      "inner_vertices": 282,
+      "boundary_points": 112
+    }
+  ],
+  "inner_vertices_checked": 1565,
+  "cuts_globally_checked": 48,
+  "ac_grid_points": 512,
+  "ac_design_point_checks": 8192,
+  "seconds": 7.592930399929173,
+  "source_hashes": {
+    "main.py": "f4aa19a96c7b20d91eaec17c2d17dff95bb520ffb82d15d1cbe5c2a7b33adf9d",
+    "continuous.py": "fe66ea8d22c7cfb073f669297d9be499728ed9529be4f4bab8087825ce5d8e32",
+    "model.py": "7dd60a69f45ac73ed4e64060cb8c75321c58c0ee7cf45862e318c1d3b617faa5",
+    "region.py": "1c2a4a9a9cfe5753a5f087e7e4b18fcf13df5355f5ef5edec75213812e7a3571",
+    "vertify.py": "85e88444d89b24c9d0037417309a5d58967285ebcafa63430c9117bec4463858",
+    "progress.py": "7c81bec69eabc6b25866008b9a711b5c27d942c0f08b2c53e3adfec57e54d6d1",
+    "live_view.html": "015664a30bdd3e19289175ab5f89afa3b1c823e22a028bc5497ddb42d7ce38aa",
+    "Network/__init__.py": "376577cfe1c46f6389b2d65651c8ef5bbe9b6e714d97a0b6d29867cd8c059b97",
+    "Network/case33bw.py": "014c2fc78c876a4d7744c01de7d4284280d53c5000c91bad7c81e1ff9556fd4f",
+    "Network/data/case33bw.m": "60c5d6312a89607e76c86cb62268b548f37d81f1f037c1ff53aca1a8ecaf83c1"
+  }
+}

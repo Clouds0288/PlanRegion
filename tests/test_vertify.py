@@ -6,8 +6,9 @@ import numpy as np  # 复相量、表面几何和标签数组。
 import gurobipy as gp  # 独立非凸 AC 求解环境。
 from Network.case33bw import Case33  # 当前正式网架。
 from plot import voxel_surface  # 核对颜色区域的真实体素表面。
-from model import ACPowerFlow  # 独立 AC 方程与不动点认证。
-from vertify import BenchmarkResult, disagreement, disagreement_interval, METHODS  # 同一结果格式与指标定义。
+from vertify import ACPowerFlow
+from main import BenchmarkResult
+from vertify import disagreement, disagreement_interval, METHODS
 
 
 class ACReferenceTests(unittest.TestCase):  # 以代表网架核对独立 AC 的数值证书。

@@ -1,0 +1,334 @@
+{
+  "passed": true,
+  "folders": {
+    "baseline": "C:\\Users\\10856\\Desktop\\GithubProject\\PlanRegion\\results\\case33bw\\planning_4_union_baseline",
+    "independent": "C:\\Users\\10856\\Desktop\\GithubProject\\PlanRegion\\results\\case33bw\\planning_4_union",
+    "incremental": "C:\\Users\\10856\\Desktop\\GithubProject\\PlanRegion\\results\\case33bw\\planning_4_union_incremental"
+  },
+  "totals": {
+    "baseline": {
+      "seconds": 65.69885610009078,
+      "sp": 2827,
+      "mp_seconds": 23.675803700229153,
+      "sp_seconds": 8.588322701514699,
+      "geometry_seconds": 28.028477198560722
+    },
+    "independent": {
+      "seconds": 32.43159160006326,
+      "sp": 1656,
+      "mp_seconds": 12.319788699038327,
+      "sp_seconds": 4.805545999319293,
+      "geometry_seconds": 9.325428195879795
+    },
+    "incremental": {
+      "seconds": 57.49883439997211,
+      "sp": 1555,
+      "mp_seconds": 28.750993300811388,
+      "sp_seconds": 4.568896498531103,
+      "geometry_seconds": 14.331861099111848
+    }
+  },
+  "rows": [
+    {
+      "method": "linear",
+      "budget": 0.0,
+      "passed": true,
+      "baseline": {
+        "seconds": 0.11882229999173433,
+        "sp": 17,
+        "max_total": 3415.844896114863,
+        "gap": 5.7810669468015936e-08
+      },
+      "independent": {
+        "seconds": 0.11158659995999187,
+        "sp": 17,
+        "max_total": 3415.844896114863,
+        "gap": 5.7810669468015936e-08
+      },
+      "incremental": {
+        "seconds": 0.11474830005317926,
+        "sp": 17,
+        "max_total": 3415.844896114863,
+        "gap": 5.7810669468015936e-08
+      }
+    },
+    {
+      "method": "linear",
+      "budget": 1.0,
+      "passed": true,
+      "baseline": {
+        "seconds": 0.49586360005196184,
+        "sp": 46,
+        "max_total": 4064.250525772422,
+        "gap": 6.209402812460738e-08
+      },
+      "independent": {
+        "seconds": 0.5404538000002503,
+        "sp": 47,
+        "max_total": 4064.250525772422,
+        "gap": 6.180345571507089e-08
+      },
+      "incremental": {
+        "seconds": 0.5440785000100732,
+        "sp": 31,
+        "max_total": 4064.250525725262,
+        "gap": 6.092759056082815e-08
+      }
+    },
+    {
+      "method": "linear",
+      "budget": 2.0,
+      "passed": true,
+      "baseline": {
+        "seconds": 0.6129557000240311,
+        "sp": 49,
+        "max_total": 4180.834017244648,
+        "gap": 4.587191165436195e-08
+      },
+      "independent": {
+        "seconds": 0.9838700999971479,
+        "sp": 52,
+        "max_total": 4180.834017244648,
+        "gap": 4.621344768181196e-08
+      },
+      "incremental": {
+        "seconds": 1.3377462000353262,
+        "sp": 37,
+        "max_total": 4180.834017188901,
+        "gap": 4.655452394622562e-08
+      }
+    },
+    {
+      "method": "linear",
+      "budget": null,
+      "passed": true,
+      "baseline": {
+        "seconds": 0.1226968999253586,
+        "sp": 19,
+        "max_total": 5131.106376424735,
+        "gap": 3.813236941483032e-08
+      },
+      "independent": {
+        "seconds": 0.11571490007918328,
+        "sp": 19,
+        "max_total": 5131.106376424735,
+        "gap": 3.813236941483032e-08
+      },
+      "incremental": {
+        "seconds": 0.32007820007856935,
+        "sp": 12,
+        "max_total": 5131.106376398972,
+        "gap": 3.813236905975193e-08
+      }
+    },
+    {
+      "method": "socp",
+      "budget": 0.0,
+      "passed": true,
+      "baseline": {
+        "seconds": 0.6611360999522731,
+        "sp": 79,
+        "max_total": 3163.172216514984,
+        "gap": 0.005987021068002576
+      },
+      "independent": {
+        "seconds": 0.6532769999466836,
+        "sp": 79,
+        "max_total": 3163.172216514984,
+        "gap": 0.005987021068002576
+      },
+      "incremental": {
+        "seconds": 0.6299086000071838,
+        "sp": 79,
+        "max_total": 3163.172216514984,
+        "gap": 0.005987021068002576
+      }
+    },
+    {
+      "method": "socp",
+      "budget": 1.0,
+      "passed": true,
+      "baseline": {
+        "seconds": 5.680139000061899,
+        "sp": 310,
+        "max_total": 3776.74768799685,
+        "gap": 0.005987055452215655
+      },
+      "independent": {
+        "seconds": 5.479509399970993,
+        "sp": 260,
+        "max_total": 3776.74768799685,
+        "gap": 0.005987049413355144
+      },
+      "incremental": {
+        "seconds": 5.0746622999431565,
+        "sp": 208,
+        "max_total": 3776.7476615700307,
+        "gap": 0.005987039671445729
+      }
+    },
+    {
+      "method": "socp",
+      "budget": 2.0,
+      "passed": true,
+      "baseline": {
+        "seconds": 12.920713100000285,
+        "sp": 447,
+        "max_total": 3895.534526210004,
+        "gap": 0.005987455758217572
+      },
+      "independent": {
+        "seconds": 4.5920196999795735,
+        "sp": 189,
+        "max_total": 3895.534526210004,
+        "gap": 0.005987451151824706
+      },
+      "incremental": {
+        "seconds": 8.745675900019705,
+        "sp": 187,
+        "max_total": 3895.534590993147,
+        "gap": 0.005987451068771786
+      }
+    },
+    {
+      "method": "socp",
+      "budget": null,
+      "passed": true,
+      "baseline": {
+        "seconds": 9.099373399978504,
+        "sp": 488,
+        "max_total": 4796.797666273713,
+        "gap": 0.005987344563664996
+      },
+      "independent": {
+        "seconds": 4.0041871999856085,
+        "sp": 201,
+        "max_total": 4796.797666273713,
+        "gap": 0.005987346339789833
+      },
+      "incremental": {
+        "seconds": 13.55938160000369,
+        "sp": 210,
+        "max_total": 4796.797749303194,
+        "gap": 0.005987337100378583
+      }
+    },
+    {
+      "method": "hybrid",
+      "budget": 0.0,
+      "passed": true,
+      "baseline": {
+        "seconds": 0.678979599964805,
+        "sp": 84,
+        "max_total": 3163.1722296428975,
+        "gap": 0.005987018179845884
+      },
+      "independent": {
+        "seconds": 0.650614200043492,
+        "sp": 84,
+        "max_total": 3163.1722296428975,
+        "gap": 0.005987018179845884
+      },
+      "incremental": {
+        "seconds": 0.6404917999170721,
+        "sp": 84,
+        "max_total": 3163.1722296428975,
+        "gap": 0.005987018179845884
+      }
+    },
+    {
+      "method": "hybrid",
+      "budget": 1.0,
+      "passed": true,
+      "baseline": {
+        "seconds": 7.252695800038055,
+        "sp": 329,
+        "max_total": 3776.7476782260974,
+        "gap": 0.005987055499140939
+      },
+      "independent": {
+        "seconds": 6.144347700057551,
+        "sp": 280,
+        "max_total": 3776.747678201478,
+        "gap": 0.0059870437065595436
+      },
+      "incremental": {
+        "seconds": 6.597815399989486,
+        "sp": 241,
+        "max_total": 3776.7476981735226,
+        "gap": 0.005987033056181634
+      }
+    },
+    {
+      "method": "hybrid",
+      "budget": 2.0,
+      "passed": true,
+      "baseline": {
+        "seconds": 13.988442700006999,
+        "sp": 470,
+        "max_total": 3895.53449132791,
+        "gap": 0.00598745559136848
+      },
+      "independent": {
+        "seconds": 5.226348199998029,
+        "sp": 228,
+        "max_total": 3895.534491319363,
+        "gap": 0.005987454849213909
+      },
+      "incremental": {
+        "seconds": 9.193181399954483,
+        "sp": 226,
+        "max_total": 3895.534491327442,
+        "gap": 0.005987451309350094
+      }
+    },
+    {
+      "method": "hybrid",
+      "budget": null,
+      "passed": true,
+      "baseline": {
+        "seconds": 14.067037900094874,
+        "sp": 489,
+        "max_total": 4796.797678119547,
+        "gap": 0.0059873431334269605
+      },
+      "independent": {
+        "seconds": 3.9296628000447527,
+        "sp": 200,
+        "max_total": 4796.797678119547,
+        "gap": 0.005987343127408593
+      },
+      "incremental": {
+        "seconds": 10.741066199960187,
+        "sp": 223,
+        "max_total": 4796.797678170702,
+        "gap": 0.005987344050558532
+      }
+    }
+  ],
+  "event_audits": {
+    "independent": {
+      "passed": true,
+      "geometry_tolerance": 1e-08,
+      "sp": 1656,
+      "ordinary_sp": 1206,
+      "ordinary_covered": 0,
+      "skipped": 1124,
+      "support_sp": 267,
+      "covered_support_sp": 214,
+      "unsupported_skips": 0
+    },
+    "incremental": {
+      "passed": true,
+      "geometry_tolerance": 1e-08,
+      "sp": 1555,
+      "ordinary_sp": 1212,
+      "ordinary_covered": 0,
+      "skipped": 840,
+      "support_sp": 234,
+      "covered_support_sp": 197,
+      "unsupported_skips": 0
+    }
+  },
+  "note": "相同网架、预算、精度、单线程和完整记录；独立与增量计时分开；AC 与审核另计。"
+}

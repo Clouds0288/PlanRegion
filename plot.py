@@ -1,7 +1,365 @@
-"""同一三态网格驱动的区域表面与可旋转对比图。"""
+"""绘图与只读监视：终端进度、本地 HTML、完整回放和导出。"""
+from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
+from hashlib import sha256
 from pathlib import Path
+from threading import Event, RLock, Thread
+from time import perf_counter
+from urllib.parse import urlsplit, parse_qs
+import json
+import math
+import webbrowser
+import base64
+import gzip
+
 import numpy as np
-import plotly.graph_objects as go
+
+ROOT = Path(__file__).resolve().parent
+
+
+def json_value(value):
+    """网页采用严格 JSON：无穷预算和非有限求解界使用 null。"""
+    if isinstance(value, np.ndarray):
+        return json_value(value.tolist())
+    if isinstance(value, np.generic):
+        return json_value(value.item())
+    if isinstance(value, float) and not math.isfinite(value):
+        return None
+    if isinstance(value, dict):
+        return {key: json_value(item) for key, item in value.items()}
+    if isinstance(value, (list, tuple)):
+        return [json_value(item) for item in value]
+    return value
+
+
+def cut_slice(cut, selection, bounds):
+    """联合割在生成方案 x 下的截面；只求平面与评价箱的交多边形。"""
+    cut, selection, bounds = map(np.asarray, (cut, selection, bounds))
+    normal = cut[1:4]
+    constant = float(cut[0] + cut[4:] @ selection)
+    # 在单位立方体中相交，避免三个负荷轴的量级差影响容差。
+    scaled = normal * bounds
+    norm = np.linalg.norm(scaled)
+    if norm <= 1e-30:
+        return dict(constant=constant, normal=normal.tolist(), vertices=[])
+    scaled, offset = scaled/norm, constant/norm
+    corners = np.array([[i, j, k] for i in (0., 1.) for j in (0., 1.) for k in (0., 1.)])
+    vertices = []
+    for i, a in enumerate(corners):
+        for b in corners[i+1:]:
+            if np.count_nonzero(a != b) != 1:
+                continue
+            va, vb = offset+scaled@a, offset+scaled@b
+            if abs(va) < 1e-10:
+                vertices.append(a)
+            if abs(vb) < 1e-10:
+                vertices.append(b)
+            if va*vb < 0:
+                vertices.append(a + va/(va-vb)*(b-a))
+    if not vertices:
+        return dict(constant=constant, normal=normal.tolist(), vertices=[])
+    vertices = np.unique(np.round(vertices, 12), axis=0)
+    if len(vertices) >= 3:
+        center = vertices.mean(axis=0)
+        u = vertices[0]-center
+        u /= np.linalg.norm(u)
+        v = np.cross(scaled, u)
+        angles = np.arctan2((vertices-center)@v, (vertices-center)@u)
+        vertices = vertices[np.argsort(angles)]
+    return dict(constant=constant, normal=normal.tolist(), vertices=(vertices*bounds).tolist())
+
+
+class RunMonitor:
+    """监视数据独立于模型；record 控制完整历史，show_ui 控制实时服务。"""
+
+    def __init__(self, *, show_ui=False, output=None, open_browser=True,
+                 heartbeat_seconds=10., stream=None, record=None):
+        import sys
+        self.show_ui = show_ui
+        self.record = show_ui if record is None else bool(record)
+        self.output = Path(output) if output is not None else None
+        self.open_browser = open_browser
+        self.heartbeat_seconds = heartbeat_seconds
+        self.stream = sys.stdout if stream is None else stream
+        self.started = perf_counter()
+        self.finished = None
+        self.last_event = self.last_print = self.started
+        self.lock = RLock()
+        self.stop = Event()
+        self.server = self.server_thread = self.heartbeat_thread = None
+        self.url = None
+        self.events, self.history = [], []
+        self.previous = {}
+        self.journal = None
+        self.state = dict(status='running', event='start', message='准备启动',
+                          query=0, iteration=0, total_cuts=0, pool_size=0,
+                          method_number=0, method_count=4, revision=0, methods=[])
+
+    def __enter__(self):
+        try:
+            if self.record and self.output is not None:
+                self.output.mkdir(parents=True, exist_ok=True)
+                self.journal = (self.output/'events.jsonl').open('w', encoding='utf-8')
+            if self.show_ui:
+                self.start_server()
+            self.heartbeat_thread = Thread(target=self.heartbeat, name='planning-progress', daemon=True)
+            self.heartbeat_thread.start()
+        except BaseException:
+            self.close()
+            raise
+        return self
+
+    def __exit__(self, kind, error, traceback):
+        try:
+            if error is not None:
+                self('interrupted' if isinstance(error, KeyboardInterrupt) else 'failed',
+                     message='用户中断计算' if isinstance(error, KeyboardInterrupt) else f'计算失败：{error}')
+                if self.record and self.output is not None:
+                    try:
+                        self.save_snapshot()
+                    except OSError as snapshot_error:
+                        print(f'无法保存监视快照：{snapshot_error}', file=self.stream, flush=True)
+        finally:
+            self.close()
+
+    def __call__(self, event, **data):
+        with self.lock:
+            now = perf_counter()
+            step_seconds = now-self.last_event
+            self.last_event = now
+            self.state.update(event=event, message=data.get('message', event),
+                              revision=self.state['revision']+1)
+            if event in ('completed', 'failed', 'interrupted'):
+                self.state['status'] = event
+                self.finished = now
+            if event == 'method_start':
+                self.state.update(query=0, iteration=0, total_cuts=0, pool_size=0,
+                                  point=None, choice=None, latest_cut=None, counts=[], phase='',
+                                  states=None, lower=None, upper=None, bound=None, objective=None)
+                self.state.update(geometry=[], global_outer=None, coverage_complete=False, region=None,
+                                  coverage_bound=None, max_total=None, max_total_bound=None, mode=None,
+                                  counts_algorithm={})
+            if event in ('phase_start', 'point', 'sp_skip'):
+                self.state.update(iteration=0, choice=None, latest_cut=None,
+                                  bound=None, objective=None, eta=None, query_status=None)
+                if data.get('mode') != 'SP-gap-support':
+                    self.state.update(covered_by=None, covered_cost=None, uncovered_witness=None)
+            if event == 'phase_start':
+                self.state.update(query=0, point=None, lower=None, upper=None)
+                self.state.update(geometry=[], global_outer=None, coverage_complete=False, region=None,
+                                  states=None, counts=[], counts_algorithm={}, coverage_bound=None,
+                                  max_total=None, max_total_bound=None, mode=None)
+                if not self.record:
+                    self.state.pop('states', None)
+            if event == 'query_end':
+                self.state['query_status'] = data.get('status')
+            for key, value in data.items():
+                if key not in ('states', 'cut', 'selection', 'status'):
+                    self.state[key] = json_value(value)
+            if 'states' in data:
+                states = np.asarray(data['states'])
+                counts = [dict(inside=int(np.count_nonzero(s == 1)),
+                               outside=int(np.count_nonzero(s == -1)),
+                               unknown=int(np.count_nonzero(s == 0)), total=int(s.size)) for s in states]
+                self.state['counts'] = counts
+                self.state['divisions'] = states.shape[-1]
+                if self.record:
+                    self.state['states'] = states.reshape(len(states), -1).tolist()
+            if event == 'cut':
+                self.state['total_cuts'] += 1
+                if self.record and self.state.get('bounds') is not None:
+                    sliced = cut_slice(data['cut'], data['selection'], self.state['bounds'])
+                    self.state['latest_cut'] = dict(**sliced, point=json_value(data['point']),
+                                                    joint_coefficients=json_value(data['cut']),
+                                                    selection=json_value(data['selection']),
+                                                    choice=self.state.get('choice'),
+                                                    iteration=self.state['iteration'],
+                                                    number=self.state['total_cuts'])
+            if event == 'method_end':
+                self.state['methods'] = [*self.state['methods'], dict(method=self.state['method'], seconds=data['seconds'],
+                                                  counts=self.state.get('counts', []), cuts=self.state['total_cuts'])]
+            if self.record:
+                item = {key: self.state.get(key) for key in
+                        ('revision', 'method', 'phase', 'query', 'iteration', 'event', 'message', 'point', 'query_status')}
+                item['elapsed'] = now-self.started
+                if event == 'cut':
+                    item['cut'] = self.state.get('latest_cut')
+                self.events.append(item)
+                self.state.update(elapsed=now-self.started, step_seconds=step_seconds)
+                patch = {k: v for k, v in self.state.items() if k not in self.previous or self.previous[k] != v}
+                frame = dict(id=len(self.history), elapsed=now-self.started, patch=patch)
+                self.history.append(frame)
+                self.previous = dict(self.state)
+                if self.journal is not None:
+                    self.journal.write(json.dumps(frame, ensure_ascii=False, allow_nan=False)+'\n')
+                    self.journal.flush()
+            # 短查询合并到每秒一次的状态输出，避免快速求解时终端刷屏。
+            if event in ('start', 'preparation', 'method_start', 'method_end', 'phase_start', 'phase_end',
+                         'saving', 'plotting', 'loaded', 'completed', 'failed', 'interrupted') \
+                    or (event == 'query_end' and data.get('status') == 'unknown') \
+                    or now-self.last_print >= 1.:
+                self.print_status()
+
+    def print_status(self, *, heartbeat=False):
+        now = perf_counter()
+        state = self.state
+        prefix = f"[{now-self.started:8.1f}s]"
+        if state.get('method'):
+            prefix += f" [{state['method']}/{state.get('phase', '')}]"
+        details = []
+        if state.get('query'):
+            details.append(f"查询 #{state['query']} / MP 轮次 {state['iteration']}")
+        if state.get('point') is not None:
+            details.append('p=('+', '.join(f'{v:.2f}' for v in state['point'])+') kW')
+        counts = state.get('counts', [])
+        if counts:
+            total = sum(c['total'] for c in counts)
+            unknown = sum(c['unknown'] for c in counts)
+            details.append(f'已分类 {total-unknown}/{total} ({100*(total-unknown)/total:.1f}%) / 未确定 {unknown}')
+        details.append(f"新增割 {state['total_cuts']} / 割池 {state['pool_size']}")
+        if state['event'] == 'method_end':
+            details.append(f"方法耗时 {state['seconds']:.3f}s")
+        if heartbeat:
+            details.append(f'此步骤已等待 {now-self.last_event:.1f}s')
+        print(f"{prefix} {state['message']} | {' | '.join(details)}", file=self.stream, flush=True)
+        self.last_print = now
+
+    def heartbeat(self):
+        while not self.stop.wait(self.heartbeat_seconds):
+            with self.lock:
+                if self.state['status'] == 'running' and perf_counter()-self.last_print >= self.heartbeat_seconds:
+                    self.print_status(heartbeat=True)
+
+    def snapshot(self, after=0):
+        with self.lock:
+            now = perf_counter() if self.finished is None else self.finished
+            value = dict(self.state, elapsed=now-self.started,
+                         step_seconds=self.state.get('step_seconds', 0.) if self.finished else now-self.last_event,
+                         events=self.events[-150:], history=self.history[max(0, after):],
+                         history_total=len(self.history), recording_version=1)
+            return json.dumps(value, ensure_ascii=False, allow_nan=False).encode('utf-8')
+
+    def load_recording(self, path):
+        """恢复完整历史，不调用优化器、不生成虚构求解事件。"""
+        value = json.loads(Path(path).read_text(encoding='utf-8'))
+        self.history = value.pop('history')
+        self.events = value.pop('events', [])
+        self.state = value
+        self.finished = perf_counter()
+        self.started = self.finished-self.state.get('elapsed', 0.)
+        self.previous = dict(self.state)
+
+    def start_server(self):
+        # 使用现有 Plotly 的本地脚本；页面离线可用，无 CDN 或 Node 服务。
+        from plotly.offline import get_plotlyjs
+        self.plotly = get_plotlyjs().encode('utf-8')
+        self.template = (ROOT/'live_view.html').read_text(encoding='utf-8')
+        owner = self
+
+        class Handler(BaseHTTPRequestHandler):
+            def do_GET(self):
+                path = urlsplit(self.path).path
+                if path == '/':
+                    payload, mime = owner.template.encode('utf-8'), 'text/html; charset=utf-8'
+                elif path == '/state':
+                    try:
+                        after = int(parse_qs(urlsplit(self.path).query).get('after', ['0'])[0])
+                    except ValueError:
+                        after = 0
+                    payload, mime = owner.snapshot(after), 'application/json; charset=utf-8'
+                elif path == '/plotly.min.js':
+                    payload, mime = owner.plotly, 'application/javascript; charset=utf-8'
+                elif path.startswith('/result/') and owner.output is not None:
+                    name = path[len('/result/'):]
+                    if '/' in name or '\\' in name or not (name == 'region_comparison.html' or
+                            (name.startswith('methods_') and name.endswith('.html'))):
+                        self.send_error(404)
+                        return
+                    try:
+                        payload = (owner.output/name).read_bytes()
+                    except OSError:
+                        self.send_error(404)
+                        return
+                    mime = 'text/html; charset=utf-8'
+                else:
+                    self.send_error(404)
+                    return
+                self.send_response(200)
+                self.send_header('Content-Type', mime)
+                self.send_header('Content-Length', str(len(payload)))
+                self.send_header('Cache-Control', 'no-store')
+                self.end_headers()
+                try:
+                    self.wfile.write(payload)
+                except (BrokenPipeError, ConnectionResetError):
+                    pass  # 关闭浏览器不影响计算。
+
+            def log_message(self, format, *args):
+                pass
+
+        self.server = ThreadingHTTPServer(('127.0.0.1', 0), Handler)
+        self.server.daemon_threads = True
+        self.url = f'http://127.0.0.1:{self.server.server_port}/'
+        self.server_thread = Thread(target=self.server.serve_forever, name='planning-view', daemon=True)
+        self.server_thread.start()
+        print(f'实时监视：{self.url}', file=self.stream, flush=True)
+        if self.open_browser:
+            try:
+                webbrowser.open(self.url)
+            except (OSError, webbrowser.Error) as error:
+                print(f'自动打开浏览器失败，可手动访问上方地址：{error}', file=self.stream, flush=True)
+
+    def save_snapshot(self):
+        if self.output is None:
+            return
+        self.output.mkdir(parents=True, exist_ok=True)
+        if not hasattr(self, 'template'):
+            from plotly.offline import get_plotlyjs
+            self.template = (ROOT/'live_view.html').read_text(encoding='utf-8')
+            self.plotly = get_plotlyjs().encode('utf-8')
+        self.state['viewer_sha256'] = sha256(self.template.encode('utf-8')).hexdigest()
+        payload = self.snapshot().decode('utf-8')
+        temporary = self.output/'replay.json.tmp'
+        temporary.write_text(payload, encoding='utf-8')
+        temporary.replace(self.output/'replay.json')
+        data = base64.b64encode(gzip.compress(payload.encode('utf-8'), compresslevel=6, mtime=0)).decode('ascii')
+        html = self.template.replace('<script src="/plotly.min.js"></script>',
+                                     '<script>'+self.plotly.decode('utf-8')+'</script>')
+        html = html.replace('/*SNAPSHOT*/', 'window.SAVED_REPLAY_GZIP="'+data+'";')
+        path = self.output/'live_view.html'
+        path.write_text(html, encoding='utf-8')
+        print(f'完整过程回放（{len(self.history)} 条事件）：{path}', file=self.stream, flush=True)
+
+    def close(self):
+        self.stop.set()
+        if self.journal is not None:
+            self.journal.close()
+            self.journal = None
+        if self.server is not None:
+            if self.server_thread is not None and self.server_thread.is_alive():
+                self.server.shutdown()
+                self.server_thread.join(timeout=2.)
+            self.server.server_close()
+        if self.heartbeat_thread is not None:
+            self.heartbeat_thread.join(timeout=2.)
+
+
+def print_summary(result):
+    """终端显示同一原始结果推导出的 FR/MR；未知时显示区间。"""
+    from vertify import METHODS, METHOD_NAMES
+    names = dict(zip(METHODS, METHOD_NAMES))
+    print('\n预算 | 方法 | FR (%) | MR (%) | 求解耗时 (s)', flush=True)
+    continuous = {(r['method'], r['budget']): r for r in result.metadata.get('continuous', [])}
+    for row in result.summary:
+        rates = []
+        for key in ('fr', 'mr'):
+            value = row[f'{key}_percent']
+            interval = row.get(f'{key}_interval')
+            rates.append(f'{value:.5f}' if value is not None else
+                         ('—' if interval is None else f'[{interval[0]:.5f}, {interval[1]:.5f}]'))
+        budget = '无限' if row['budget'] is None else str(row['budget'])
+        region = continuous.get((row['method'], row['budget']))
+        seconds = region['timing']['total_seconds'] if region else row['total_seconds']
+        print(f"{budget} | {names[row['method']]} | {' | '.join(rates)} | {seconds:.3f}", flush=True)
 
 
 def voxel_surface(mask, spacing):  # 把体素集合转换为保留孔洞的外表面三角网格。
@@ -50,6 +408,7 @@ def voxel_surface(mask, spacing):  # 把体素集合转换为保留孔洞的外�
 def plot_method_comparison(result, budget_index=0):  # 在同一预算下比较三种计算域与独立 AC 参考。
     """同一预算的四方法对比；曲面与 FR/MR 使用同一份网格标签。"""
     from plotly.subplots import make_subplots  # 建立紧凑的四面板布局。
+    import plotly.graph_objects as go
     from vertify import METHOD_NAMES  # 显示名称与结果数组的方法轴一致。
 
     fig = make_subplots(rows=2, cols=2, specs=[[{"type": "scene"}]*2]*2,  # 四个面板均为可旋转的三维场景。
