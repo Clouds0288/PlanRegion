@@ -1,7 +1,6 @@
 """小规模审核的独立消元模型；只读取 Network，不导入正式 model.py。
 
 固定网架后消去 P/Q/v，仅以电流平方表示损耗；用于核对紧凑模型和割。
-线性点查询直接计算各约束余量，不再创建只有一个 eta 变量的优化器。
 """
 from types import SimpleNamespace  # 将参考矩阵作为一次建模的只读数据集合传递。
 import clarabel  # 独立求解参考 LP/SOCP，不复用正式规划求解器。
@@ -65,22 +64,6 @@ def _solve(objective,matrix,rhs,cones):  # 参考优化器只封装共同的数�
     return result  # 上层按本次查询的含义解释目标值。
 
 
-def dispatch_feasible(network,method,points):  # 一批固定负荷的独立可行性参考。
-    e = _dispatch_equations(network)  # 同一方案的全部点只生成一次参考矩阵。
-    points = np.asarray(points).reshape(-1,len(network.load_nodes))  # 每行是一组独立负荷。
-    if method == 'linear':  # 线性消元后没有运行未知量，直接计算余量。
-        margin = np.min(e.linear_c+points@e.linear_F.T,axis=1)  # 最差运行约束决定可行性。
-        return (margin>=-1e-8)&(points.sum(axis=1)<=network.power_limit+1e-8*network.base)  # 同时保留共同总负荷外界。
-    n = network.n  # SOCP 只保留 n 个电流平方和一个 eta。
-    matrix = np.vstack([-np.c_[e.G,e.relax],np.r_[np.zeros(n),-1.]])  # 物理约束与 eta≥0。
-    cones = [clarabel.NonnegativeConeT(e.linear_count)]  # ell 非负与运行限值。
-    cones += [clarabel.SecondOrderConeT(size) for size in e.sizes]  # 源端及各支路二阶锥。
-    cones += [clarabel.NonnegativeConeT(1)]  # 最后一行限制 eta≥0。
-    feasible = np.empty(len(points),dtype=bool)  # 逐点记录参考分类，不保存重复方案数据。
-    for i,power in enumerate(points):  # 各点只改变固定负荷对应的右端项。
-        result = _solve(np.r_[np.zeros(n),1.],matrix,np.r_[e.c+e.F@power,0.],cones)  # 最小化共同违反量 eta。
-        feasible[i] = result.x[-1]<=1e-8 and power.sum()<=network.power_limit+1e-8*network.base  # 采用与旧审核一致的参考容差。
-    return feasible  # 正式模型必须与这份独立分类一致。
 
 
 def dispatch_support(network,method,normal,*,direction=None):  # 独立求固定方案连续域的支撑值或射线边界。

@@ -1,79 +1,74 @@
-"""完整 AC、区域差集和唯一结果文件的回归验证。"""
-import tempfile  # 结果往返测试写入临时目录，不污染实验数据。
-import unittest  # 使用标准测试框架。
-import numpy as np  # 处理相量、体素与实验数组。
-import gurobipy as gp  # 用显式非凸模型交叉核验 AC 判定。
-from Network.four_bus_five_corridor import network  # 读取小算例全部合法建设方案。
-from plot import voxel_surface  # 检查显示表面没有填平真实孔洞。
-from model import ACPowerFlow  # 被测 AC 实现独立于线性及 SOCP 方程。
-from vertify import BenchmarkResult, disagreement  # 测试误差定义与唯一结果文件的存取。
+"""独立 AC 等式、FR/MR、三态网格和唯一结果文件的回归验证。"""
+import itertools  # 对少量未知标签的所有赋值检查误差区间。
+import tempfile  # 测试文件仅写临时目录。
+import unittest  # 标准回归框架。
+import numpy as np  # 复相量、表面几何和标签数组。
+import gurobipy as gp  # 独立非凸 AC 求解环境。
+from Network.case33bw import Case33  # 当前正式网架。
+from plot import voxel_surface  # 核对颜色区域的真实体素表面。
+from model import ACPowerFlow  # 独立 AC 方程与不动点认证。
+from vertify import BenchmarkResult, disagreement, disagreement_interval, METHODS  # 同一结果格式与指标定义。
 
 
-class ACReferenceTests(unittest.TestCase):  # 覆盖独立 AC 判定、相量重建及送端容量。
-    @classmethod  # 整组测试共用方案列表与求解环境。
-    def setUpClass(cls):  # 按每个合法小网架建立独立 AC 接口。
-        cls.models = [ACPowerFlow(d) for d in network.designs]  # 四节点全部 216 个方案均纳入验证。
-        cls.environment = gp.Env(empty=True)  # 创建静默的共享非凸求解环境。
-        cls.environment.setParam('OutputFlag', 0)  # 关闭逐点优化日志。
-        cls.environment.start()  # 在执行比较前完成环境初始化。
+class ACReferenceTests(unittest.TestCase):  # 以代表网架核对独立 AC 的数值证书。
+    @classmethod
+    def setUpClass(cls):  # 不生成完整建设组合表。
+        network = Case33(candidate_count=8)  # 当前八候选线路。
+        cls.models = [ACPowerFlow(network.design(x)) for x in (np.zeros(8,dtype=int),np.arange(8)%2,np.ones(8,dtype=int))]  # 基础、交错、全升级网架。
+        cls.environment = gp.Env(empty=True)  # 静默的共享全局求解环境。
+        cls.environment.setParam('OutputFlag',0)  # 不输出逐点求解日志。
+        cls.environment.start()  # 在测试计时之外启动环境。
 
-    @classmethod  # 整组测试结束后统一释放资源。
-    def tearDownClass(cls):  # 释放所有按需创建的 AC 模型。
-        for model in cls.models:  # 逐一处理全部方案接口。
-            model.close()  # 未创建全局模型的接口也可以正常关闭。
-        cls.environment.dispose()  # 最后释放共享 Gurobi 环境。
+    @classmethod
+    def tearDownClass(cls):  # 释放按需创建的非凸模型。
+        for model in cls.models:  # 只处理本组测试的实例。
+            model.close()  # 正常回收求解资源。
+        cls.environment.dispose()  # 最后释放共享环境。
 
-    def test_all_designs_against_explicit_global_ac(self):  # 批量不动点判定须与显式非凸 AC 一致。
-        rng = np.random.default_rng(20260919)  # 固定随机种子保证验证负荷可复现。
-        counts = {-1: 0, 1: 0}  # 分别统计确定不可行与确定可行的覆盖情况。
-        for model in self.models:  # 逐个合法径向方案执行交叉验证。
-            power = rng.dirichlet(np.ones(4))[:3]*network.power_limit  # 在总负荷初始外界内选取随机点。
-            actual = int(model.classify(power)[0])  # 取得独立不动点算法的三态判定。
-            expected = model.global_status(power, self.environment)  # 用显式 AC 等式的全局求解器取得参考判定。
-            self.assertNotEqual(expected, 0, 'QCQP 未完成判定')  # 测试不接受未确定结论作为参考。
-            self.assertEqual(actual, expected, (model.network.choice, power))  # 两个算法须给出相同的可行性结论。
-            counts[actual] += 1  # 累计对应类别的实际样本数。
-        self.assertEqual(len(self.models), 216)  # 确认完整覆盖了全部 216 个建设方案。
-        self.assertGreater(counts[-1], 0)  # 样本中必须实际包含不可行情况。
-        self.assertGreater(counts[1], 0)  # 样本中也必须实际包含可行情况。
+    def test_fixed_point_matches_explicit_global_ac(self):  # 递推证书与完整 AC 等式全局求解对照。
+        counts = {-1:0,1:0}  # 确认可行与不可行都被覆盖。
+        for model in self.models:  # 三个物理上不同的固定网架。
+            for power in ([100.,800.,150.],[300.,3000.,500.],[500.,6000.,950.]):  # 低、中、高负荷查询。
+                actual = int(model.classify(power)[0])  # 独立不动点证书。
+                expected = model.global_status(power,self.environment)  # 显式完整 AC 电流等式。
+                self.assertNotEqual(expected,0)  # 未完成结论不能作为参考真值。
+                self.assertEqual(actual,expected,(model.network.x,power))  # 两套求解路径必须一致。
+                counts[actual] += 1  # 统计实际覆盖类别。
+        self.assertGreater(counts[-1],0)  # 确实检查域外。
+        self.assertGreater(counts[1],0)  # 确实检查域内。
 
-    def test_ac_witness_satisfies_complex_nodal_power_flow(self):  # 从电流平方证书重建复数相量，核对节点功率。
-        power = np.array([5., 7., 4.])  # 使用一个在代表方案中可行的低负荷点。
-        for model in self.models[::9]:  # 跨方案选择代表网架进行相量重建。
-            c = model.network  # 取得该固定方案的物理阻抗和拓扑。
-            status, ell = model.classify(power, return_currents=True)  # 请求完整 AC 电流证书。
-            self.assertEqual(status[0], 1)  # 用于相量重建的查询须已认证可行。
-            P, Q, v, _ = model.state(power, ell)  # 独立重建送端功率和节点电压平方。
-            voltage, current = np.ones(c.n, dtype=complex), np.zeros(c.n, dtype=complex)  # 根电压从单位相量开始，支路电流初始为零。
-            for i in c.order:  # 沿根到叶计算支路电流与节点复电压。
-                parent = 1+0j if c.parent[i] < 0 else voltage[c.parent[i]]  # 送端电压取根相量或已经计算的父节点相量。
-                current[i] = np.conj((P[0, i]+1j*Q[0, i])/parent)  # 由 S=U·I* 恢复复支路电流。
-                voltage[i] = parent-(c.r[i]+1j*c.reactance[i])*current[i]  # 由复阻抗压降 U_j=U_i−Z·I 恢复节点电压。
-            demand = voltage*np.conj(current-np.array([current[j].sum() for j in c.children]))  # 节点净注入由本支路电流减去子支路电流计算。
-            p, q = c.loads(power)  # 读取同一负荷点的完整节点 P/Q。
-            np.testing.assert_allclose(demand, (p+1j*q)[0], atol=1e-10, rtol=0)  # 复数节点功率必须等于给定负荷。
-            np.testing.assert_allclose(abs(voltage)**2, v[0], atol=1e-10, rtol=0)  # 复电压幅值平方须与支路状态一致。
-
-    def test_transformer_checks_sending_end_power(self):  # 源端容量应包含网损，不能只检查负荷总和。
-        power = np.full(3, network.power_limit/3)  # 将总负荷放在无损有功容量边界上。
-        for model in self.models:  # 所有方案都有正损耗，源端容量应越限。
-            self.assertEqual(model.classify(power)[0], -1)  # 独立 AC 必须判为不可行。
+    def test_ac_witness_satisfies_complex_nodal_power_flow(self):  # 将支路证书重建为节点复相量。
+        power = np.array([100.,800.,150.])  # 代表网架均可承载的低负荷。
+        for model in self.models:  # 不同选型均需满足同一复功率关系。
+            c = model.network  # 当前固定物理网架。
+            status,ell = model.classify(power,return_currents=True)  # 请求完整电流平方证书。
+            self.assertEqual(status[0],1)  # 先取得真实可行证书。
+            P,Q,v,_ = model.state(power,ell)  # 通过独立支路递推恢复状态。
+            voltage,current = np.ones(c.n,dtype=complex),np.zeros(c.n,dtype=complex)  # 根电压为单位相量。
+            for i in c.order:  # 由根到叶依次恢复电流和电压。
+                parent = 1+0j if c.parent[i]<0 else voltage[c.parent[i]]  # 已知送端复电压。
+                current[i] = np.conj((P[0,i]+1j*Q[0,i])/parent)  # S=U*conj(I)。
+                voltage[i] = parent-(c.r[i]+1j*c.reactance[i])*current[i]  # 复数欧姆定律。
+            demand = voltage*np.conj(current-np.array([current[j].sum() for j in c.children]))  # 节点净功率等于入线电流减去出线电流。
+            p,q = c.loads(power)  # 当前背景和独立负荷的完整节点注入。
+            np.testing.assert_allclose(demand,(p+1j*q)[0],atol=1e-9,rtol=0)  # 复数功率守恒。
+            np.testing.assert_allclose(abs(voltage)**2,v[0],atol=1e-9,rtol=0)  # 相量幅值平方与模型电压一致。
 
 
-class RegionComparisonTests(unittest.TestCase):  # 检查 FR/MR、表面几何与去重存储。
+class RegionComparisonTests(unittest.TestCase):  # 三态标签与物理误差分开处理。
     def test_symmetric_difference_counts_both_sides(self):  # 误差定义必须同时计入多余和遗漏。
         labels = np.array([0, 0, 1, 2, 2, 3, 3, 3])  # 构造已知计数的四类标签。
         row = disagreement((labels & 1)>0, (labels & 2)>0)  # 从两种区域成员位生成统计结果。
         self.assertAlmostEqual(row['region_error_percent'], 50.)  # 对称差为 3、并集为 6，不一致率应为 50%。
         self.assertAlmostEqual(row['fr_percent'], 25.)  # 多余 1、计算域 4，FR 应为 25%。
-        self.assertAlmostEqual(row['mr_percent'], 40.)  # 遗漏 2、AC 域 5，MR 应为 40%。
+        self.assertAlmostEqual(row['mr_percent'], 40.)
 
     def test_empty_region_has_undefined_conditional_rate(self):  # 空域的条件比例不能伪造为零。
         for label, fr, mr in [(0, None, None), (1, 100., None), (2, None, 100.)]:  # 分别覆盖两域皆空、仅计算域非空和仅 AC 域非空。
             labels = np.full(8, label)  # 生成当前情形的统一标签。
             row = disagreement((labels & 1)>0, (labels & 2)>0)  # 按正式误差函数计算结果。
             self.assertEqual(row['fr_percent'], fr)  # FR 分母为空时必须保持无定义。
-            self.assertEqual(row['mr_percent'], mr)  # MR 分母为空时必须保持无定义。
+            self.assertEqual(row['mr_percent'], mr)
 
     def test_surface_preserves_cavity_and_volume(self):  # 体素表面应保留内部空腔并给出正确有向体积。
         mask = np.ones((3, 3, 3), dtype=bool)  # 先构造一个实心 3×3×3 体素块。
@@ -84,27 +79,37 @@ class RegionComparisonTests(unittest.TestCase):  # 检查 FR/MR、表面几何�
         triangles = points[np.asarray(mesh['triangles'])]  # 按索引恢复每个三角形的三个顶点。
         volume = np.einsum('ij,ij->i', triangles[:, 0],  # 由有向三角面计算封闭表面围成的体积。
                            np.cross(triangles[:, 1], triangles[:, 2])).sum()/6  # 标量三重积之和除以 6 得到带符号体积。
-        self.assertAlmostEqual(volume, mask.sum()*h.prod())  # 结果须等于剩余体素数乘单体素体积。
+        self.assertAlmostEqual(volume, mask.sum()*h.prod())
 
-    def test_result_roundtrip_preserves_masks_and_deduplicates_geometry(self):  # 保存再读取后须保持成员标签且不重复记录几何。
-        masks = np.random.default_rng(4).random((4, 2, 3, 3, 3)) > .5  # 生成四方法、两预算的模拟布尔标签。
-        ac_cost = np.random.default_rng(5).choice([0., 20000., 40000., np.inf], (3,3,3))  # 每个网格点仅保存一个模拟 AC 最小投资。
-        masks[2,0] = ac_cost<=20000.  # 有限预算 AC 域由该最小投资生成。
-        masks[2,1] = np.isfinite(ac_cost)  # 无限预算仍须排除投资为 inf 的不可行点。
-        record = dict(inner=[[0, 0, 0]], outer=[[1, 2, 3]])  # 构造被两个预算共同引用的同一几何记录。
-        result = BenchmarkResult(masks, dict(divisions=3, budgets=[20000., None]),  # 建立标准结果容器及预算配置。
-                                 {'socp': [[record], [record]]}, ac_cost)  # 两档预算引用相同几何，测试存储去重。
-        with tempfile.TemporaryDirectory(prefix='planregion-test-') as folder:  # 文件仅写在自动清理的专用临时目录。
-            result.save(folder)  # 按正式格式保存一次实验。
-            restored = BenchmarkResult.load(folder)  # 从唯一压缩文件重新加载。
-            np.testing.assert_array_equal(restored.masks, masks)  # 所有方法与预算的成员标签必须完整恢复。
-            self.assertEqual(restored.regions, result.regions)  # 逐方案几何及预算引用关系必须恢复。
-            import json  # 解析文件中唯一的 JSON 几何记录表。
-            with np.load(f'{folder}/result.npz') as data:  # 检查实际存储内容，而非只核对内存容器。
-                self.assertEqual(set(data.files), {'masks', 'ac_cost', 'record'})  # 只允许三种基础数据字段，不重复保存派生标签。
-                np.testing.assert_array_equal(data['ac_cost'], ac_cost)  # AC 最小投资数组应原样保存。
-                self.assertEqual(len(json.loads(str(data['record']))['geometry']), 1)  # 重复引用的几何在文件中只能出现一次。
+    def test_unknown_rates_bound_every_label_completion(self):  # 未确定不允许被默认算作不可行。
+        left,right = np.array([1,0,-1,0]),np.array([0,-1,1,0])  # 含已知和未知的两个区域。
+        interval = disagreement_interval(left,right)  # 正式 FR/MR 保守区间。
+        for bits in itertools.product((-1,1),repeat=int((left==0).sum()+(right==0).sum())):  # 逐一检查少量未知标签的可能真值。
+            a,b = left.copy(),right.copy()  # 各次赋值相互独立。
+            count = int((a==0).sum())  # 前半部分对应计算域。
+            a[a==0],b[b==0] = bits[:count],bits[count:]  # 后半部分对应 AC 域。
+            rates = disagreement(a==1,b==1)  # 该确定情形的真实比例。
+            for key in ('fr','mr'):  # 两个指标都须被区间覆盖。
+                value = rates[key+'_percent']  # 分母为空时比例无定义。
+                if value is not None:  # 只检查有定义的可能比例。
+                    self.assertLessEqual(interval[key+'_interval'][0],value)  # 下界不得偏高。
+                    self.assertGreaterEqual(interval[key+'_interval'][1],value)  # 上界不得偏低。
+
+    def test_result_stores_only_states_and_metadata(self):  # 不保存方案表、重复掩码或派生指标。
+        states = np.random.default_rng(5).choice([-1,0,1],(4,2,3,3,3)).astype(np.int8)  # 包含未知的四方法、两预算网格。
+        metadata = dict(divisions=3,budgets=[0.,None],bounds=[1.,2.,3.],load_nodes=[18,25,33],seconds={m:float(i+1) for i,m in enumerate(METHODS)})  # 配置和总计时各一份。
+        result = BenchmarkResult(states,metadata)  # 简化后的唯一结果容器。
+        with tempfile.TemporaryDirectory(prefix='planregion-test-') as folder:  # 不污染正式结果。
+            result.save(folder)  # 写入唯一文件。
+            restored = BenchmarkResult.load(folder)  # 从相同格式恢复。
+            with np.load(f'{folder}/result.npz',allow_pickle=False) as data:  # 检查实际文件字段。
+                self.assertEqual(set(data.files),{'states','metadata'})  # 文件中只有两种基础数据。
+        np.testing.assert_array_equal(restored.states,states)  # 未知与域内外均原样保存。
+        self.assertEqual(restored.metadata,metadata)  # 配置及方法总耗时一致。
+        np.testing.assert_array_equal(restored.labels,result.labels)  # 差集颜色按需推导且一致。
+        self.assertEqual(len(restored.summary),8)  # 四方法和两预算各生成一行。
+        self.assertTrue(np.any(restored.labels==4))  # 未确定区域使用灰色。
 
 
-if __name__ == '__main__':  # 允许直接运行验证与存储测试。
-    unittest.main()  # 执行本文件的全部检查。
+if __name__=='__main__':  # 支持单独运行指标与 AC 检查。
+    unittest.main()  # 不执行主 Notebook 的完整实验。

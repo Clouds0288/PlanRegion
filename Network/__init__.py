@@ -1,30 +1,7 @@
-"""唯一网架数据源；原始负荷用 kW/kvar，径向模型阻抗及限值用标幺值。
-
-四节点费用为元；33 节点合成改造费用为相对投资单位，由 cost_unit 标识。
-"""
-from dataclasses import dataclass  # 用数据类声明网架与设备参数，避免重复编写初始化赋值。
-from functools import cached_property  # 静态派生矩阵和方案表仅计算一次。
-from itertools import combinations, product  # 仅为四节点小算例生成树结构和型号组合。
-
-import numpy as np  # 按统一顺序存储物理参数和关联矩阵。
-
-
-@dataclass(frozen=True)  # 型号参数创建后不可修改。
-class LineType:  # 四节点算例中的线路设备型号。
-    name: str  # 用于审阅和展示的型号名称。
-    r_ohm_km: float  # 单位长度电阻，Ω/km。
-    x_ohm_km: float  # 单位长度电抗，Ω/km。
-    capacity_kw: float  # 给定的送端有功上限，kW。
-    cable_cny_m: float  # 电缆单位长度造价，元/m。
-
-
-@dataclass(frozen=True)  # 走廊基础数据创建后不可修改。
-class Corridor:  # 两节点之间可选的线路走廊。
-    name: str  # 走廊编号。
-    start: int  # 走廊一个端点的真实节点号。
-    end: int  # 走廊另一个端点的真实节点号。
-    length_m: float  # 走廊实际长度，m。
-    existing: bool  # 是否为既有走廊，用于区分新增通道费用。
+"""唯一网架数据源：基础负荷、径向结构和逐线路型号；功率用 kW/kvar。"""
+from dataclasses import dataclass  # 声明物理数据字段。
+from functools import cached_property  # 固定网架的派生矩阵只计算一次。
+import numpy as np  # 统一节点、支路和型号参数的数组顺序。
 
 
 @dataclass(frozen=True)  # 投资项目的配置保持不可变。
@@ -37,7 +14,7 @@ class Project:  # 固定拓扑下的单条支路改造项目。
 
 @dataclass(frozen=True)  # 每条候选支路的型号表不可变。
 class LineOptions:  # 紧凑模型直接读取的逐线路型号配置。
-    """一条在运支路的可选型号；branch 是受端节点在 nodes 中的索引。
+    """一条走廊的可选型号；branch 是 planning_branches 中的索引。
 
     r/reactance 为标幺阻抗，cost 为各型号的增量投资；第 0 型保持原状。
     """
@@ -45,77 +22,8 @@ class LineOptions:  # 紧凑模型直接读取的逐线路型号配置。
     r: tuple  # 各型号的标幺电阻。
     reactance: tuple  # 各型号的标幺电抗。
     cost: tuple  # 各型号相对基础网架的新增费用。
-
-
-@dataclass(frozen=True)  # 四节点母网的输入配置不可变。
-class Network:  # 含候选走廊和设备型号的小规模母网配置。
-    name: str  # 算例名称，也用于选择网架文件及输出目录。
-    nodes: tuple[int, ...]  # 包含电源根节点的真实节点号。
-    root: int  # 固定电压电源的节点号。
-    corridors: tuple[Corridor, ...]  # 已有和候选走廊列表。
-    lines: tuple[LineType, ...]  # 各走廊可选的线路型号列表。
-    power_factor: float  # 独立负荷的统一功率因数。
-    voltage_kv: float  # 线电压基准，kV。
-    voltage_min_pu: float  # 节点电压幅值下限，p.u.。
-    transformer_kva: float  # 电源变压器视在容量，kVA；本小算例也用作标幺基准。
-    new_corridor_cny_m: float  # 新建走廊的额外单位长度费用，元/m。
-
-    @cached_property  # 缓存不会随运行查询变化的负荷节点列表。
-    def load_nodes(self):  # 返回四节点算例的全部非根节点。
-        return tuple(i for i in self.nodes if i != self.root)  # 四节点算例中，三个非根节点均为独立负荷。
-
-    @cached_property  # 无损总负荷界只需由固定设备参数计算一次。
-    def power_limit(self):  # 返回独立有功负荷的共同外界。
-        return self.transformer_kva * self.power_factor  # 无损有功总负荷外界，kVA×功率因数得到 kW。
-
-    @cached_property  # 走廊型号费用只由网架数据生成一次。
-    def cost(self):  # 按建设向量相同次序计算各选项的增量投资。
-        # x 按“走廊优先、线型次之”展开；保留现有走廊原型号的费用为零。
-        return np.array([  # 返回与走廊和型号展开顺序一致的费用向量。
-            0. if edge.existing and k == 0 else edge.length_m * (  # 保留既有走廊原型号免费，其他选择按长度计价。
-                line.cable_cny_m + (0. if edge.existing else self.new_corridor_cny_m))  # 新建走廊额外计入通道费用。
-            for edge in self.corridors for k, line in enumerate(self.lines)  # 先遍历走廊，再遍历该走廊的所有型号。
-        ])  # 完成一维建设费用数组。
-
-    cost_unit = "元"  # 明确四节点实验投资的物理单位。
-
-    @property  # 源码列表由算例名称即时组成，无需独立配置副本。
-    def sources(self):  # 列出决定本算例物理输入的文件。
-        return ("Network/__init__.py", f"Network/{self.name}.py")  # 实验结果记录这些文件的指纹以便复现。
-
-    @cached_property  # 完整方案表仅为小算例对照生成一次。
-    def designs(self):  # 枚举可连接全部节点的树及其线路型号。
-        """枚举连通树及设备选型；每个方案转换为统一的径向网架数据。"""
-        designs = []  # 收集合规的固定径向方案。
-        for edges in combinations(range(len(self.corridors)), len(self.nodes)-1):  # 树必须恰有 |V|-1 条边。
-            reached = {self.root}  # 从电源根节点检查选中走廊能否连通全网。
-            for _ in self.load_nodes:  # 至多传播非根节点数轮即可完成连通性检查。
-                for e in edges:  # 每轮沿所有选中走廊扩展已到达节点。
-                    edge = self.corridors[e]  # 读取当前走廊的端点。
-                    if edge.start in reached or edge.end in reached:  # 至少一个端点可达时，另一个端点也可达。
-                        reached.update((edge.start, edge.end))  # 同时将两端加入已到达集合。
-            if len(reached) != len(self.nodes):  # 在 |V|-1 条边条件下，全连通等价于生成树。
-                continue  # 不连通组合不属于合法径向方案。
-            for types in product(range(len(self.lines)), repeat=len(edges)):  # 每条选中走廊独立选择一种设备型号。
-                choice = tuple(zip(edges, types))  # (走廊编号, 线型编号) 的离散建设方案。
-                x = np.zeros(len(self.cost))  # 建设向量与费用向量采用相同展开次序。
-                branches, r, reactance, capacity = [], [], [], []  # 收集该方案的支路、阻抗和给定有功容量。
-                zbase = self.voltage_kv**2/(self.transformer_kva/1000)  # Zbase=Ubase²/Sbase，kV²/MVA 得到 Ω。
-                for e, k in choice:  # 按选中的走廊与型号实例化物理参数。
-                    edge, line = self.corridors[e], self.lines[k]  # 同时读取走廊长度和设备单位参数。
-                    x[e*len(self.lines)+k] = 1  # 本走廊只启用当前选中线型。
-                    branches.append((edge.start, edge.end))  # 无向走廊随后统一定向为从根到叶。
-                    r.append(line.r_ohm_km*edge.length_m/1000/zbase)  # 长度换成 km，再把 Ω 换成标幺电阻。
-                    reactance.append(line.x_ohm_km*edge.length_m/1000/zbase)  # 同样转换电抗。
-                    capacity.append(line.capacity_kw/self.transformer_kva)  # 本算例给定的是送端有功容量，不是电流热限。
-                designs.append(RadialNetwork(  # 将一个完整建设组合转换为统一径向数据。
-                    self.name, self.root, self.load_nodes, branches, r, reactance,  # 传入根节点、非根节点、选中支路及标幺阻抗。
-                    self.transformer_kva, self.voltage_kv, np.zeros(len(self.load_nodes)),  # 指定功率基准、电压基准和初始有功负荷。
-                    np.zeros(len(self.load_nodes)), self.load_nodes,  # 该小算例没有固定背景无功，三个节点均独立变化。
-                    np.full(len(self.load_nodes), np.tan(np.arccos(self.power_factor))),  # 由功率因数计算统一的 Q/P 比例。
-                    self.voltage_min_pu**2, 1., self.power_limit, capacity=capacity,  # 电压幅值限值先平方，支路有功容量沿用给定值。
-                    source_smax=1., choice=choice, x=x, cost=float(self.cost@x), sources=self.sources))  # 源端视在上限为 1 p.u.，同时记录本方案投资与输入来源。
-        return tuple(sorted(designs, key=lambda d: (d.cost, tuple(d.x))))  # 按投资递增排列，为 AC 最小投资扫描提供顺序。
+    capacity: tuple = ()  # 可选的逐型号送端有功上限；为空时沿用基础支路限值。
+    optional: bool = False  # True 允许这条走廊不投入，由主问题决定径向连接。
 
 
 @dataclass  # 由字段声明生成固定径向网架的初始化函数。
@@ -145,13 +53,17 @@ class RadialNetwork:  # 所有运行模型读取的统一径向网架数据。
     source_pmax: float = np.inf  # 源端送出有功上限，p.u.。
     source_qmax: float = np.inf  # 源端送出无功上限，p.u.。
     source_smax: float = np.inf  # 源端视在容量上限，p.u.。
-    choice: tuple = ()  # 四节点小算例的走廊与型号组合。
     x: object = ()  # 本固定方案的离散建设记录。
     cost: float = 0.  # 本方案增量投资，基础固定方案默认零费用。
     sources: tuple = ()  # 决定物理输入的源码文件列表。
 
-    cost_unit = "相对投资单位"  # 固定网架默认使用相对投资单位；四节点母网另行标为元。
+    cost_unit = "相对投资单位"  # 规划费用的单位由具体网架设置。
     line_options = ()  # 普通固定网架没有规划选项；Case33 在母网中提供逐线路型号。
+    budgets = (0., 1., 2., np.inf)  # 网架的默认测试预算，可在 Notebook 中覆盖。
+
+    @property  # 固定拓扑以根向支路作为规划输入。
+    def planning_branches(self):  # 返回内部节点索引，−1 表示根节点。
+        return tuple((int(parent),i) for i,parent in enumerate(self.parent))  # 可重构算例覆写为包含新建走廊的端点表。
 
     def __post_init__(self):  # 根据无向支路建立径向顺序并统一所有数组的索引。
         adjacency = {i: [] for i in (self.root, *self.nodes)}  # 先构造无向邻接表，再确定根向拓扑。
@@ -176,10 +88,6 @@ class RadialNetwork:  # 所有运行模型读取的统一径向网架数据。
     @property  # 非根节点数按当前节点表读取。
     def n(self):  # 返回径向网络的支路数及非根节点数。
         return len(self.nodes)  # 树中每个非根节点恰有一条入边。
-
-    @property  # 固定网架只有当前一个合法方案。
-    def designs(self):  # 提供小算例基准所需的统一方案接口。
-        return (self,)  # 普通固定网架不产生额外建设组合。
 
     @cached_property  # 缓存独立负荷在完整节点数组中的位置。
     def selected(self):  # 返回三维负荷坐标对应的内部节点索引。

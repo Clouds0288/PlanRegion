@@ -8,6 +8,7 @@ import numpy as np  # 组装网架矩阵与潮流状态。
 from gurobipy import GRB  # 使用变量类型、优化方向和明确的求解状态。
 import clarabel  # 求解固定整数选型后的连续 LP/SOCP。
 from scipy import sparse  # 将连续子问题矩阵转换为稀疏格式。
+from time import perf_counter  # 数值复核与 phase I 共用同一个 SP 时间预算。
 
 AC_TOL = 1e-9  # AC 运行限值的标幺容差。
 FIXED_POINT_TOL = 1e-12  # AC 电流等式的收敛容差。
@@ -15,67 +16,93 @@ PLANNING_TOL = 1e-8  # 规划 SP 的原始标幺约束容差，不是几何误�
 
 
 class PlanningEquations:  # 统一生成线性和 SOCP 系数；不承担预算循环或方案枚举。
-    """固定径向拓扑的逐线路选型模型：c+F*p+G*y∈K，0≤y≤U0+Ux*x。
+    """固定或可选径向拓扑的逐线路模型：c+F*p+G*y∈K，0≤y≤U0+Ux*x。
 
     x 是各候选线路的 one-hot 型号变量；y=(P_k,Q_k,ell_k,v)。
     各型号保留自己的送端功率和电流平方，共用真实节点电压；未选型号潮流为零。
-    适用于当前 case33：非负负荷、正阻抗、有限源端 P/Q 上限；不补造线路热限。
+    非负负荷、正阻抗和有限源端上界；可选走廊另含压降开断余量，仍用同一种联合割。
     """
 
     def __init__(self, network, method, *, planning=True):  # planning=False 用同一方程检查一个固定方案。
         self.network = c = network  # 保存网架数据引用，局部别名 c 便于对应物理公式。
         self.method = method  # 在建模和证书核验中使用同一个 LP/SOCP 模式。
         groups = {o.branch: o for o in c.line_options} if planning else {}  # 固定方案没有可变型号。
-        edges, r, reactance, cost, selected, self.groups = [], [], [], [], [], []  # 依次收集支路索引、型号阻抗、投资及每条线路的选型分组。
-        for e in range(c.n):  # 按非根节点的入边顺序遍历在运支路。
+        branches = c.planning_branches if planning else tuple((int(a),b) for b,a in enumerate(c.parent))  # 固定方案只读取已选树。
+        self.reconfigurable = any(o.optional for o in groups.values())  # 是否需要由主问题选择运行树。
+        edges, senders, receivers, r, reactance, capacity, cost, selected, groups_by_branch = [], [], [], [], [], [], [], [], {}  # 型号顺序与项目顺序分别维护。
+        for e,(a,b) in enumerate(branches):  # 按走廊顺序展开；−1 是电源根节点。
             o = groups.get(e)  # 候选支路读取型号选项，其他支路保持已有参数。
             start = len(cost)  # 记住本支路第一个二进制变量的位置。
-            types = zip(o.r, o.reactance, o.cost) if o else [(c.r[e], c.reactance[e], 0.)]  # 固定支路仅保留一个无新增费用的物理型号。
-            for resistance, xline, price in types:  # 展开本支路的各个型号，阻抗和费用均为常数。
-                edges.append(e)  # 记录每个型号对应的真实支路及标幺阻抗。
-                r.append(resistance)  # 记录每个型号对应的真实支路及标幺阻抗。
-                reactance.append(xline)  # 记录每个型号对应的真实支路及标幺阻抗。
-                if o:  # 只有候选支路需要由主问题选择型号。
-                    selected.append(len(edges)-1)  # 只有候选线路的型号对应二进制变量。
-                    cost.append(price)  # 费用向量与二进制选型变量采用同一顺序。
+            directions = [(a,b),(b,a)] if o and o.optional and min(a,b)>=0 else ([(b,a)] if b<0 else [(a,b)])  # 可选非根走廊允许两种供电方向，禁止流入根节点。
+            limits = o.capacity or (c.capacity[e],)*len(o.cost) if o else (c.capacity[e],)  # 逐型号容量优先，否则沿用基础支路限值。
+            types = list(zip(o.r,o.reactance,o.cost,limits)) if o else [(c.r[e],c.reactance[e],0.,limits[0])]  # 固定支路只保留当前型号。
+            for sender,receiver in directions:  # 只展开单条线路的方向，不展开整个建设组合。
+                for resistance,xline,price,limit in types:  # 每个有向型号有独立 P/Q/ell。
+                    edges.append(e)  # 物理走廊编号。
+                    senders.append(sender)  # 真实送端内部索引。
+                    receivers.append(receiver)  # 真实受端内部索引。
+                    r.append(resistance)  # 型号电阻常数。
+                    reactance.append(xline)  # 型号电抗常数。
+                    capacity.append(limit)  # 该型号的送端有功上限。
+                    if o:  # 只有候选支路建立二进制选型变量。
+                        selected.append(len(edges)-1)  # 记录 x 与有向型号的对应位置。
+                        cost.append(price)  # 正反方向使用同一工程造价。
             if o:  # 固定支路不建立选择等式。
-                self.groups.append(np.arange(start, len(cost)))  # 每条候选线路恰选一个型号。
+                groups_by_branch[e] = np.arange(start, len(cost))  # 每条候选线路恰选一个型号。
+        self.groups = [groups_by_branch[o.branch] for o in c.line_options] if planning else []  # 编解码必须遵循 Network 项目顺序，不能混成支路排序。
         self.edges, self.r, self.reactance = np.array(edges), np.array(r), np.array(reactance)  # 将逐型号物理参数转为矩阵运算所需的数组。
         self.cost, self.selected = np.array(cost), np.array(selected, dtype=int)  # 投资向量长度就是二进制变量数；空选型索引仍使用整数类型。
+        self.senders, self.receivers = np.array(senders),np.array(receivers)  # 拓扑与物理方程使用相同端点映射。
         t, nx, npower = len(edges), len(cost), len(c.load_nodes)  # 分别记支路型号数、选型变量数及独立负荷维数。
         self.P, self.Q, self.ell = slice(0,t), slice(t,2*t), slice(2*t,3*t)  # 连续状态 y 的前三块依次是送端有功、无功和电流平方。
         self.v = slice(3*t,3*t+c.n)  # 最后一块是各非根节点的电压平方。
-        ny = 3*t+c.n  # 每个型号三个运行变量，每个节点一个电压变量。
-        T = np.eye(c.n)[:, self.edges]  # 按支路汇总各型号的物理量。
-        J = np.zeros((c.n,c.n))  # 构造父节点电压的索引矩阵。
-        for e, parent in enumerate(c.parent):  # 遍历真实支路的送端节点。
-            if parent >= 0:  # 根节点电压固定，不作为运行变量的一列。
-                J[e,parent] = 1.  # J*v 为非根送端电压；根送端另加常数 1。
-        root = (c.parent < 0).astype(float)  # 标出接根支路，用于固定电压常数和电源功率求和。
+        self.switch = slice(3*t+c.n,5*t+c.n) if self.reconfigurable else slice(3*t+c.n,3*t+c.n)  # 可选走廊的正负压降开断余量。
+        ny = self.switch.stop  # 固定拓扑不增加开断变量。
+        T = np.eye(c.n)[:,self.receivers]  # 将送端功率与线路损耗汇总到受端节点。
+        J = np.zeros((t,c.n))  # 每个有向型号对应一行送端节点索引。
+        for k,parent in enumerate(self.senders):  # 根节点电压作为常数，其他送端引用节点变量。
+            if parent>=0:  # 根索引 −1 不进入节点矩阵。
+                J[k,parent] = 1.  # J*v 给出各型号的非根送端电压。
+        root = (self.senders<0).astype(float)  # 接根型号用于固定电压常数和电源功率汇总。
         self.T = T  # 保留型号到真实支路的汇总矩阵，用于重建潮流。
-        balance = (np.eye(c.n)-J.T)@T  # 本支路送出量减去直接子支路送出量。
-        eq = np.zeros((3*c.n, ny))  # 三组节点等式分别为有功、无功平衡和压降。
+        self.balance = balance = T-J.T  # 节点流入减流出；同时用于拓扑连通流。
+        drop = np.eye(t) if self.reconfigurable else T  # 可选拓扑逐型号写压降，固定拓扑按真实支路汇总。
+        incoming = T.T if self.reconfigurable else np.eye(c.n)  # 每条压降等式的受端电压。
+        outgoing = J if self.reconfigurable else np.eye(c.n)[c.parent]*(c.parent>=0)[:,None]  # 固定拓扑每条真实支路只引用一次送端电压。
+        drop_root = root if self.reconfigurable else (c.parent<0).astype(float)  # 根电压仅在接根压降等式中出现。
+        eq = np.zeros((2*c.n+len(drop),ny))  # 节点 P/Q 平衡，加上对应拓扑的压降等式。
         eq[:c.n,self.P], eq[:c.n,self.ell] = balance, -T*self.r  # P-ΣP_child-r*ell=p_node。
         eq[c.n:2*c.n,self.Q], eq[c.n:2*c.n,self.ell] = balance, -T*self.reactance  # 无功平衡：Q−ΣQ_child−χ·ell=q_node。
-        eq[2*c.n:3*c.n,self.v] = J-np.eye(c.n)  # 电压项为送端电压减受端电压。
-        eq[2*c.n:3*c.n,self.P], eq[2*c.n:3*c.n,self.Q] = -2*T*self.r, -2*T*self.reactance  # 压降的一次功率项为 −2(rP+χQ)。
-        eq[2*c.n:3*c.n,self.ell] = T*(self.r**2+self.reactance**2)  # 完整支路压降的损耗项。
-        eqc = np.r_[-c.fixed_p/c.base, -c.fixed_q/c.base, root]  # 固定负荷移到等式左侧，根送端电压贡献常数 1。
-        eqf = np.vstack([-c.E/c.base, -c.E*c.q_ratio/c.base, np.zeros((c.n,npower))])  # E 将独立负荷嵌入节点；无功按给定 Q/P 比例变化。
+        eq[2*c.n:,self.v] = outgoing-incoming  # 送端电压减受端电压。
+        eq[2*c.n:,self.P], eq[2*c.n:,self.Q] = -2*drop*self.r,-2*drop*self.reactance  # 一次功率压降。
+        eq[2*c.n:,self.ell] = drop*(self.r**2+self.reactance**2)  # 完整 AC 压降的电流平方项。
+        if self.reconfigurable:  # 未投入走廊的两端电压不能被强行关联。
+            eq[2*c.n:,self.switch] = np.c_[np.eye(t),-np.eye(t)]  # d+s⁺−s⁻=0；投入时两余量均被选型上界置零。
+        eqc = np.r_[-c.fixed_p/c.base,-c.fixed_q/c.base,drop_root]  # 固定负荷及根电压常数。
+        eqf = np.vstack([-c.E/c.base,-c.E*c.q_ratio/c.base,np.zeros((len(drop),npower))])  # 独立负荷嵌入 P/Q 平衡。
         self.equal_count = len(eqc)  # 记录原始等式数，供直接模型避免重复建模。
         # 原模型保留等式；phase I 使用正负两行，把等式残差也纳入 eta。
         self.c, self.F = np.r_[eqc,-eqc], np.vstack([eqf,-eqf])  # 等式 h=0 在 phase I 中写为 h≥−eta 与 −h≥−eta。
         self.G = np.vstack([eq,-eq])  # 状态系数采用同样的正负复制，保持行顺序一致。
-        pmax = np.minimum(c.capacity[self.edges], min(c.source_pmax,c.source_smax))  # 非负纯负荷条件下，支路有功不超过支路及源端有效上界。
+        pmax = np.minimum(capacity,min(c.source_pmax,c.source_smax))  # 同时受逐型号容量和源端上界限制。
         qmax = np.full(t,min(c.source_qmax,c.source_smax))  # 支路无功不超过源端无功或视在容量上界。
         lmax = pmax/self.r if method == 'socp' else np.zeros(t)  # P≥r*ell 给出有效电流平方上界；线性模型令 ell=0。
         self.upper = np.r_[pmax,qmax,lmax,c.vmax]  # 所有 y 的物理有效界，用于型号联接和对偶残差补偿。
+        if self.reconfigurable:  # 开断时 P/Q/ell=0，仅需覆盖两端允许电压之差。
+            umax,umin = root+J@c.vmax,root+J@c.vmin  # 根据端点限值计算紧的开断余量上界。
+            switch_bound = np.maximum(umax-c.vmin[self.receivers],c.vmax[self.receivers]-umin)  # 覆盖电压差正负两种符号。
+            self.upper = np.r_[self.upper,switch_bound,switch_bound]  # 不引入任意巨大 M。
         self.box_constant = self.upper.copy()  # 变量盒的常数项先采用物理上界，候选型号随后改为与 x 联接。
         self.box_selection = np.zeros((ny,nx))  # U(x)=U0+Ux·x，矩阵列与各型号的二进制变量对应。
-        self.linked = np.concatenate([offset+self.selected for offset in (0,t,2*t)])  # 只对候选型号的 P/Q/ell 建立联接，不复制节点电压。
         for offset, bound in ((0,pmax),(t,qmax),(2*t,lmax)):  # 分别设置三类型号运行变量的上界。
             self.box_constant[offset+self.selected] = 0.  # 候选型号没有与 x 无关的正上界，未选中时必须为零。
             self.box_selection[offset+self.selected,np.arange(nx)] = bound[self.selected]  # 型号相关上界 U(x)；未选型号的潮流严格为零。
+        if self.reconfigurable:  # 同一个仿射变量盒同时表达投运潮流和开断压降。
+            for offset in (self.switch.start,self.switch.start+t):  # 正负余量均满足 0≤s≤M(1−x)。
+                self.box_constant[offset:offset+t] = 0.  # 无选型变量的固定支路始终投入，余量为零。
+                self.box_constant[offset+self.selected] = switch_bound[self.selected]  # 未投入型号允许两端电压独立变化。
+                self.box_selection[offset+self.selected,np.arange(nx)] = -switch_bound[self.selected]  # 投入型号取消余量，恢复严格压降等式。
+        self.linked = np.flatnonzero(np.any(self.box_selection!=0.,axis=1)|(self.box_constant!=self.upper))  # 直接模型与 SP 使用同一个完整变量盒。
         linear_c, linear_g = [], []  # 收集等式之外的线性运行限值。
         g = np.zeros((c.n,ny))  # 选取电压变量，构造 v−vmin≥0。
         g[:,self.v] = np.eye(c.n)  # 选取电压变量，构造 v−vmin≥0。
@@ -84,7 +111,7 @@ class PlanningEquations:  # 统一生成线性和 SOCP 系数；不承担预算�
         for block, limit in ((self.P,c.source_pmax),(self.Q,c.source_qmax)):  # 分别处理电源总有功和总无功上限。
             if np.isfinite(limit):  # 未给定的无限上限不需要建立约束行。
                 g = np.zeros(ny)  # 只累加接根型号的送端功率，写成 limit−Σpower≥0。
-                g[block] = -root[self.edges]  # 只累加接根型号的送端功率，写成 limit−Σpower≥0。
+                g[block] = -root  # 只累加接根型号的送端功率，写成 limit−Σpower≥0。
                 linear_c.append(limit)  # 源端功率包含网损。
                 linear_g.append(g)  # 源端功率包含网损。
         self.c = np.r_[self.c,linear_c]  # 在等式的正负两组之后追加运行限值常数。
@@ -94,15 +121,14 @@ class PlanningEquations:  # 统一生成线性和 SOCP 系数；不承担预算�
         if method == 'socp':  # 线性模式令电流为零，并省略全部二阶锥。
             for k in range(t):  # SOCP 对每个支路型号建立一个四维锥。
                 g = np.zeros((4,ny))  # 四行依次对应 u+ell、2P、2Q、u−ell。
-                e = self.edges[k]  # 查到该型号所属的真实支路。
-                g[0,self.v] = g[3,self.v] = J[e]  # 首、末分量均含真实送端电压，不能使用型号虚拟电压。
+                g[0,self.v] = g[3,self.v] = J[k]  # 首、末分量均使用该有向型号真实送端电压。
                 g[0,self.ell.start+k] = 1.  # 锥首分量含正的电流平方。
                 g[1,self.P.start+k] = g[2,self.Q.start+k] = 2.  # 两个方向分量分别为两倍有功和无功。
                 g[3,self.ell.start+k] = -1.  # 最后一个方向分量含负的电流平方。
-                self._cone([root[e],0.,0.,root[e]],g)  # (u_e+ell_k,2P_k,2Q_k,u_e-ell_k)∈SOC；u_e 是真实送端电压平方。
+                self._cone([root[k],0.,0.,root[k]],g)  # (u+ell,2P,2Q,u−ell)∈SOC。
             if np.isfinite(c.source_smax):  # 仅在网架给定视在上限时建立源端容量圆。
                 g = np.zeros((3,ny))  # 三维锥的两个方向分量是源端总 P 和总 Q。
-                g[1,self.P], g[2,self.Q] = root[self.edges],root[self.edges]  # 三维锥的两个方向分量是源端总 P 和总 Q。
+                g[1,self.P], g[2,self.Q] = root,root  # 三维锥的两个方向分量是源端总 P 和总 Q。
                 self._cone([c.source_smax,0.,0.],g)  # 容量约束写成 (Smax,ΣP,ΣQ)∈SOC。
         self.relax = np.zeros(len(self.c))  # eta 松弛所有线性行，锥方向分量初始保持零。
         self.relax[:self.linear_count] = 1.  # eta 松弛所有线性行，锥方向分量初始保持零。
@@ -116,14 +142,21 @@ class PlanningEquations:  # 统一生成线性和 SOCP 系数；不承担预算�
         self.F = np.vstack([self.F,np.zeros((len(constant),self.F.shape[1]))])  # 锥通过运行状态依赖负荷，因此显式负荷系数为零。
 
     def selection(self, choice):  # 把逐线路型号编号转换为主问题 one-hot 编码。
-        """线路型号编号转 one-hot；只用于实例化方案和枚举对照。"""
+        """按 Network 项目顺序，将线路型号编号转为内部 one-hot 编码。"""
         x = np.zeros(len(self.cost))  # 每个候选型号对应一个二进制位置。
-        for group,k in zip(self.groups,choice):  # 各条线路的型号编号与其变量分组一一对应。
-            x[group[int(k)]] = 1.  # 每组只激活被选型号。
+        tree = self.network.design(choice) if self.reconfigurable else self.network  # 可重构方案由根向树确定线路方向。
+        for group,o,k in zip(self.groups,self.network.line_options,choice):  # Network 按走廊给出型号；−1 表示未投入。
+            if k>=0:  # 未投入走廊的整组选型变量保持零。
+                offset = int(k)  # 默认使用输入走廊的第一个方向。
+                arc = self.selected[group[offset]]  # 查到该方向的真实端点。
+                if tree.parent[self.receivers[arc]]!=self.senders[arc]:  # 当前树可能由另一端给这条走廊供电。
+                    offset += len(o.cost)  # 转到相同型号的反方向变量。
+                x[group[offset]] = 1.  # 只激活这条走廊实际投入的方向和型号。
         return x  # 返回选型向量，固定网架时长度为零。
 
     def choice(self, x):  # 将求解后的 one-hot 向量还原成逐线路型号编号。
-        return np.array([np.argmax(x[g]) for g in self.groups])  # 每组最大分量的位置就是该线路所选型号。
+        return np.array([int(np.argmax(x[g]))%len(o.cost) if np.any(x[g]>.5) else -1  # 去除内部方向编码，保留 Network 的型号编号。
+                         for g,o in zip(self.groups,self.network.line_options)])  # 全零组选型返回未投入标记。
 
     def margin(self, x, power, state):  # 检查不含 eta 的原始约束最小余量。
         g = self.c+self.F@power+self.G@state  # 将实际负荷和运行状态代回统一物理方程。
@@ -134,19 +167,22 @@ class PlanningEquations:  # 统一生成线性和 SOCP 系数；不承担预算�
 
     def restore(self, x, power, state):  # 按物理等式重建候选状态，再交给 margin 检验。
         """用选中型号的电流重建等式精确的状态，消除未选型号退化锥中的浮点噪声。"""
-        c = self.network  # 只读取该实例共享的网架配置。
+        c = self.network.design(self.choice(x)) if self.reconfigurable else self.network  # 可重构网按本次整数方案实例化径向树。
         active = np.ones(len(self.edges))  # 固定支路始终激活，候选型号由整数 x 决定。
         active[self.selected] = x  # 固定支路始终激活，候选型号由整数 x 决定。
         y = np.zeros_like(state)  # 未激活型号从零状态开始，避免残留数值噪声。
         ell = np.clip(state[self.ell],0.,self.upper[self.ell])*active  # 将电流限制在有效盒中，未选型号电流清零。
         p,q = c.loads(power)  # 取得含固定背景的完整节点 P/Q 负荷。
-        ell[(c.D@(p[0]+q[0]))[self.edges]==0.] = 0.  # 纯负荷空子树不保留锥松弛产生的无效循环损耗。
+        ell[(c.D@(p[0]+q[0]))[self.receivers]==0.] = 0.  # 纯负荷空子树不保留锥松弛产生的无效循环损耗。
         P = c.D@(p[0]+self.T@(self.r*ell))  # 汇总节点负荷和所有下游有功损耗。
         Q = c.D@(q[0]+self.T@(self.reactance*ell))  # 汇总节点无功负荷和所有下游无功损耗。
-        y[self.ell], y[self.P], y[self.Q] = ell, P[self.edges]*active, Q[self.edges]*active  # 将真实支路功率填入选中型号，其余型号仍为零。
+        y[self.ell], y[self.P], y[self.Q] = ell,P[self.receivers]*active,Q[self.receivers]*active  # 将受端入边功率写回活动有向型号。
         v = 1.-2*c.D.T@(self.T@(self.r*y[self.P]+self.reactance*y[self.Q]))  # 沿根到节点路径累加一次压降。
         v += c.D.T@(self.T@((self.r**2+self.reactance**2)*ell))  # 补入完整支路压降中的二次电流项。
         y[self.v] = v  # 将重建的节点电压平方写回状态向量。
+        if self.reconfigurable:  # 开断余量只吸收未投入线路的两端电压差。
+            delta = np.where(self.senders<0,1.,v[self.senders])-v[self.receivers]  # 根电压为 1，其余读取真实节点电压。
+            y[self.switch] = np.r_[np.maximum(-delta,0.),np.maximum(delta,0.)]*np.tile(1.-active,2)  # 已投入线路余量严格为零。
         return y  # 是否可行仍由 margin 对原始限值与锥逐一核验。
 
 
@@ -166,8 +202,15 @@ class PlanningModel:  # 负责单次规划查询；多次查询和切割循环�
         m.Params.NonConvex = 0  # 若模型误写成非凸二次式，立即暴露，不能悄悄改用非凸求解。
         self.x = m.addMVar(len(e.cost),vtype=GRB.BINARY,name='line_type')  # 每个候选型号一个二进制变量，固定网架时长度为零。
         self.power = p = m.addMVar(len(network.load_nodes),lb=0.,name='p_kw')  # 独立负荷非负，单位为 kW。
-        for group in e.groups:  # 按候选线路分别建立 one-hot 等式。
-            m.addConstr(self.x[group].sum()==1.)  # 每条线路恰好保留或升级为一个型号。
+        for group,option in zip(e.groups,network.line_options):  # 每条走廊最多投入一个方向和型号。
+            total = self.x[group].sum()  # 正反向型号属于同一组选项。
+            m.addConstr(total<=1. if option.optional else total==1.)  # 固定支路必须选型，可选走廊允许不投入。
+        if e.reconfigurable:  # 径向性在 MP 中约束，不需要预先生成任何树。
+            active = np.ones(len(e.edges))+np.eye(len(e.edges))[:,e.selected]@(self.x-1.)  # 固定支路投入，候选有向型号由 x 决定。
+            m.addConstr(e.T@active==1.)  # 每个非根节点恰有一条投入的入边。
+            flow = m.addMVar(len(e.edges),lb=0.,name='connectivity')  # 虚拟连通流，不是物理电功率。
+            m.addConstr(flow<=network.n*active)  # 虚拟流只能通过已投入的线路。
+            m.addConstr(e.balance@flow==np.ones(network.n))  # 每个非根节点消耗一单位流；连通加单入边保证根向树。
         m.addConstr(p.sum()/network.base<=network.power_limit/network.base)  # 把无损总负荷外界转为标幺尺度以改善数值条件。
         if np.isfinite(budget):  # 无限预算无需建立额外投资约束。
             m.addConstr(e.cost@self.x<=budget)  # 所有线路型号的增量投资之和不得超过预算。
@@ -187,15 +230,15 @@ class PlanningModel:  # 负责单次规划查询；多次查询和切割循环�
             g = e.c+e.F@p+e.G@y  # 代入同一 PlanningEquations 生成 Gurobi 约束表达式。
             m.addConstr(g[:e.equal_count]==0.)  # 原模型等式只建一次，负号副本仅用于 phase I。
             m.addConstr(g[2*e.equal_count:e.linear_count]>=0.)  # 跳过等式负号副本，仅添加后续真实运行不等式。
-            m.addConstr(y[e.linked]<=e.box_selection[e.linked]@self.x)  # 0≤y_ek≤U_ek*x_ek，未选型号为零。
+            m.addConstr(y[e.linked]<=e.box_constant[e.linked]+e.box_selection[e.linked]@self.x)  # 同时执行潮流上界 U*x 和开断余量上界 M*(1−x)。
             if method == 'socp':  # 线性模式不建立电流锥；ell 已由零上界固定。
                 for k in range(len(e.edges)):  # 逐型号建立真实送端电压下的旋转锥。
                     P,Q,l = (y[s.start+k].item() for s in (e.P,e.Q,e.ell))  # 取得当前型号的三个标量变量。
-                    parent = network.parent[e.edges[k]]  # 根据真实支路查找送端节点。
+                    parent = e.senders[k]  # 使用该有向型号的真实送端。
                     u = 1. if parent < 0 else y[e.v.start+parent].item()  # 接根支路取固定电压 1，其余读取父节点电压变量。
                     m.addQConstr(P*P+Q*Q<=u*l)  # u、ell 非负，这是凸旋转二阶锥。
                 if np.isfinite(network.source_smax):  # 仅检查网架实际给定的源端视在容量。
-                    roots = np.isin(e.edges,network.roots)  # 选出所有接根支路及其型号。
+                    roots = e.senders<0  # 选出所有接根支路及其型号。
                     ps,qs = y[e.P][roots].sum().item(),y[e.Q][roots].sum().item()  # 源端 P/Q 是接根支路送端功率之和。
                     m.addQConstr(ps*ps+qs*qs<=network.source_smax**2)  # 用凸二次不等式表示源端容量圆。
 
@@ -203,18 +246,25 @@ class PlanningModel:  # 负责单次规划查询；多次查询和切割循环�
         n = len(self.equations.network.load_nodes)  # 用负荷维数确定割中 p 与 x 系数的分界。
         self.model.addConstr(cut[0]+cut[1:1+n]@self.power+cut[1+n:]@self.x>=0.)  # 联合割对全部合法选型有效。
 
-    def solve(self):  # 完成单次全局规划查询，并返回候选与目标界。
+    def exclude(self, x):  # 仅在当前固定负荷查询内排除一个已证 AC 不可行的建设方案。
+        self.model.addConstr((1-2*x)@self.x>=1-x.sum())  # Hamming 距离至少为一，排除且只排除这个离散建设向量。
+
+    def solve(self, time_limit=20.):  # 返回可行候选和全局界；超时不冒充最优或不可行。
+        self.model.Params.TimeLimit = max(0., time_limit)  # 设置本次优化器时限；到时仍需区分证书与未确定状态。
         self.model.optimize()  # 调用 Gurobi 求解当前直接模型或含历史割的 MP。
         if self.model.Status == GRB.INFEASIBLE:  # 只有明确不可行状态才能返回无可行方案。
             return None  # 用 None 表示该查询已被求解器证明不可行。
-        if self.model.Status != GRB.OPTIMAL:  # 其他终止状态不能作为精确投资或边界查询的答案。
-            raise RuntimeError(f'Compact planning status {self.model.Status}')  # 保留明确的求解失败原因，不伪造最优性证书。
+        bound = self.model.ObjBound*self.objective_scale  # 超时仍可保留全局界，但它不是可行负荷。
+        reason = 'optimal' if self.model.Status == GRB.OPTIMAL else ('time_limit' if self.model.Status == GRB.TIME_LIMIT else f'solver_{self.model.Status}')  # 单独记录终止原因。
+        if not self.model.SolCount:  # 没有整数候选的超时查询保持未确定。
+            return dict(status='unknown', termination=reason, x=None, p=None, objective=None, bound=bound, state=None, feasible=False)  # None 仅用于已证不可行，字典用于未完成。
         x = np.rint(self.x.X).astype(int)  # 把满足整数容差的 x 还原为实际离散建设方案。
         objective = self.equations.cost@x if self.model.ModelSense==GRB.MINIMIZE else self.power.X.sum()  # 投资按实际型号计算，最大负荷按 kW 求和。
         # 投资按实际整数选型计价，避免 1+1e-10 被误判为超出预算 1。
-        return dict(x=x,p=self.power.X,  # 只返回本次查询的选型和负荷，不重复保存网架数据。
-                    objective=float(objective),bound=self.model.ObjBound*self.objective_scale,  # 同时返回可行目标与求解器给出的全局目标界。
-                    state=None if self.state is None else self.state.X)  # 联合割 MP 没有潮流状态，直接模型返回对应运行解。
+        state = None if self.state is None else self.equations.restore(x,self.power.X,self.state.X)  # 直接模型先重建物理等式，再检查候选状态。
+        feasible = state is not None and self.equations.margin(x,self.power.X,state)>=-PLANNING_TOL  # MP 候选本身不构成运行可行证书。
+        return dict(x=x,p=self.power.X,objective=float(objective),bound=bound,state=state,feasible=feasible,  # 只保存本次实际候选与有效界。
+                    status='optimal' if reason=='optimal' and (feasible or self.state is None) else ('feasible' if feasible else 'unknown'),termination=reason)  # 超时可行解与全局最优解分开标识。
 
 
 class PlanningSP:  # 同一个连续子问题同时支持 LP 和 SOCP 认证及联合割。
@@ -222,14 +272,15 @@ class PlanningSP:  # 同一个连续子问题同时支持 LP 和 SOCP 认证及�
 
     def __init__(self, equations):  # 绑定可复用的方程，并设置连续求解精度。
         self.equations = equations  # 不重新生成网架、费用或物理矩阵。
-        self.calls = 0  # 只统计实际调用连续求解器的次数。
         self.settings = settings = clarabel.DefaultSettings()  # 使用 Clarabel 的标准锥优化设置。
         settings.verbose = False  # 关闭求解日志，固定为单线程。
         settings.max_threads = 1  # 关闭求解日志，固定为单线程。
         settings.tol_gap_abs = settings.tol_gap_rel = settings.tol_feas = 1e-12  # 控制辅助问题的间隙与原始可行性误差。
         settings.reduced_tol_feas = 1e-11  # 数值停滞时的较宽松终止精度不替代原约束检验。
 
-    def solve(self, x, power):  # 固定一个整数选型和负荷点，返回证书、有效割或未确定结果。
+    def solve(self, x, power, time_limit=None):  # 固定整数选型和负荷，时限内返回证书、有效割或未确定结果。
+        self.settings.time_limit = (5. if self.equations.method=='linear' else 10.) if time_limit is None else max(0.,time_limit)  # 设置单次连续求解时限，数值复核共享这段时间。
+        deadline = perf_counter()+self.settings.time_limit  # 直接物理复核不能重置 SP 的时间预算。
         e = self.equations  # 读取共享的固定系数及变量切片。
         upper = e.box_constant+e.box_selection@x  # 选型只改变变量盒的右端项，物理方程系数不变。
         columns = np.flatnonzero(upper>0.)  # 未选型号及 LP 的 ell 恒为零，直接消去，不求解退化锥。
@@ -249,15 +300,14 @@ class PlanningSP:  # 同一个连续子问题同时支持 LP 和 SOCP 认证及�
         solver = clarabel.DefaultSolver(sparse.csc_matrix((n+1,n+1)),np.r_[np.zeros(n),1.],  # 目标仅最小化最后一个变量 eta，二次目标矩阵为零。
             sparse.csc_matrix(matrix),rhs,kinds,self.settings)  # 将稠密组装矩阵转为求解器所需的压缩列格式。
         result = solver.solve()  # 实际求解一次连续 phase I。
-        self.calls += 1  # 不把绘图点、几何检查或内点插值计成 SP 求解。
         if not np.isfinite(np.r_[result.x,result.z]).all():  # 非有限的原始解或乘子不能用于任何证书。
-            raise RuntimeError(f'Planning phase I status {result.status}')  # 非有限结果无法形成可审核的物理或对偶证书。
+            return dict(eta=None,cut=None,state=None,feasible=False,termination=str(result.status))  # 非有限状态不能形成证书，交给外层记录未确定。
         state = np.zeros(len(e.upper))  # 将消元后的解回填到完整状态，恒零变量仍为零。
         state[columns] = result.x[:-1]  # 将消元后的解回填到完整状态，恒零变量仍为零。
         state = e.restore(x,power,state)  # 用电流重建功率平衡与压降等式，再检查原始约束。
         eta = max(0.,result.x[-1])  # 去掉 eta 的微小负舍入值，保留实际辅助违反量。
         if e.margin(x,power,state)>=-PLANNING_TOL:  # 实际约束余量通过才认证，不能仅凭 eta 很小。
-            return dict(eta=eta,cut=None,state=state,feasible=True)  # 原始约束通过才认证原查询。
+            return dict(eta=eta,cut=None,state=state,feasible=True,termination=str(result.status))  # 原始约束通过才认证原查询。
         # 未收敛时仍可检验候选证书；有效性由原约束或下方的对偶锥与盒补偿保证。
         dual = np.zeros(len(e.c))  # 被消去的锥乘子补零，属于其对偶锥。
         dual[rows] = result.z[:len(rows)]  # 被消去的锥乘子补零，属于其对偶锥。
@@ -267,10 +317,18 @@ class PlanningSP:  # 同一个连续子问题同时支持 LP 和 SOCP 认证及�
         residual = np.maximum(e.G.T@dual,0.)  # max_{0≤y≤U(x)} (Gᵀλ)ᵀy = (Gᵀλ)_+ᵀU(x)。
         cut = np.r_[dual@e.c+residual@e.box_constant+1e-12,  # 常数项包含对偶物理项、完整变量盒补偿和浮点余量。
                     e.F.T@dual,e.box_selection.T@residual]  # 盒支撑函数给出 x 系数，同时补偿全部驻点残差。
-        cut /= max(np.max(np.abs(cut)),np.max(np.abs(cut[1:1+len(power)]))*e.network.base)  # 固定方案 x 为空时仍使用同一个正比例归一化。
+        scale = max(np.max(np.abs(cut)),np.max(np.abs(cut[1:1+len(power)]))*e.network.base)  # 固定方案 x 为空时使用同一个尺度。
+        cut /= max(scale,1e-30)  # 零乘子不形成分离割，避免在超时初始解上出现 0/0。
         if not (cut[0]+cut[1:1+len(power)]@power+cut[1+len(power):]@x < -1e-9):  # 只在割严格排除当前 (p,x) 时交给外层使用。
             cut = None  # 浮点边界可能尚未获证且无可靠割；外层必须显式处理未确定状态。
-        return dict(eta=eta,cut=cut,state=state,feasible=False)  # 失败查询的状态可用于同方案内点插值，但不能认证查询点。
+        if cut is None and deadline>perf_counter():  # 仅数值停滞且尚有时间时，直接复核原物理约束。
+            problem = PlanningModel(e,power=power)  # 使用同一方程的原始 LP/SOCP，不带 phase-I 松弛量。
+            with problem.model:  # 本次所有型号都固定，复核仍是连续问题。
+                problem.x.LB = problem.x.UB = x  # 不在复核中改换建设方案或负荷坐标。
+                polished = problem.solve(time_limit=max(0.,deadline-perf_counter()))  # 建模时间同样从剩余额度扣除。
+            if polished is not None and polished['feasible']:  # 原始约束仍须通过同一个 PLANNING_TOL。
+                return dict(eta=eta,cut=None,state=polished['state'],feasible=True,termination='primal_polish')  # 保存真实证书，不能仅凭求解器成功状态认证。
+        return dict(eta=eta,cut=cut,state=state,feasible=False,termination=str(result.status))  # 失败状态不能认证查询点；有效割仍可在超时后保留。
 
 
 class ACPowerFlow:  # 通过另一套支路递推和完整电流等式建立 AC 参考。
@@ -340,11 +398,6 @@ class ACPowerFlow:  # 通过另一套支路递推和完整电流等式建立 AC 
             active = active[keep]  # 数值未收敛的样本在迭代结束后仍保留 0 状态。
         return (status, ell) if return_currents else status  # 可选电流证书用于重建相量交叉核验。
 
-    def scan(self, points):  # 分批扫描评价网格，限制矩阵内存占用。
-        status = np.empty(len(points), dtype=np.int8)  # 与输入网格点一一对应的三态判定。
-        for start in range(0, len(points), 8192):  # 分批限制电流矩阵的内存，判定方程不变。
-            status[start:start+8192] = self.classify(points[start:start+8192])  # 每批使用完全相同的三态 AC 判据。
-        return status  # 按原网格点顺序返回状态。
 
     def _build_global(self, environment):  # 为不动点未判定的情况建立独立非凸 AC 核验。
         """显式非凸 AC 等式模型，用于未确定点和独立交叉核验。"""
@@ -381,10 +434,11 @@ class ACPowerFlow:  # 通过另一套支路递推和完整电流等式建立 AC 
         m.update()  # 提交变量及约束，之后可直接更新 RHS。
         self.model = m, ell, bp, bq  # 同一方案的不同查询复用此非凸模型。
 
-    def global_status(self, power, environment):  # 通过非凸求解器补判一个 AC 查询点。
+    def global_status(self, power, environment, time_limit=10.):  # 独立非凸核验在给定时限内返回证书或未确定。
         if self.model is None:  # 不动点已能判定的方案无需创建全局求解器。
             self._build_global(environment)  # 首次遇到未确定点时才付出建模成本。
         m, ell, bp, bq = self.model  # 复用同一方案的电流变量和节点平衡行。
+        m.Params.TimeLimit = max(0.,time_limit)  # 设置本次独立 AC 求解的时限。
         p, q = self.network.loads(power)  # 固定本次查询对应的全网节点功率。
         m.setAttr('RHS', bp, p[0])  # 更新有功平衡。
         m.setAttr('RHS', bq, q[0])  # 更新无功平衡。

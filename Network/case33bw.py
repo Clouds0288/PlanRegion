@@ -1,8 +1,7 @@
 """MATPOWER case33bw 原始径向网架；三个实际节点的负荷独立变化。"""
 from pathlib import Path  # 根据当前网架文件定位原始算例数据。
 from copy import copy  # 实例化单个方案时复制母网，避免修改原始工况。
-from functools import cached_property  # 不随查询变化的型号表和对照方案表只生成一次。
-from itertools import product  # 仅用于小规模枚举核对，不进入紧凑求解器。
+from functools import cached_property  # 不随查询变化的逐线路型号表只生成一次。
 import re  # 从 MATPOWER 文本中提取数据表。
 
 import numpy as np  # 保存节点、支路和型号参数数组。
@@ -12,10 +11,29 @@ from . import LineOptions, Project, RadialNetwork  # 复用统一的改造项目
 
 class Case33(RadialNetwork):  # 在原始 33 节点径向网中加入逐线路改造选项。
     # 合成投资试验：费用为相对单位，不是 MATPOWER 提供的工程造价。
-    projects = (Project("A", (2, 3), 2.), Project("B", (12, 13), 1.),  # 前两条候选支路及相对投资费用。
-                Project("C", (23, 24), 1.), Project("D", (27, 28), 1.))  # 其余两条候选支路及相对投资费用。
+    projects = (  # 前 4、8、16 项形成嵌套候选集；费用与线路只在此定义。
+        Project("A", (2, 3), 2.),     # 原候选：公共上游线路。
+        Project("B", (12, 13), 1.),   # 原候选：节点 18 所在支路。
+        Project("C", (23, 24), 1.),   # 原候选：节点 25 所在支路。
+        Project("D", (27, 28), 1.),   # 原候选：节点 33 所在支路。
+        Project("E", (5, 6), 1.),     # 新候选：下游分支的上游线路。
+        Project("F", (13, 14), 1.),   # 新候选：进一步改善节点 18 方向。
+        Project("G", (24, 25), 1.),   # 新候选：节点 25 的入线。
+        Project("H", (28, 29), 1.),   # 新候选：进一步改善节点 33 方向。
+        Project("I", (3, 4), 1.),     # 十六线路新增：节点 18、33 方向的公共上游。
+        Project("J", (6, 7), 1.),     # 十六线路新增：节点 18 所在分支的入口。
+        Project("K", (9, 10), 1.),    # 十六线路新增：节点 18 方向的中段。
+        Project("L", (16, 17), 1.),   # 十六线路新增：节点 18 方向的末段。
+        Project("M", (3, 23), 1.),    # 十六线路新增：节点 25 所在分支的入口。
+        Project("N", (6, 26), 1.),    # 十六线路新增：节点 33 所在分支的入口。
+        Project("O", (29, 30), 1.),   # 十六线路新增：节点 33 方向的中下游。
+        Project("P", (31, 32), 1.),   # 十六线路新增：节点 33 方向的末段。
+    )
 
-    def __init__(self, load_nodes=(18, 25, 33)):  # 默认以实际节点 18、25、33 的负荷为三个独立坐标。
+    def __init__(self, load_nodes=(18, 25, 33), candidate_count=4):  # 默认保留四线路基准，扩展时显式给出候选数量。
+        if not 1 <= candidate_count <= len(type(self).projects):  # 数量由唯一项目表决定，后续扩展无需修改限制。
+            raise ValueError(f'candidate_count must be between 1 and {len(type(self).projects)}')  # 禁止切片静默截短候选集。
+        self.projects = type(self).projects[:candidate_count]  # 候选参数只记录一次，实例选择需要的前缀。
         path = Path(__file__).parent/"data"/"case33bw.m"  # 原始 MATPOWER 文件是基础工况的唯一来源。
         source = path.read_text(encoding="utf-8")  # 读取原始文本，不另存一份参数副本。
         tables = {}  # 保存从文本解析出的三张标准数据表。
@@ -60,16 +78,9 @@ class Case33(RadialNetwork):  # 在原始 33 节点径向网中加入逐线路�
         for k, options in zip(choice, self.line_options):  # 按每条候选线路选中的型号更新物理参数。
             design.r[options.branch] = options.r[k]  # 替换该支路的标幺电阻。
             design.reactance[options.branch] = options.reactance[k]  # 替换该支路的标幺电抗。
-        design.x = np.asarray(choice, dtype=int)  # 四条线路分别取 0/1 型，与历史建设向量一致。
+        design.x = np.asarray(choice, dtype=int)  # 每条候选线路的型号编号，长度随候选数量变化。
         design.cost = sum(o.cost[k] for o, k in zip(self.line_options, choice))  # 按选中的逐线路型号累加实际增量投资。
         return design  # 返回该次选型对应的固定网架。
-
-    @cached_property  # 完整对照方案只生成一次，正式求解器不访问它。
-    def designs(self):  # 为当前四条候选线路生成 16 方案独立基准。
-        """仅供小算例枚举对照；紧凑 MILP/MISOCP 与联合割不读取此属性。"""
-        designs = [self.design(choice) for choice in product(  # 逐线路型号的笛卡尔积仅用于这个小规模基准。
-            *(range(len(o.cost)) for o in self.line_options))]  # 各线路的型号数直接读取唯一选项表。
-        return tuple(sorted(designs, key=lambda d: (d.cost, tuple(d.x))))  # 按费用升序扫描可获得独立 AC 的最小可行投资。
 
 
 network = Case33()  # 导出 Notebook 可直接加载的算例配置。

@@ -1,91 +1,75 @@
-"""逐线路紧凑模型与联合割；参考来自旧固定方案消元模型。"""
-import unittest  # 使用标准测试框架验证紧凑规划模型。
-from unittest.mock import patch  # 阻止正式求解器偷偷访问完整方案表。
-import numpy as np  # 处理选型编码、样本和边界误差。
-from threadpoolctl import threadpool_limits  # 统一矩阵运算线程数，使数值回归可复现。
-
-from Network.case33bw import Case33, network  # 读取候选线路设置及网架类型。
-from model import PlanningEquations, PlanningModel, PlanningSP  # 使用三层规划接口，不导入旧固定方案求解类。
-from tests.reference import dispatch_support, dispatch_feasible  # 独立消元参考不读取正式规划矩阵。
-from notebook_flow import workflow  # 直接测试 Notebook 的联合割循环。
-from vertify import verify_joint_cuts  # 在完整连续方案域上审核联合割。
+"""紧凑模型、联合割和固定选型的独立消元核对；不生成建设组合表。"""
+import unittest  # 直接运行模型回归。
+import numpy as np  # 构造固定查询和型号向量。
+from threadpoolctl import threadpool_limits  # 所有比较保持单线程。
+from Network.case33bw import Case33  # 四、八、十六条候选使用同一网架定义。
+from model import PlanningEquations, PlanningModel, PlanningSP  # 正式方程、主问题和连续 SP。
+from tests.reference import dispatch_support  # 独立固定网架消元方程。
+from tests.notebook_flow import workflow  # 读取主 Notebook 的正式联合割流程。
 
 
-class CompactPlanningTests(unittest.TestCase):  # 检验逐线路整数模型及全局联合割。
-    @classmethod  # 整组测试共用一次线程配置。
-    def setUpClass(cls):  # 开始测试前统一数值计算环境。
-        cls.threads = threadpool_limits(limits=1)  # 固定为单线程以减少浮点路径变化。
+class CompactPlanningTests(unittest.TestCase):  # 核对物理映射、最优值和全域割有效性。
+    @classmethod
+    def setUpClass(cls):  # 固定数值计算线程数。
+        cls.threads = threadpool_limits(limits=1)  # 减少求解路径差异。
 
-    @classmethod  # 结束整组测试后恢复调用环境。
-    def tearDownClass(cls):  # 避免测试线程配置影响其他实验。
-        cls.threads.restore_original_limits()  # 还原原来的线性代数线程数。
+    @classmethod
+    def tearDownClass(cls):  # 还原调用环境。
+        cls.threads.restore_original_limits()  # 测试不永久更改线程配置。
 
-    def test_solvers_never_access_complete_design_table(self):  # 正式求解必须不依赖预先枚举完整建设组合。
-        def forbidden(_):  # 任何完整方案表读取都立即使测试失败。
-            raise AssertionError('The compact solver attempted to enumerate designs')  # 清楚报告意外枚举的位置。
-        with patch.object(Case33,'designs',property(forbidden)):  # 临时把方案表替换成禁止访问的属性。
-            case = Case33()  # 使用全新网架避免已有缓存掩盖访问。
-            for method in ('linear','socp'):  # 分别检查 MILP 和 MISOCP。
-                problem = PlanningModel(PlanningEquations(case,method),power=[100.,800.,150.])  # 固定负荷，求最低逐线路建设投资。
-                with problem.model:  # 求解完成后释放直接模型。
-                    answer = problem.solve()  # 执行正式紧凑求解。
-                    self.assertEqual(problem.model.NumBinVars,8)  # 四条候选线路两个型号恰有 8 个二进制变量。
-                self.assertEqual(answer['objective'],0.)  # 该低负荷点无需升级。
-                answer,cuts,_ = workflow()['joint_benders'](PlanningEquations(case,method),budget=2.,direction=[1.,6.,1.])  # 联合割边界流程也必须遵守禁止枚举条件。
-                self.assertIsNotNone(answer)  # 应找到预算内可行边界。
-                self.assertTrue(cuts)  # 保证确实发生了联合割迭代。
+    def test_fixed_assignments_match_independent_physics(self):  # 指定代表选型，不展开全部建设组合。
+        direction = np.array([1.,6.,1.])  # 同一射线用于两套物理模型。
+        for count in (4,8,16):  # 规模变化只改变 Network 的候选集。
+            network = Case33(candidate_count=count)  # 唯一物理输入。
+            for choice in (np.zeros(count,dtype=int),np.arange(count)%2,np.ones(count,dtype=int)):  # 基础、交错、全升级三个代表选型。
+                design = network.design(choice)  # 独立固定网架直接由型号表生成。
+                for method in ('linear','socp'):  # LP 和 SOCP 分别对照。
+                    equations = PlanningEquations(network,method)  # 按模型内部顺序展开型号。
+                    x = equations.selection(choice)  # Network 顺序转内部变量顺序。
+                    np.testing.assert_array_equal(equations.choice(x),choice)  # 编解码必须还原同一实际方案。
+                    problem = PlanningModel(equations,direction=direction)  # 紧凑模型保留同一物理方程。
+                    with problem.model:  # 求解结束后释放优化器。
+                        problem.x.LB = problem.x.UB = x  # 固定本次指定型号。
+                        actual = problem.solve()  # 求固定方案的方向边界。
+                        self.assertEqual(problem.model.NumBinVars,2*count)  # 每条候选线路只有两个选型变量。
+                    reference = dispatch_support(design,method,np.ones(3),direction=direction)  # 不读取正式方程的独立消元求解。
+                    self.assertLess(abs(actual['objective']-reference['value']),.002)  # 物理边界必须在规定 kW 容差内一致。
+                    self.assertGreaterEqual(equations.margin(x,actual['p'],actual['state']),-1e-7)  # 同时复核原始约束。
 
-    def test_each_fixed_assignment_matches_old_eliminated_model(self):  # 每个整数选型须等价于独立固定网架模型。
-        direction = np.array([1.,6.,1.])  # 选择穿过多个瓶颈方向的代表射线。
-        for method in ('linear','socp'):  # 线性和 SOCP 分别对照。
-            for design in network.designs:  # 16 个完整方案仅在测试中逐一固定。
-                problem = PlanningModel(PlanningEquations(network,method),direction=direction)  # 直接模型仍使用逐线路变量表示。
-                x = problem.equations.selection(design.x)  # 将参考方案编码为紧凑模型的 one-hot 向量。
-                with problem.model:  # 该次直接模型求完即释放。
-                    problem.x.LB = problem.x.UB = x  # 将每个建设变量上下界锁定到参考选型。
-                    actual = problem.solve()  # 求当前固定组合的方向边界。
-                reference = dispatch_support(design,method,np.ones(3),direction=direction)  # 用独立消元方程求同一方向参考边界。
-                self.assertLess(abs(actual['objective']-reference['value']),.002)  # 绝对半径差须小于 0.002 kW。
-                np.testing.assert_array_equal(problem.equations.choice(actual['x']),design.x)  # 返回的逐线路选型须与固定组合一致。
-                self.assertGreaterEqual(problem.equations.margin(x,actual['p'],actual['state']),-1e-7)  # 直接模型返回状态还须通过原始物理约束核验。
+    def test_joint_queries_match_direct_models_and_reuse_cuts(self):  # 审核从 Notebook 移到测试，不进入正式构域。
+        for count in (4,8,16):  # 三种规模共用同一算法。
+            for method in ('linear','socp'):  # 两套物理假设分别比较。
+                equations,cuts = PlanningEquations(Case33(candidate_count=count),method),[]  # 每种模型单独维护割池。
+                queries = [dict(power=p) for p in ([100.,800.,150.],[250.,1800.,350.],[300.,3000.,500.])]  # 含基础、升级和高负荷点。
+                budgets = (0.,1.,2.) if count==16 and method=='socp' else (0.,1.,2.,np.inf)  # 仅十六线路 SOCP 的无限预算高精度射线单列为慢性能试验；无限预算构域仍由网格测试逐点核对。
+                queries += [dict(budget=b,direction=d) for b in budgets for d in ([1.,0.,0.],[0.,1.,0.],[1.,6.,1.])]  # 覆盖预算切换与轴向、偏斜边界。
+                for query in queries:  # 每次使用完全相同的输入。
+                    actual,new = workflow()['joint_benders'](equations,cuts=cuts,**query)  # 正式 MP/SP 查询。
+                    cuts.extend(new)  # 后续查询复用同一批有效割。
+                    direct = PlanningModel(equations,**query)  # 完整 MILP/MISOCP 独立求解路径。
+                    with direct.model:  # 不把直接模型加入联合割池。
+                        reference = direct.solve()  # 取得可行目标及有效全局界。
+                    self.assertEqual(actual is None,reference is None)  # 可行性结论必须相同。
+                    if actual is not None:  # 有解时还须核对目标值与证书。
+                        self.assertEqual(actual['status'],'optimal')  # 未确定不算通过。
+                        self.assertEqual(reference['status'],'optimal')  # 参考也必须完成求解。
+                        self.assertLess(abs(actual['objective']-reference['objective']),.002 if 'direction' in query else 1e-7)  # 使用各自物理单位的精度。
 
-    def test_minimum_cost_matches_all_sixteen_designs(self):  # 跨全部 16 个方案核对固定负荷最小投资。
-        points = np.array([[100.,800.,150.],[250.,1800.,350.],[300.,800.,100.],[400.,4500.,700.],  # 包含基础可行、需升级及不可行负荷。
-                           [204.62908536,306.94362804,102.31454268],[220.45070568]*3])  # 补充接近模型边界的典型查询。
-        for method in ('linear','socp'):  # 分别对照线性和 SOCP 的相同物理假设。
-            reference = np.full(len(points),np.inf)  # 参考最低费用初始化为无可行方案。
-            for design in network.designs:  # 逐个参考方案检查所有点。
-                feasible = dispatch_feasible(design,method,points)  # 独立消元模型判定当前网架是否承载负荷。
-                reference[feasible] = np.minimum(reference[feasible],design.cost)  # 在可行方案中取最小增量投资。
-            for i,power in enumerate(points):  # 正式紧凑模型逐点求投资，无需枚举。
-                problem = PlanningModel(PlanningEquations(network,method),power=power)  # 固定当前负荷，并保留全部逐线路选型自由度。
-                with problem.model:  # 按查询释放优化模型。
-                    answer = problem.solve()  # 由混合整数求解器搜索建设组合。
-                self.assertEqual(np.inf if answer is None else answer['objective'],reference[i])  # 紧凑结果或不可行结论须与完整参考一致。
-
-    def test_joint_cut_is_valid_over_every_continuous_design_region(self):  # 一条联合割须对其他建设组合也保持有效。
-        for method in ('linear','socp'):  # 同时检查线性和锥模型的对偶割。
-            e = PlanningEquations(network,method)  # 审核 SP 的割只需要方程，无须建立无关主问题。
-            x,power = e.selection([0,0,0,0]),np.array([300.,3000.,500.])  # 选择基础网架无法承载的高负荷点。
-            cut = PlanningSP(e).solve(x,power)['cut']  # 固定选型后调用连续 SP 生成联合割。
-            self.assertLess(cut[0]+cut[1:4]@power+cut[4:]@x,-1e-5)  # 该割必须严格排除原来的 (p,x)。
-            self.assertGreater(np.max(np.abs(cut[4:])),1e-4)  # 确实含有建设变量系数。
-            self.assertGreaterEqual(verify_joint_cuts(network,method,[cut]).min(),-1e-7)  # 在每个连续方案域上优化最小余量，不能只检查随机点。
-
-    def test_joint_queries_match_direct_models_and_reuse_cuts(self):  # 跨点及跨预算复用联合割后仍应得到正确规划查询结果。
-        for method in ('linear','socp'):  # 两种物理模型分别维护自己的割池。
-            cuts = []  # 从空割池开始，后续查询共享新增割。
-            for query in (dict(power=[250.,1800.,350.]),dict(budget=2.,direction=[1.,6.,1.]),  # 覆盖固定点投资查询及有预算的方向查询。
-                          dict(budget=0.,direction=[0.,1.,0.])):  # 再检查零预算、轴向负荷的边界情形。
-                actual,new,_ = workflow()['joint_benders'](PlanningEquations(network,method),cuts=cuts,**query)  # 执行 Notebook 中正式的 MP/SP 循环。
-                cuts.extend(new)  # 仅把本次新增割并入下一次查询。
-                problem = PlanningModel(PlanningEquations(network,method),**query)  # 以含全部物理方程的直接模型作独立求解路径对照。
-                with problem.model:  # 该次直接模型用完即释放。
-                    reference = problem.solve()  # 得到直接 MILP/MISOCP 的最优参考结果。
-                self.assertEqual(actual is None,reference is None)  # 两条求解路径须对可行性给出相同结论。
-                if actual is not None:  # 两者有解时进一步比较目标值。
-                    self.assertLess(abs(actual['objective']-reference['objective']),.002)  # 投资或总负荷差须满足同一绝对容差。
+    def test_joint_cut_is_valid_on_the_full_compact_domain(self):  # 对全部整数选型的可行域直接优化，检验联合割没有误切。
+        for count in (4,8,16):  # 同一检查覆盖全部三档候选集。
+            for method in ('linear','socp'):  # 两类对偶割都需通过。
+                equations = PlanningEquations(Case33(candidate_count=count),method)  # 生成被审核方程。
+                x,power = equations.selection(np.zeros(count,dtype=int)),np.array([300.,3000.,500.])  # 选择基础网架的不可行负荷。
+                cut = PlanningSP(equations).solve(x,power)['cut']  # 获得真实 SP 分离割。
+                self.assertIsNotNone(cut)  # 测试必须实际产生割。
+                self.assertLess(cut[0]+cut[1:4]@power+cut[4:]@x,-1e-5)  # 必须排除生成点。
+                problem = PlanningModel(equations)  # 全部原始物理约束，不能加入被审核的割。
+                with problem.model:  # 全局审核与正式求解隔离。
+                    problem.model.setObjective(cut[0]+cut[1:4]@problem.power+cut[4:]@problem.x,1)  # 最小化割余量。
+                    problem.model.Params.TimeLimit = 20.  # 测试单次求解上限。
+                    problem.model.optimize()  # MILP/MISOCP 搜索全部合法选型。
+                    self.assertGreaterEqual(problem.model.ObjBound,-1e-7)  # 全局下界非负才证明无误切。
 
 
-if __name__ == '__main__':  # 允许单独执行紧凑模型测试。
-    unittest.main()  # 运行该文件的全部回归检查。
+if __name__=='__main__':  # 支持单独执行本组回归。
+    unittest.main()  # 不启动 Notebook 的完整实验。

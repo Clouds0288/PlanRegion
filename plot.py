@@ -1,49 +1,7 @@
-"""区域对比与固定方案切割回放；只消费计算结果。"""
-from pathlib import Path  # 定位可再生成的 HTML 输出文件。
-import numpy as np  # 处理绘图坐标和体素标签。
-import plotly.graph_objects as go  # 创建可旋转的三维图与切割动画。
-from region import clip_polytope, polytope_vertices  # 按原始 SP 割和内点重建几何，不额外调用模型。
-
-
-def save_replay(result, folder, method='socp', budget_index=-1, design_index=-1):  # 回放一个固定方案的真实切割历史。
-    record = result.regions[method][budget_index][design_index]  # 选择同一方法、预算及建设方案的唯一记录。
-    outer = np.asarray(record['initial'])  # 候选外域从该次实验实际采用的初始域开始。
-    inner = np.zeros((1,3))  # 参数原点是该固定方案已认证的初始内点。
-    frames = []  # 每个动画帧对应实际 SP 查询。
-
-    def traces(point):  # 用当前内外域和查询点生成一帧的图层。
-        mesh = lambda p,c,o,n: go.Mesh3d(x=p[:,0],y=p[:,1],z=p[:,2],alphahull=0,  # 按真实凸包顶点绘制三维表面。
-                                       color=c,opacity=o,name=n,flatshading=True)  # 设置颜色、透明度及图例名称。
-        return [mesh(outer,'#AAB7BE',.2,'候选外域'), mesh(inner,'#4286AD',.7,'认证内域'),  # 灰色展示候选外域，蓝色展示认证内域。
-                go.Scatter3d(x=[point[0]],y=[point[1]],z=[point[2]],mode='markers',  # 单独突出本轮真正接受 SP 查询的负荷点。
-                             marker=dict(color='#C07B48',size=4),name='本轮查询点')]  # 查询点使用统一标记，不添加额外表面采样。
-
-    # 先用三条轴向查询建立三维内域；此后每一帧对应真实的一次 SP 查询。
-    for i,row in enumerate(record['history']):  # 按求解发生顺序处理历史记录。
-        if row['cut'] is not None:  # 只有已产生有效割的轮次才修改外域。
-            cut = np.asarray(row['cut'])  # 读取当轮保存的负荷割系数。
-            outer = clip_polytope(outer,cut[0],cut[1:])  # 以 a+bᵀp≥0 重建当轮候选域。
-        inner = polytope_vertices(np.vstack([inner,row['witness']]))  # 只在这个固定方案内对认证内点取凸包。
-        if i >= 2:  # 前三次轴向查询建立三维内域后再开始展示。
-            frames.append(go.Frame(name=str(i+1),data=traces(row['p'])))  # 帧编号对应原 SP 历史中的查询轮次。
-    fig = go.Figure(data=frames[0].data,frames=frames)  # 以首个完整三维帧初始化动画。
-    axis = lambda k: dict(title=f'节点 {result.load_nodes[k]} 负荷 (kW)',range=[0,result.bounds[k]])  # 坐标轴使用实际负荷节点号和公共评价范围。
-    x = result.metadata['designs'][record['design']]['x']  # 建设向量从唯一方案表读取。
-    fig.update_layout(template='plotly_white',height=670,margin=dict(l=5,r=5,t=45,b=90),  # 采用简洁白底和紧凑留白。
-        scene=dict(xaxis=axis(0),yaxis=axis(1),zaxis=axis(2),aspectmode='cube'),  # 三个坐标轴采用统一范围和立方体比例。
-        annotations=[dict(text=f'固定建设方案 x={x}；灰色外域，蓝色认证内域',x=.5,y=1.04,  # 标明当前固定建设方案及内外域颜色。
-                          xref='paper',yref='paper',showarrow=False)],  # 文字放在图面上方，不添加装饰性箭头。
-        sliders=[dict(currentvalue=dict(prefix='SP 查询轮次：'),steps=[  # 滑块按实际 SP 查询轮次切换。
-            dict(method='animate',label=f.name,args=[[f.name],dict(mode='immediate',  # 选择轮次后立即跳转到对应帧。
-                 frame=dict(duration=0,redraw=True),transition=dict(duration=0))]) for f in frames])],  # 取消插帧，避免把动画过渡误认为求解轨迹。
-        updatemenus=[dict(type='buttons',direction='left',x=0,y=-.06,buttons=[  # 添加紧凑的播放和暂停控制。
-            dict(label='播放',method='animate',args=[None,dict(fromcurrent=True,  # 播放从当前查看的轮次开始。
-                frame=dict(duration=200,redraw=True),transition=dict(duration=0))]),  # 仅按已保存的 SP 帧顺序播放。
-            dict(label='暂停',method='animate',args=[[None],dict(mode='immediate',  # 暂停保留当前查询轮次和视角。
-                frame=dict(duration=0,redraw=False))])])])  # 停止时不重绘无关帧。
-    path = Path(folder)/'cutting_process.html'  # 回放文件是可再生成展示，不是第二份实验数据。
-    fig.write_html(path,include_plotlyjs=True,auto_play=False,config=dict(displaylogo=False))  # 内嵌绘图库，页面可离线旋转和回放。
-    return path  # 返回 Notebook 可嵌入的本地页面路径。
+"""同一三态网格驱动的区域表面与可旋转对比图。"""
+from pathlib import Path
+import numpy as np
+import plotly.graph_objects as go
 
 
 def voxel_surface(mask, spacing):  # 把体素集合转换为保留孔洞的外表面三角网格。
@@ -100,6 +58,7 @@ def plot_method_comparison(result, budget_index=0):  # 在同一预算下比较�
     categories = [(3, "与 AC 重合", "#4286AD", 1., "common"),  # 重合部分使用克制的蓝色。
                   (2, "遗漏", "#D43D3D", 1., "missed"),  # 遗漏的 AC 可行区域使用红色。
                   (1, "多余", "#E9B72F", 1., "extra")]  # 多余的计算区域使用黄色。
+    categories.append((4, "未确定", "#A6A6A6", .22, "unknown"))
     for panel, labels in enumerate(result.labels[:, budget_index]):  # 读取当前预算下每种方法的差集标签。
         for code, name, color, opacity, group in categories:  # 每个面板分别生成重合、遗漏和多余表面。
             mesh = voxel_surface(labels == code, result.spacing)  # 使用同一套体素表面算法避免不同颜色口径不一致。
@@ -108,7 +67,7 @@ def plot_method_comparison(result, budget_index=0):  # 在同一预算下比较�
             if len(points):  # 类别非空时添加实际表面。
                 trace = go.Mesh3d(x=points[:, 0], y=points[:, 1], z=points[:, 2],  # 三维网格坐标使用实际 kW 值。
                                  i=faces[:, 0], j=faces[:, 1], k=faces[:, 2],  # 显式指定三角形，保留非凸区域及孔洞。
-                                 name="AC 参考域" if panel == 2 else name,  # AC 自比较面板直接标为参考域。
+                                 name="AC 参考域" if panel == 2 and code==3 else name,  # AC 未确定部分仍标灰色。
                                  color=color, opacity=opacity, flatshading=True,  # 各类别使用固定颜色与不透明表面。
                                  legendgroup=group, showlegend=panel == 0,  # 图例只显示一次，按类别控制四面板。
                                  lighting=dict(ambient=1., diffuse=.25, specular=.05, roughness=.95),  # 采用均匀照明以减少颜色识别偏差。
@@ -130,10 +89,11 @@ def plot_method_comparison(result, budget_index=0):  # 在同一预算下比较�
         for i in range(4)}  # 四个场景共用同样的观察方向。
     buttons = [dict(label=name, method="update", args=[{  # 显示控制只切换已有类别图层。
         "visible": [trace.legendgroup in groups for trace in fig.data]}])  # 按图例分组决定图层可见性。
-        for name, groups in [("全部", {"common", "missed", "extra"}),  # 默认同时显示重合、多余及遗漏。
+        for name, groups in [("全部", {"common", "missed", "extra", "unknown"}),  # 默认同时显示差集和未确定区域。
                              ("仅差异", {"missed", "extra"}),  # 可只观察红黄差集。
                              ("计算域", {"common", "extra"}),  # 计算域由重合与多余部分组成。
-                             ("AC 参考域", {"common", "missed"})]]  # AC 域由重合与遗漏部分组成。
+                             ("AC 参考域", {"common", "missed"}),
+                             ("未确定", {"unknown"})]]  # 灰色可独立查看或关闭。
     fig.update_layout(**scenes, height=900, template="plotly_white",  # 应用四场景设置和统一白底模板。
                       margin=dict(l=5, r=5, t=72, b=45),  # 保持紧凑留白，将长说明放在图注。
                       font=dict(family="Arial, Microsoft YaHei, sans-serif", size=12),  # 采用可编辑的常规中英文字体。
@@ -171,6 +131,7 @@ chart.on('plotly_relayout', event => {
     scope = '可规划域' if result.metadata['planning'] else '固定方案可调度域截面'  # 根据实验配置区分规划域与固定网架截面。
     spacing = ' × '.join(f'{value:g}' for value in result.spacing)  # 图注标明三个负荷轴的网格步长。
     cost_unit = result.metadata['cost_unit']  # 费用单位来自唯一网架配置。
+    geometry_note = "自适应网格逐块认证；灰色为未确定，FR/MR 显示保守区间。网格完整不表示连续边界精确。方法耗时覆盖全部预算，在各预算页重复显示，不应相加。"
     for index, (budget, filename) in enumerate(zip(result.budgets, filenames)):  # 逐预算生成相同布局的比较页面。
         links = ' · '.join(  # 构造各预算之间的导航链接。
             f'<a href="{name}" aria-current="{"page" if i == index else "false"}">'  # 为当前页面标记选中状态。
@@ -181,9 +142,13 @@ chart.on('plotly_relayout', event => {
         for method, name in zip(METHODS, METHOD_NAMES):  # 按统一的方法顺序输出比较表。
             row = next(row for row in rows if row['method'] == method  # 定位该方法在当前预算下的派生指标。
                        and row['budget'] == (None if np.isinf(budget) else budget))  # 无限预算的存储形式为 JSON null。
-            rate = lambda key: '—' if row[key] is None else f'{row[key]:.4f}%'  # 空域的条件比例没有定义，用横线表示。
+            def rate(key):
+                if row[key] is not None:
+                    return f'{row[key]:.4f}%'
+                interval = row.get(key.replace('_percent','_interval'))
+                return '—' if interval is None else f'[{interval[0]:.3f}, {interval[1]:.3f}]%'
             table.append(f'<tr><td>{name}</td><td>{rate("fr_percent")}</td>'  # 输出方法名称和 FR。
-                         f'<td>{rate("mr_percent")}</td><td>{row["total_seconds"]:.3f}</td></tr>')  # 输出 MR 和本次实际总计算时间。
+                         f'<td>{rate("mr_percent")}</td><td>{row["total_seconds"]:.3f}</td><td>{row.get("unknown_cells",0)}</td></tr>')  # 未确定点与物理误差分开列出。
         chart = pio.to_html(plot_method_comparison(result, index), include_plotlyjs=True, full_html=False,  # 图形内嵌运行库，离线即可旋转和筛选差集。
                            div_id='method-comparison', post_script=synchronize,  # 同步四个场景的相机，便于同视角比较。
                            config=dict(responsive=True, displaylogo=False, scrollZoom=True))  # 支持窗口尺寸变化与滚轮缩放。
@@ -195,12 +160,12 @@ nav{{text-align:center;padding:8px}}a{{color:#426985;text-decoration:none}}a[ari
 table{{border-collapse:collapse;margin:10px auto;font-size:14px;min-width:520px}}td,th{{padding:7px 18px;text-align:right;border-bottom:1px solid #dce2e7}}td:first-child,th:first-child{{text-align:left}}
 p{{font-size:12px;color:#56616a;line-height:1.7;text-align:center}}
 </style></head><body>{navigation}{chart}
-<table><thead><tr><th>方法</th><th>FR</th><th>MR</th><th>总计算时间（秒）</th></tr></thead><tbody>{''.join(table)}</tbody></table>
+<table><thead><tr><th>方法</th><th>FR</th><th>MR</th><th>整次方法耗时（秒）</th><th>未确定格点</th></tr></thead><tbody>{''.join(table)}</tbody></table>
 <p>图：{result.metadata['network']} 的{scope}；节点负荷单位为 kW，各面板使用同一组刻度。<br>
-网格步长 {spacing} kW；蓝色为重合部分，AC 面板为完整参考域；红色遗漏，黄色多余。<br>
+网格步长 {spacing} kW；蓝色为重合部分，AC 面板显示独立参考；红色遗漏，黄色多余。<br>
 FR = 多余 / 计算域；MR = 遗漏 / AC 域。AC 自比较的零仅表示它是基准；有限网格上的零不表示连续误差严格为零。<br>
-总时间含建模、求解、构域及网格判定，混合方法计入线性阶段，AC 扫描成本单列。绘图和导出不计。<br>
-SOCP 两法展示切割外域，统一径向精度 {result.metadata['radial_tolerance']:g}。时间来自本次实验记录；AC 各预算为同一独立扫描的累计耗时。</p>
+总时间含建模、求解、构域及网格判定，混合方法计入线性阶段，AC 方法成本单列。绘图和导出不计。<br>
+{geometry_note}</p>
 </body></html>'''
         (folder/filename).write_text(html, encoding='utf-8')  # 写入可再生成的展示页面，原始结果仍只存一次。
     return folder/filenames[0]  # 返回默认预算页面作为 Notebook 入口。
