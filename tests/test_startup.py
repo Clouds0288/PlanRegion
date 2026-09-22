@@ -55,7 +55,7 @@ class StartupTests(unittest.TestCase):
 
     def test_candidate_constant_switches_complete_entrypoint(self):
         with TemporaryDirectory() as folder, redirect_stdout(StringIO()):
-            for count in (4, 8, 16):
+            for count in (4, 8, 16, 32):
                 with self.subTest(candidates=count), patch('main.CANDIDATE_COUNT', count):
                     output = Path(folder)/str(count)
                     code = main.main(['--network', 'case33', '--budgets', '0', '--divisions', '2',

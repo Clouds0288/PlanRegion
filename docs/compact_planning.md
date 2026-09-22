@@ -1,10 +1,10 @@
 # case33 逐线路紧凑规划模型与联合割
 
-当前实现使用四、八、十六条嵌套候选线路，模型不建立完整建设组合表。配置来自 Network，主流程直接搜索逐线路型号；区域通过 MP1/MP2/SP 与全局残余搜索构造连续内外多面体，方案间取并集；网格仅用于独立 AC 校核。详见 [连续构域说明](continuous_region.md)。
+当前实现使用四、八、十六、三十二条嵌套候选线路，模型不建立完整建设组合表。配置来自 Network，主流程直接搜索逐线路型号；区域通过 MP1/MP2/SP 与全局残余搜索构造连续内外多面体，方案间取并集；网格仅用于独立 AC 校核。详见 [连续构域说明](continuous_region.md)。
 
 ## 1. 数据、变量和单位
 
-四线路使用 A–D，八线路使用 A–H，十六线路使用 A–P；支路端点和费用以 `Network/case33bw.py` 的项目表为准。每条线路有两个型号：0 保持原状，1 并联一回相同线路，等值 R/X 减半。唯一配置为 `Network.case33bw.Case33.line_options`。
+四线路使用 A–D，八线路使用 A–H，十六线路使用 A–P，三十二线路使用 A–AF；支路端点和费用以 `Network/case33bw.py` 的项目表为准。每条线路有两个型号：0 保持原状，1 并联一回相同线路，等值 R/X 减半。唯一配置为 `Network.case33bw.Case33.line_options`。
 
 固定 32 条在运支路，5 条常开联络线保持断开。节点 18、25、33 的有功负荷组成参数 $p\in\mathbb R_+^3$（kW）；其余节点的负荷固定。定义完整节点负荷：
 
@@ -25,7 +25,7 @@ $$
 
 $$y=(P_{e,k},Q_{e,k},\ell_{e,k},v_j),$$
 
-共 $3(32+m)+32$ 个；四／八／十六候选分别为 140／152／176 个，选型二进制变量分别为 8／16／32 个。另有 3 个负荷变量，沿射线求边界时增加一个半径变量。线性模型中的 $\ell$ 固定为零，由求解器预处理消除。
+共 $3(32+m)+32$ 个；四／八／十六／三十二候选分别为 140／152／176／224 个，选型二进制变量分别为 8／16／32／64 个。另有 3 个负荷变量，沿射线求边界时增加一个半径变量。线性模型中的 $\ell$ 固定为零，由求解器预处理消除。
 
 ## 2. 型号与潮流的联接
 
@@ -169,4 +169,4 @@ $$
 
 切割有效性的理论依据是第 5 节的对偶锥与变量盒支撑函数。测试是实现核对，不用有限样本替代理论证明。
 
-`main.py` 用 `joint_benders` 和 `ContinuousRegion` 组织连续构域，`model.RemainingRegionModel` 求解全局残余问题，`region.RegionState` 维护多面体并筛选候选点。`vertify.ac_planning_query` 与 `vertify.validate_ac_region` 只用于最终 AC 校核，旧的多方法网格构域入口已移除。测试侧可使用 `tests/watchdog.py` 保护某次调用，正式流程不导入它。
+`main.py` 用完整模型查询 `planning_query` 和 `ContinuousRegion` 组织连续构域，`model.RemainingRegionModel` 求解全局残余问题，`region.RegionState` 维护多面体并筛选候选点。`vertify.ac_planning_query` 与 `vertify.validate_ac_region` 只用于最终 AC 校核，旧的多方法网格构域入口已移除。测试侧可使用 `tests/watchdog.py` 保护某次调用，正式流程不导入它。

@@ -31,6 +31,25 @@ def json_value(value):
     return value
 
 
+def pack_replay(value):
+    """无损共享重复的几何与历史对象；只改变 HTML 编码，原始 JSON 不变。"""
+    objects, indices = [], {}
+    def encode(item):
+        if isinstance(item, dict):
+            node = [1, {key: encode(v) for key, v in item.items()}]
+        elif isinstance(item, list):
+            node = [0, [encode(v) for v in item]]
+        else:
+            return item
+        key = json.dumps(node, ensure_ascii=False, allow_nan=False, separators=(',', ':'))
+        if key not in indices:
+            indices[key] = len(objects)
+            objects.append(node)
+        return {'ref': indices[key]}
+    root = encode(value)
+    return dict(packed_replay_version=1, root=root, objects=objects)
+
+
 def cut_slice(cut, selection, bounds):
     """联合割在生成方案 x 下的截面；只求平面与评价箱的交多边形。"""
     cut, selection, bounds = map(np.asarray, (cut, selection, bounds))
@@ -321,6 +340,10 @@ class RunMonitor:
         temporary = self.output/'replay.json.tmp'
         temporary.write_text(payload, encoding='utf-8')
         temporary.replace(self.output/'replay.json')
+        # 大记录包含很多跨帧重复几何，先共享对象再压缩，降低浏览器峰值内存。
+        if len(payload) > 10_000_000:
+            payload = json.dumps(pack_replay(json.loads(payload)), ensure_ascii=False,
+                                 allow_nan=False, separators=(',', ':'))
         data = base64.b64encode(gzip.compress(payload.encode('utf-8'), compresslevel=6, mtime=0)).decode('ascii')
         html = self.template.replace('<script src="/plotly.min.js"></script>',
                                      '<script>'+self.plotly.decode('utf-8')+'</script>')
@@ -528,3 +551,65 @@ FR = 多余 / 计算域；MR = 遗漏 / AC 域。AC 自比较的零仅表示它�
 </body></html>'''
         (folder/filename).write_text(html, encoding='utf-8')  # 写入可再生成的展示页面，原始结果仍只存一次。
     return folder/filenames[0]  # 返回默认预算页面作为 Notebook 入口。
+
+
+def save_benchmark_report(output, records, labels, *, ac=None, case_root=None):
+    """基准测试与 AC 复核共用报告；原始数据和完整过程仍保存在各案例目录。"""
+    from html import escape
+    from os.path import relpath
+    output = Path(output)
+    output.mkdir(parents=True, exist_ok=True)
+    case_root = output if case_root is None else Path(case_root)
+    checks = {} if ac is None else {(r['candidate_count'], r['budget'], r['variant']): r for r in ac['records']}
+    number = lambda v, n=3: '—' if v is None else f'{v:.{n}f}'
+    status_names = dict(certified='已完成覆盖认证', unknown='未确定', time_limit='达到时限', timeout='达到时限')
+    rows, markdown = [], []
+    for record in records:
+        r = record['region']
+        count, budget, variant = record['candidate_count'], record['budget'], record['variant']
+        name = f'n{count}_b{"inf" if budget is None else f"{budget:g}"}_{variant}'
+        link = Path(relpath(case_root/name/'live_view.html', output)).as_posix()
+        check = checks.get((count, budget, variant), {})
+        error = check.get('volume_error', r.get('validation', {}))
+        phase = record.get('phases', r.get('phases', {}))
+        mode = r.get('residual_mode', {'direct_all': 'physical', 'direct_mp': 'light', 'baseline': 'light'}.get(variant, '—'))
+        error_text = number(error.get('region_error_percent'))
+        if error.get('region_error_percent') is None and error.get('region_error_interval') is not None:
+            error_text = '–'.join(number(v) for v in error['region_error_interval'])
+        vertices = check.get('strict_vertices', {})
+        quality = f"{vertices.get('feasible', 0)} / {vertices.get('total', 0)}" if vertices else '待 AC 校验'
+        values = [count, '无限' if budget is None else f'{budget:g}', labels.get(variant, variant),
+                  {'light':'轻量', 'physical':'物理'}.get(mode, mode), status_names.get(r['status'], r['status']),
+                  number(record['solve_seconds']), number(phase.get('MP2')), number(phase.get('MP1')),
+                  number(phase.get('residual')), r['counts']['sp'], r['counts'].get('sp_skipped', 0),
+                  r['counts'].get('reused_certificates', 0), number(r.get('max_total')), error_text,
+                  number(error.get('fr_percent')), number(error.get('mr_percent')), quality]
+        rows.append('<tr>'+''.join('<td>'+escape(str(v))+'</td>' for v in values)+
+                    '<td><a href="'+escape(link, quote=True)+'">完整回放</a></td></tr>')
+        markdown.append('|'+ '|'.join(map(str, values))+'|[回放]('+link+')|')
+    headers = ['候选线路', '预算', '算法', '剩余域', '完成状态', '构域 s', 'MP2 s', 'MP1 s',
+               '剩余搜索 s', 'SP 次数', '覆盖跳过', '证书复用', '最大负荷 kW', '区域误差 %', '多算 %', '漏算 %', 'AC 顶点通过', '过程']
+    total = len(records)
+    completed = sum(r['status'] == 'certified' for r in records)
+    note = f'{total} 组测试，{completed} 组完成全局覆盖认证。有限预算默认轻量搜索，无限预算默认物理搜索。'
+    explanation = ('构域时间含几何与过程记录，不含评价箱准备、导出和独立校验。MP2、MP1、剩余搜索时间含各自建模与求解。'
+                   '区域误差 = 多算与漏算体积之和 / 两域并集体积；多算率以计算域为分母，漏算率以 AC 域为分母。'
+                   '比较对象是当前保留的内域并集；未完成组的误差仅代表当前结果，不能作为最终精度。')
+    ac_note = ('尚未附加 AC 复核。' if ac is None else
+               f"AC 采用 {ac['protocol']['divisions']}³ 个等体积网格中心独立估计，另逐一复核内域顶点和最大负荷点。"
+               '网格误差不是连续体积误差的严格上界；AC 未确定点以误差区间保留。')
+    if ac is not None:
+        accepted = sum(c['strict_vertices']['feasible'] for c in ac['records'])
+        checked = sum(c['strict_vertices']['total'] for c in ac['records'])
+        ac_note += f' 严格 AC 顶点通过 {accepted} / {checked}。'
+    doc = ('<!doctype html><html lang="zh-CN"><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">'
+           '<title>PlanRegion · 主线框架测试</title><style>body{font:15px/1.7 system-ui,"Microsoft YaHei",sans-serif;margin:32px;background:#f4f7fa;color:#20384b}'
+           'h1{font-size:26px}.table{overflow:auto;background:white;border:1px solid #dce5eb;border-radius:12px}'
+           'table{border-collapse:collapse;width:100%}th,td{padding:10px 12px;text-align:left;border-bottom:1px solid #e4ebf0;white-space:nowrap;font-size:13px}'
+           'th{background:#eaf1f6}a{color:#08758c}p{max-width:1100px}.badge{color:#17795d}</style>'
+           '<h1>完整 MP1 / MP2 · 可选择剩余域搜索</h1><p class="badge">'+escape(note)+'</p><p>'+escape(explanation)+'</p><p>'+escape(ac_note)+'</p>'
+           '<div class="table"><table><thead><tr>'+''.join('<th>'+h+'</th>' for h in headers)+'</tr></thead><tbody>'+''.join(rows)+
+           '</tbody></table></div><p><a href="summary.json">原始汇总数据</a></p></html>')
+    (output/'report.html').write_text(doc, encoding='utf-8')
+    (output/'report.md').write_text('\n'.join([note, '', explanation, '', ac_note, '',
+        '|'+ '|'.join(headers)+'|', '|'+ '|'.join(['---']*len(headers))+'|', *markdown])+'\n', encoding='utf-8')

@@ -1,0 +1,161 @@
+{
+  "candidate_count": 32,
+  "budget": null,
+  "variant": "auto",
+  "construction_status": "certified",
+  "construction_seconds": 15.008965000044554,
+  "strict_vertices": {
+    "total": 49,
+    "feasible": 49,
+    "infeasible": 0,
+    "unknown": 0,
+    "details": [
+      {
+        "choice": [
+          1,
+          1,
+          1,
+          1,
+          1,
+          1,
+          1,
+          1,
+          1,
+          1,
+          1,
+          1,
+          1,
+          1,
+          1,
+          1,
+          1,
+          1,
+          1,
+          1,
+          1,
+          1,
+          1,
+          1,
+          1,
+          1,
+          1,
+          1,
+          1,
+          1,
+          1,
+          1
+        ],
+        "points": 49,
+        "feasible": 49,
+        "unknown": 0
+      }
+    ],
+    "failures": [],
+    "union_infeasible": 0,
+    "union_unknown": 0,
+    "maximum_inward_retreat_kw": 0.0
+  },
+  "maximum": {
+    "point": [
+      488.42452434353527,
+      5137.4567559305515,
+      569.9566942088899
+    ],
+    "choice": [
+      1,
+      1,
+      1,
+      1,
+      1,
+      1,
+      1,
+      1,
+      1,
+      1,
+      1,
+      1,
+      1,
+      1,
+      1,
+      1,
+      1,
+      1,
+      1,
+      1,
+      1,
+      1,
+      1,
+      1,
+      1,
+      1,
+      1,
+      1,
+      1,
+      1,
+      1,
+      1
+    ],
+    "total_kw": 6195.837974482976,
+    "ac_status": 1,
+    "diagnostic": {
+      "converged": true,
+      "equation_residual": 4.18332035678759e-13,
+      "maximum_violation_pu": -1.3789305808309393e-07,
+      "undervoltage_pu": 0.0,
+      "minimum_voltage_pu": 0.9194728283615221
+    }
+  },
+  "grid": {
+    "fr_percent": null,
+    "mr_percent": null,
+    "region_error_percent": null,
+    "fr_interval": [
+      0.0,
+      0.1660529925637138
+    ],
+    "mr_interval": [
+      0.0,
+      0.3746397694524496
+    ],
+    "region_error_interval": [
+      0.0,
+      0.5394519168524778
+    ],
+    "unknown_cells": 75,
+    "points": 32768,
+    "ac_inside": 13880,
+    "inner_inside": 13828,
+    "definite_extra": 0,
+    "definite_missed": 0,
+    "ac_not_retained": 52,
+    "ac_retained_percent": 99.62536023054756,
+    "retained_inner_fr_percent": 0.0,
+    "ac_in_unknown": 52,
+    "method_unknown": 75,
+    "ac_unknown": 0
+  },
+  "volume_error": {
+    "fr_percent": 0.0,
+    "mr_percent": 0.3746397694524496,
+    "region_error_percent": 0.3746397694524496,
+    "computed_cells": 13828,
+    "ac_cells": 13880,
+    "extra_cells": 0,
+    "missed_cells": 52,
+    "fr_interval": [
+      0.0,
+      0.0
+    ],
+    "mr_interval": [
+      0.3746397694524496,
+      0.3746397694524496
+    ],
+    "region_error_interval": [
+      0.3746397694524496,
+      0.3746397694524496
+    ],
+    "unknown_cells": 0
+  },
+  "boundary_ac_seconds": 0.00868810003157705,
+  "comparison_seconds": 0.028426700038835406
+}

@@ -377,10 +377,14 @@ class PlanningSP:  # 同一个连续子问题同时支持 LP 和 SOCP 认证及�
 
 
 class RemainingRegionModel:
-    """整数联合割外域上的残余 MILP；几何半空间由 region 提供。"""
+    """共享并集排除约束；light 搜索割外域，physical 再加入完整运行约束。"""
 
-    def __init__(self, equations, budget, bounds, total_bound, cuts, inner_halfspaces, tau):
-        self.problem = problem = PlanningModel(equations, budget=budget, cuts_only=True)
+    def __init__(self, equations, budget, bounds, total_bound, cuts, inner_halfspaces, tau,
+                 *, mode='light'):
+        if mode not in ('light', 'physical'):
+            raise ValueError('remaining-region mode must be light or physical')
+        self.mode = mode
+        self.problem = problem = PlanningModel(equations, budget=budget, cuts_only=mode == 'light')
         m = self.model = problem.model
         problem.power.UB = bounds
         m.addConstr(problem.power.sum() <= total_bound)
@@ -410,12 +414,21 @@ class RemainingRegionModel:
         started = perf_counter()
         m.optimize()
         seconds = perf_counter()-started
+        details = dict(solve_seconds=seconds, solver_status=int(m.Status),
+                       binary_variables=m.NumBinVars, linear_constraints=m.NumConstrs,
+                       quadratic_constraints=m.NumQConstrs, feasible=False, state=None)
         if m.Status == GRB.INFEASIBLE:
-            return dict(complete=True, bound=None, x=None, p=None, solve_seconds=seconds)
+            return dict(complete=True, bound=None, x=None, p=None, **details)
         bound = float(m.ObjBound)/self.distance_scale
         if bound <= tolerance:
-            return dict(complete=True, bound=bound, x=None, p=None, solve_seconds=seconds)
+            return dict(complete=True, bound=bound, x=None, p=None, **details)
         if not m.SolCount or m.ObjVal/self.distance_scale <= tolerance:
-            return dict(complete=False, bound=bound, x=None, p=None, solve_seconds=seconds)
-        return dict(complete=False, bound=bound, x=np.rint(problem.x.X).astype(int),
-                    p=problem.power.X, solve_seconds=seconds)
+            return dict(complete=False, bound=bound, x=None, p=None, **details)
+        x, point = np.rint(problem.x.X).astype(int), problem.power.X
+        if self.mode == 'physical':
+            e = problem.equations
+            state = e.restore(x, point, problem.state.X)
+            margin = e.margin(x, point, state)
+            details.update(physical_margin=margin, feasible=margin >= -PLANNING_TOL,
+                           state=state if margin >= -PLANNING_TOL else None)
+        return dict(complete=False, bound=bound, x=x, p=point, **details)

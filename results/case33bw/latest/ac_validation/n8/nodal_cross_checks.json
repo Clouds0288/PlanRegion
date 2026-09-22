@@ -1,0 +1,42 @@
+[
+  {
+    "choice": [
+      0,
+      0,
+      0,
+      0,
+      0,
+      0,
+      0,
+      0
+    ],
+    "baseline": {
+      "minimum_voltage_pu": 0.9130904793610585,
+      "minimum_voltage_bus": 18,
+      "active_loss_kw": 202.67712645594398
+    },
+    "nodal_cross_checks": 6,
+    "maximum_voltage_difference_pu": 7.438494264988549e-15,
+    "pandapower": "3.5.4"
+  },
+  {
+    "choice": [
+      1,
+      1,
+      1,
+      1,
+      1,
+      1,
+      1,
+      1
+    ],
+    "baseline": {
+      "minimum_voltage_pu": 0.9349994889559828,
+      "minimum_voltage_bus": 18,
+      "active_loss_kw": 136.91673360597278
+    },
+    "nodal_cross_checks": 6,
+    "maximum_voltage_difference_pu": 9.103828801926284e-15,
+    "pandapower": "3.5.4"
+  }
+]

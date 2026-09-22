@@ -6,7 +6,7 @@ import unittest
 import numpy as np
 from threadpoolctl import threadpool_limits
 
-from main import Case33, ContinuousRegion, build_continuous_region, joint_benders
+from main import Case33, ContinuousRegion, build_continuous_region, planning_query
 from model import PlanningEquations, PlanningSP, RemainingRegionModel, PLANNING_TOL
 from region import RegionState, contains, halfspaces
 
@@ -16,7 +16,7 @@ CUBE = np.array(list(product((0., 1.), repeat=3)))
 
 class UnionGeometryTests(unittest.TestCase):
     def test_other_owner_skips_sp_without_claiming_current_scheme(self):
-        solver = ContinuousRegion(Case33(candidate_count=4), 'linear', 1., [400., 4670., 630.], joint_benders)
+        solver = ContinuousRegion(Case33(candidate_count=4), 'linear', 1., [400., 4670., 630.], planning_query)
         a, b = [solver.equations.selection(choice).astype(int) for choice in ([0, 0, 0, 0], [0, 0, 0, 1])]
         solver.region.add_scheme(a, [0, 0, 0, 0], 0.)
         # 合成几何夹具只检验归属规则，不用作物理模型证书。
@@ -71,7 +71,7 @@ class UnionSolverTests(unittest.TestCase):
         cls.threads.restore_original_limits()
 
     def test_ordinary_vertex_queries_are_outside_existing_union(self):
-        solver = ContinuousRegion(self.network, 'linear', 1., self.bounds, joint_benders)
+        solver = ContinuousRegion(self.network, 'linear', 1., self.bounds, planning_query)
         real_check = solver.check
         ordinary = []
         def check(x, point, *, origin='vertex'):
@@ -106,7 +106,7 @@ class UnionSolverTests(unittest.TestCase):
                                               ('linear', 0., self.bounds, second),
                                               ('linear', 1., self.bounds*2, first)]:
             with self.assertRaisesRegex(ValueError, '同一物理模型'):
-                ContinuousRegion(self.network, method, budget, bounds, joint_benders, reuse=prior)
+                ContinuousRegion(self.network, method, budget, bounds, planning_query, reuse=prior)
 
 
 if __name__ == '__main__':

@@ -1,0 +1,308 @@
+{
+  "candidate_count": 8,
+  "budget": 2.0,
+  "variant": "auto",
+  "construction_status": "unknown",
+  "construction_seconds": 162.74657840002328,
+  "strict_vertices": {
+    "total": 332,
+    "feasible": 332,
+    "infeasible": 0,
+    "unknown": 0,
+    "details": [
+      {
+        "choice": [
+          0,
+          0,
+          1,
+          0,
+          0,
+          0,
+          1,
+          0
+        ],
+        "points": 41,
+        "feasible": 41,
+        "unknown": 0
+      },
+      {
+        "choice": [
+          0,
+          0,
+          0,
+          0,
+          1,
+          0,
+          1,
+          0
+        ],
+        "points": 49,
+        "feasible": 49,
+        "unknown": 0
+      },
+      {
+        "choice": [
+          0,
+          0,
+          0,
+          0,
+          0,
+          0,
+          1,
+          0
+        ],
+        "points": 1,
+        "feasible": 1,
+        "unknown": 0
+      },
+      {
+        "choice": [
+          0,
+          1,
+          0,
+          1,
+          0,
+          0,
+          0,
+          0
+        ],
+        "points": 28,
+        "feasible": 28,
+        "unknown": 0
+      },
+      {
+        "choice": [
+          0,
+          0,
+          0,
+          0,
+          0,
+          1,
+          0,
+          1
+        ],
+        "points": 17,
+        "feasible": 17,
+        "unknown": 0
+      },
+      {
+        "choice": [
+          0,
+          0,
+          0,
+          0,
+          1,
+          0,
+          0,
+          1
+        ],
+        "points": 34,
+        "feasible": 34,
+        "unknown": 0
+      },
+      {
+        "choice": [
+          0,
+          0,
+          0,
+          1,
+          1,
+          0,
+          0,
+          0
+        ],
+        "points": 39,
+        "feasible": 39,
+        "unknown": 0
+      },
+      {
+        "choice": [
+          0,
+          0,
+          0,
+          1,
+          0,
+          0,
+          0,
+          1
+        ],
+        "points": 14,
+        "feasible": 14,
+        "unknown": 0
+      },
+      {
+        "choice": [
+          1,
+          0,
+          0,
+          0,
+          0,
+          0,
+          0,
+          0
+        ],
+        "points": 28,
+        "feasible": 28,
+        "unknown": 0
+      },
+      {
+        "choice": [
+          0,
+          1,
+          0,
+          0,
+          1,
+          0,
+          0,
+          0
+        ],
+        "points": 32,
+        "feasible": 32,
+        "unknown": 0
+      },
+      {
+        "choice": [
+          0,
+          0,
+          1,
+          0,
+          1,
+          0,
+          0,
+          0
+        ],
+        "points": 14,
+        "feasible": 14,
+        "unknown": 0
+      },
+      {
+        "choice": [
+          0,
+          0,
+          0,
+          0,
+          1,
+          1,
+          0,
+          0
+        ],
+        "points": 28,
+        "feasible": 28,
+        "unknown": 0
+      },
+      {
+        "choice": [
+          0,
+          1,
+          0,
+          0,
+          0,
+          1,
+          0,
+          0
+        ],
+        "points": 5,
+        "feasible": 5,
+        "unknown": 0
+      },
+      {
+        "choice": [
+          0,
+          0,
+          1,
+          1,
+          0,
+          0,
+          0,
+          0
+        ],
+        "points": 2,
+        "feasible": 2,
+        "unknown": 0
+      }
+    ],
+    "failures": [],
+    "union_infeasible": 0,
+    "union_unknown": 0,
+    "maximum_inward_retreat_kw": 0.0
+  },
+  "maximum": {
+    "point": [
+      0.0,
+      4548.561533382063,
+      0.0
+    ],
+    "choice": [
+      0,
+      0,
+      1,
+      0,
+      0,
+      0,
+      1,
+      0
+    ],
+    "total_kw": 4548.561533382063,
+    "ac_status": 1,
+    "diagnostic": {
+      "converged": true,
+      "equation_residual": 4.105604745063829e-13,
+      "maximum_violation_pu": -1.09023208239023e-08,
+      "undervoltage_pu": 0.0,
+      "minimum_voltage_pu": 0.9000000060568449
+    }
+  },
+  "grid": {
+    "fr_percent": null,
+    "mr_percent": null,
+    "region_error_percent": null,
+    "fr_interval": [
+      0.0,
+      79.90322889719268
+    ],
+    "mr_interval": [
+      0.0,
+      0.4508780256288562
+    ],
+    "region_error_interval": [
+      0.0,
+      79.92150481022352
+    ],
+    "unknown_cells": 16698,
+    "points": 32768,
+    "ac_inside": 4214,
+    "inner_inside": 4195,
+    "definite_extra": 0,
+    "definite_missed": 0,
+    "ac_not_retained": 19,
+    "ac_retained_percent": 99.54912197437115,
+    "retained_inner_fr_percent": 0.0,
+    "ac_in_unknown": 19,
+    "method_unknown": 16698,
+    "ac_unknown": 0
+  },
+  "volume_error": {
+    "fr_percent": 0.0,
+    "mr_percent": 0.4508780256288562,
+    "region_error_percent": 0.4508780256288562,
+    "computed_cells": 4195,
+    "ac_cells": 4214,
+    "extra_cells": 0,
+    "missed_cells": 19,
+    "fr_interval": [
+      0.0,
+      0.0
+    ],
+    "mr_interval": [
+      0.4508780256288562,
+      0.4508780256288562
+    ],
+    "region_error_interval": [
+      0.4508780256288562,
+      0.4508780256288562
+    ],
+    "unknown_cells": 0
+  },
+  "boundary_ac_seconds": 0.04340319999027997,
+  "comparison_seconds": 0.1125715000089258
+}

@@ -1,0 +1,40 @@
+{
+  "python": "C:\\Users\\10856\\miniconda3\\envs\\methods\\python.exe",
+  "python_version": "3.13.13",
+  "numpy": "2.3.5",
+  "scipy": "1.18.0",
+  "gurobi": [
+    13,
+    0,
+    2
+  ],
+  "clarabel": "0.11.1",
+  "matplotlib": "3.11.0",
+  "pandapower": "3.5.4",
+  "model_threads": 1,
+  "domain_time_limit_s": 3600,
+  "ac_time_limit_s": 3600,
+  "source_hashes": {
+    "plot_result.py": "952a1d77db8bedbf8c8075ddb31fb836c64489ed6ad5323875a586961563b58c",
+    "report_result.py": "23d7a9139b87ace8ef13cbd0ce6a465a0b87b31e7897498efc50d651dc0cc741",
+    "run_ac.py": "ecd768c6f7b3926a4c1fea7276d53129bcba5356b7548cb278ee175ffa47c757",
+    "run_domain.py": "7429c71ffcb0e669b856d2166ce6cd62f19761c39216ed2ee48d7dde7c483b82",
+    "source\\experiment_runtime.py": "08a3e044ad2d9cbccf9824ec4480ff8f244fc89b3c17aef10e0e0658649f1d89",
+    "source\\main.py": "8fc1b86538ee3ffaa82b823dc911ccbf2e105431c116e4bb51eca370112cd205",
+    "source\\model.py": "1706b91c88e9af9e6aaabf938989b5242f5f97d4de72effe9abd1890712c2ccc",
+    "source\\Network\\__init__.py": "376577cfe1c46f6389b2d65651c8ef5bbe9b6e714d97a0b6d29867cd8c059b97",
+    "source\\Network\\case33bw.py": "093b65b70dfb58fb2faf9148d7330bae0fcba115c86a647028aed2d71b45315f",
+    "source\\Network\\four_bus_five_corridor.py": "46fe3b9c27d2cce617ab478854c2359e1ec3b66bd5cdf84b4b5cf12a32f92851",
+    "source\\Network\\jiangkou.py": "7cce6860c722ae2a3142607f36da147ee0489766a3f6dce70f4bb057492870fb",
+    "source\\plot.py": "369d57070d3e435fc7d81cacbec4a2cfecc037604c9f5db0f5523fc5b580b9d4",
+    "source\\region.py": "034dd8ad08e7778986078780141addefe3931b5207c1a75d81df7b8febd8ac35",
+    "source\\vertify.py": "cff650bf208f8cc20c4f842069dd47684d7ed25c4eb321de0337d9fdaa07bec1"
+  },
+  "presentation_update": {
+    "date": "2026-09-22",
+    "source_hashes": {
+      "report_result.py": "3dc99ea73e63218edc366b6be0fa74238da02e08ce3e24dc93d55064dc53c050"
+    },
+    "reason": "Use repository-relative figure links and portable environment instructions in the report. Original numerical source hashes and solve times are preserved."
+  }
+}

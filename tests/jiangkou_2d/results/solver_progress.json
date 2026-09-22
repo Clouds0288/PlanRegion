@@ -1,0 +1,11 @@
+{
+  "mode": "light",
+  "physical_stall_seconds": 180.0,
+  "time_limit": 1.6646450000116602,
+  "seconds": 0.6417167000472546,
+  "bound": 3306.7584055052625,
+  "incumbent": 0.1341144454163441,
+  "nodes": 0.0,
+  "solutions": 10,
+  "status": 15
+}

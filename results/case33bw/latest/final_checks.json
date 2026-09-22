@@ -1,0 +1,169 @@
+{
+  "cases": [
+    {
+      "case": "n16_b0_auto",
+      "frames": 373,
+      "history_matches_journal": true,
+      "html_history_matches_json": true,
+      "html_bytes": 5000737,
+      "solve_seconds": 0.7188688999740407,
+      "status": "certified"
+    },
+    {
+      "case": "n16_b1_auto",
+      "frames": 2550,
+      "history_matches_journal": true,
+      "html_history_matches_json": true,
+      "html_bytes": 5362061,
+      "solve_seconds": 9.974942500004545,
+      "status": "certified"
+    },
+    {
+      "case": "n16_b2_auto",
+      "frames": 10512,
+      "history_matches_journal": true,
+      "html_history_matches_json": true,
+      "html_bytes": 6795217,
+      "solve_seconds": 302.1594161000103,
+      "status": "time_limit"
+    },
+    {
+      "case": "n16_binf_auto",
+      "frames": 439,
+      "history_matches_journal": true,
+      "html_history_matches_json": true,
+      "html_bytes": 5021177,
+      "solve_seconds": 6.964833099977113,
+      "status": "certified"
+    },
+    {
+      "case": "n32_b0_auto",
+      "frames": 378,
+      "history_matches_journal": true,
+      "html_history_matches_json": true,
+      "html_bytes": 5044961,
+      "solve_seconds": 0.7409838000312448,
+      "status": "certified"
+    },
+    {
+      "case": "n32_b1_auto",
+      "frames": 4626,
+      "history_matches_journal": true,
+      "html_history_matches_json": true,
+      "html_bytes": 5836581,
+      "solve_seconds": 86.39055469993036,
+      "status": "certified"
+    },
+    {
+      "case": "n32_b1_direct_all",
+      "frames": 1055,
+      "history_matches_journal": true,
+      "html_history_matches_json": true,
+      "html_bytes": 5412829,
+      "solve_seconds": 159.97965490003116,
+      "status": "certified"
+    },
+    {
+      "case": "n32_b2_auto",
+      "frames": 16312,
+      "history_matches_journal": true,
+      "html_history_matches_json": true,
+      "html_bytes": 8151781,
+      "solve_seconds": 302.8658447000198,
+      "status": "time_limit"
+    },
+    {
+      "case": "n32_binf_auto",
+      "frames": 378,
+      "history_matches_journal": true,
+      "html_history_matches_json": true,
+      "html_bytes": 5037125,
+      "solve_seconds": 15.008965000044554,
+      "status": "certified"
+    },
+    {
+      "case": "n8_b0_auto",
+      "frames": 391,
+      "history_matches_journal": true,
+      "html_history_matches_json": true,
+      "html_bytes": 4988077,
+      "solve_seconds": 0.7585274999728426,
+      "status": "certified"
+    },
+    {
+      "case": "n8_b1_auto",
+      "frames": 1559,
+      "history_matches_journal": true,
+      "html_history_matches_json": true,
+      "html_bytes": 5773241,
+      "solve_seconds": 3.390759800095111,
+      "status": "certified"
+    },
+    {
+      "case": "n8_b2_auto",
+      "frames": 3780,
+      "history_matches_journal": true,
+      "html_history_matches_json": true,
+      "html_bytes": 5513745,
+      "solve_seconds": 162.74657840002328,
+      "status": "unknown"
+    },
+    {
+      "case": "n8_binf_auto",
+      "frames": 351,
+      "history_matches_journal": true,
+      "html_history_matches_json": true,
+      "html_bytes": 4935181,
+      "solve_seconds": 2.3340741998981684,
+      "status": "certified"
+    },
+    {
+      "case": "n8_binf_direct_mp",
+      "frames": 5125,
+      "history_matches_journal": true,
+      "html_history_matches_json": true,
+      "html_bytes": 5806301,
+      "solve_seconds": 211.21766610001214,
+      "status": "certified"
+    }
+  ],
+  "presentation_update": {
+    "changed_sources": [
+      "plot.py",
+      "live_view.html"
+    ],
+    "source_hashes": {
+      "plot.py": "26c184e00844fb39683894ea82bd7141f65086039df9fdea03250b494fc9ea0d",
+      "live_view.html": "1b281df443b8a1c7e4a092bb24dd87fd78b200bf23194a6a44e04204c85ab64f"
+    },
+    "reason": "Lossless offline replay packing and chunked decoding only; solver equations, decisions, geometry and AC checks unchanged.",
+    "events_unchanged": true,
+    "original_solve_times_preserved": true
+  },
+  "solver_sources_unchanged": true,
+  "all_inner_socp_audits_passed": true,
+  "strict_ac_vertices_passed": 3453,
+  "strict_ac_vertices_total": 3453,
+  "unit_tests": {
+    "initial_suite_total": 59,
+    "initial_passed": 57,
+    "initial_skipped": 2,
+    "replay_regression_after_fix_total": 20,
+    "replay_regression_after_fix_passed": 20
+  },
+  "browser": {
+    "report_verified": true,
+    "largest_replay_frames": 16312,
+    "largest_replay_seek_and_step_verified": true
+  },
+  "graph_check": {
+    "changed_count": 92,
+    "affected_count": 14,
+    "changed_files": 32,
+    "risk_level": "high",
+    "listed_changed_symbols": 92,
+    "partial": false,
+    "truncated": false,
+    "report": "graph_final_changes.json"
+  }
+}

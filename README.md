@@ -1,83 +1,109 @@
 # 配电网可规划域
 
-正式入口是 **main.py**。当前恢复了 **MP1 / MP2 / SP 连续构域**：每个建设方案形成连续内外多面体，不同方案取并集；整数主问题搜索未覆盖部分并给出全域覆盖证书。网格仅在构域完成后用于独立 AC 校核与 FR/MR 统计。
+在给定网架和升级预算下，构造**所有合法建设方案的连续可行调度域并集**。正式入口是 `main.py`，主线采用完整 MP2 / MP1、可选择的剩余域搜索与必要的 SP 认证。每个方案维护连续内外域，不同方案取并集；独立 AC 校核在构域后进行。
 
-最终交付页面沿用根目录的 **live_view.html** 模板，可离线回放全部算法事件，查看连续域、最终方案和实际求解时间。并集驱动优化的结果在 `results/case33bw/planning_4_union/`，页面包含原流程、优化后独立求解、跨预算复用三组对照；之前的 `planning_4/` 和 `planning_4_refactored/` 结果保留。
+## 最新结果
 
-| 文件 | 职责 |
+| 数据集 | 结果入口 | 保留内容 |
+|---|---|---|
+| Case33，8 / 16 / 32 候选，预算 0 / 1 / 2 / 无限 | [结果与耗时](results/case33bw/latest/report.md) · [HTML 总览](results/case33bw/latest/report.html) | 12 组 auto 与 2 组模式对照、14 份完整回放、原始事件、独立 AC 审核、运行环境及源文件指纹 |
+| 江口二维，线路升级、无限预算、1000 kVA | [实验报告](tests/jiangkou_2d/REPORT.md) | 连续域、断点、AC 样本、图表及独立实验源码快照 |
+
+Case33 的 14 组中 **11 组完成全局覆盖认证**，其中 auto 为 9 / 12；三个预算 2 的 auto 结果仍为未确定或达到时限。保存的 **3453 个内域顶点全部通过独立 SOCP 与严格 AC 检查**。页面中未完成组的区域误差描述当前内域，不代表最终收敛精度。全部 **47829 帧**算法事件保留。
+
+江口实验在 3600 秒构域时限后保留部分结果；4047 个内域网格点及 21 个内域顶点通过同口径 AC 检查。该实验另列严格载流阈值检查，其 AC 参考边界对应一个具体建设方案，不能当作全局 AC 并集的精确边界。
+
+结果目录只保留上述最新批次。旧批次与过时报告已移出项目，不再混入当前结果入口。
+
+## 项目结构
+
+| 文件或目录 | 职责 |
 |---|---|
-| `Network/` | 网架、负荷、逐线路升级选项与费用 |
-| `main.py` | 算法主流程、MP1/MP2/SP 协作、方法与预算阶段、停止判断、计时及结果存取 |
-| `model.py` | LP/SOCP 规划方程、整数主问题、SP、联合割和全局残余搜索模型 |
-| `region.py` | 连续域状态、下一候选点、裁剪、内外域并集、覆盖半空间和体积；AC 网格几何辅助 |
-| `vertify.py` | 独立 AC 潮流与非凸校核、AC 方案搜索及采样、FR/MR 与三态标签 |
-| `plot.py` | 绘图、终端进度、事件记录、本地服务、HTML 生成与完整回放导出 |
-| `live_view.html` | 唯一的实时监视、过程回放和最终结果页面模板 |
-| `tests/` | 独立模型、几何、覆盖证书、割、AC 和回放核验 |
+| `Network/` | 网架、原始数据、负荷、升级选项与费用 |
+| `main.py` | 主流程、MP2 / MP1 / SP 协作、停止判断、计时和结果存取 |
+| `model.py` | LP / SOCP 方程、整数主问题、SP、联合割及两种剩余域模型 |
+| `region.py` | 连续域、下一候选点、裁剪、并集、覆盖半空间与几何计算 |
+| `vertify.py` | 独立 AC 潮流、方案校核、区域误差及未确定标签 |
+| `plot.py` | 绘图、进度、完整事件记录、本地服务与 HTML 生成 |
+| `live_view.html` | 实时显示和完整离线回放的共用模板 |
+| `tests/` | 回归测试、基准实验、独立数值和几何审核 |
+| `tests/jiangkou_2d/` | 江口二维实验；`source/` 为冻结的实验副本，正式入口不导入它 |
+| `docs/` | 当前连续构域说明、统一模型与固定方案 SOCP 推导 |
+| `results/case33bw/latest/` | 最新 Case33 报告、完整回放与审核数据 |
 
-## 运行与回放
+## 安装与查看
 
-使用安装了 `requirements.txt` 且拥有有效 Gurobi 许可证的 Python 环境：
+本次记录的环境使用 Python 3.13。安装依赖并准备有效的 Gurobi 许可证：
 
 ```text
-python main.py --network case33 --candidates 4 --divisions 8 --ui
-python main.py --network case33 --candidates 4 --divisions 8 --no-ui --no-hold
-python main.py --load --ui --output results/case33bw/planning_4
-python main.py --load --ui --output results/case33bw/planning_4_refactored
-python main.py --load --ui --output results/case33bw/planning_4_union
-python main.py --reuse-budgets --output results/case33bw/planning_4_union_incremental
+python -m pip install -r requirements.txt
 ```
 
-直接运行时读取 `main.py` 顶部的常用设置；`CANDIDATE_COUNT` 可直接切换为 4、8、16，命令行 `--candidates` 可覆盖它。默认预算为 0、1、2、无限，`REGION_TAU=0.002`。`--tau` 控制 SOCP 连续域径向精度；`--divisions` 控制 AC 校核网格，不决定连续域的顶点或边界。LP 使用零径向收缩，仅保留数值几何容差。
-
-Windows 若出现 `GetModuleFileNameEx failed`，是数值库线程检测失败，与候选数量无关。入口会重试三次；仍失败时使用数值库当前线程数继续，终端和回放记录提示，结果元数据的 `thread_control` 记录限制是否生效。此时模型、精度和求解认证条件不变，但耗时不能视为受控单线程基准；其他初始化错误和实际求解错误仍正常抛出。
-
-网页支持播放/暂停、速度切换、前后单步、全历史时间轴、方法与预算筛选，以及点击事件还原当时的内域、外域、候选点和割。最终结果表可切换所显示的连续域，侧栏给出最大总负荷对应的节点负荷与建设方案。联合割同时约束负荷 p 和规划变量 x；图中切面固定在生成它的方案下，不能当作整个规划域的统一边界。
-
-`--no-ui` 关闭实时服务，仍记录完整过程并导出离线页面。`--no-plots --no-ui` 跳过 HTML 导出，但保留逐事件日志。`--load` 只读取结果和已有回放，不调用优化器。实时网页仅监听本机；页面及绘图资源均可离线使用。`--no-hold` 在保存后退出；默认实时运行完成后按 Enter 或 Ctrl+C 关闭服务。
-
-## 连续构域
-
-1. 三个 LP 轴向查询给出公共评价箱。
-2. MP2 在预算内最大化三个独立节点的总负荷，并用 SP 取得可行下界和全局上界。
-3. MP1 固定总负荷要求、允许节点间重新分配，寻找最低投资方案。
-4. 对发现的方案维护连续外多面体；普通候选先检查所有合法方案的认证内域，已覆盖则跳过 SP 并保留支撑方案。其余候选由 SP 认证或产生全局割，同方案证书形成连续凸内域。
-5. 在含全部整数方案的联合割外域上搜索未覆盖区域，使用返回的方案和负荷见证继续探索。如果顶点已分别覆盖但内部仍有空隙，只补齐支撑该见证所需的至多四点同方案单纯形证书。只有全局上界满足容差才停止。
-6. 保存内域并集和由覆盖证书推出的全局外包络，随后开展独立 AC 采样校核。
-
-LP、SOCP、LP→SOCP 各自运行，不借用其他对照方法的成果。默认每档预算独立求解；`--reuse-budgets` 可按递增预算继承同一模型的证书与有效割。case33 四候选实测独立预算模式更快，因此作为默认；复用模式仍保留并单独报告。混合方法包含自己的 LP 阶段，LP 内域不能作为 SOCP 内域；SOCP 只继承有效 LP 割和（开启预算复用时）此前低预算 SOCP 的认证内域。没有证书时保留“未确定”，不把求解失败判为不可行。
-
-覆盖证书、数值容差及外包络的定义见 [连续构域说明](docs/continuous_region.md)；本次速度、SP 去重及质量核对见 [并集优化测试结果](docs/union_optimization_results.md)；基础物理模型和联合割推导见 [模型说明](docs/compact_planning.md)。
-
-## 算例配置
-
-case33 的 A–D、A–H、A–P 是四、八、十六条嵌套候选集。本次正式验证范围是 **四候选 A–D**。节点 18、25、33 独立变化，其余负荷固定。32 条在运支路及五条常开联络线状态不变；候选线路可保持原状或并联一回，R/X 减半。费用是合成相对单位：A 为 2，B/C/D 为 1。
-
-四节点五走廊基础网架仍保留在 `Network/four_bus_five_corridor.py`，既有 01、12、13，候选新建 02、23，保留原 L/M/H 设备、线路长度、造价、0.4 kV 电压、150 kVA 配变和 0.95 功率因数。独立负荷为节点 1、2、3。
-
-## 结果文件与计时
-
-| 文件 | 内容 |
-|---|---|
-| `live_view.html` | 同一页面模板导出的完整离线回放，内嵌压缩数据和 Plotly |
-| `replay.json` | 全部历史增量帧、最终结果与元数据，可重新载入页面 |
-| `events.jsonl` | 每次事件立即写入的完整日志，不作条数截断 |
-| `result.npz` | 连续内外域、方案证书、割、源文件指纹、实测时间和 AC 校核标签 |
-| `validation.json` | 单独运行独立核验后的结果 |
-| `optimization.json` | 原流程、优化后独立求解和预算复用的对照，以及逐事件去重证书审核 |
-
-每个“方法 × 预算”有独立总耗时，并列出 MP、SP、几何处理时间；总耗时还包括建模、事件记录等开销。混合方法计入自己的 LP 与 SOCP 两阶段。公共准备、AC 校核、HTML 导出和测试侧审核分别计时。回放速度不影响原始时间。
-
-连续内外域之间的薄层在采样时保留为未知；FR/MR 是公共网格上的 AC 对照统计，不等于连续域精度证明。SOCP 精度由径向收缩参数和全局覆盖证书控制。四候选原结果见 [结果说明](docs/case33_continuous_results.md)，职责整理和前后比较见 [整理复核](docs/refactoring_results.md)。旧 `docs/` 实验和 `planning_16` 页面保留作历史记录，不代表此次连续构域运行。
-
-## 验证
+完整原始历史使用 **Git LFS** 保存；报告、图片和可独立播放的 HTML 留在普通 Git 中。获取原始数据时运行：
 
 ```text
-python -m unittest tests.test_continuous tests.test_progress tests.test_case33 tests.test_four_bus tests.test_vertify -v
-python -m tests.audit_continuous results/case33bw/planning_4_refactored
-python -m unittest tests.test_union -v
-python -m unittest tests.test_startup tests.test_progress -v
-python -m tests.audit_union results/case33bw/planning_4_union_baseline results/case33bw/planning_4_union results/case33bw/planning_4_union_incremental
+git lfs install
+git lfs pull
 ```
 
-独立审核在测试侧枚举全部 16 个四线路组合，核对 LP/SOCP 边界、全部内域顶点、代表性割的全局有效性及 AC 校核标签。审核通过后，将结果追加到同一个 `live_view.html` 的最终结果区，保留原始求解时间和事件。正式算法不生成完整方案枚举表、不导入 tests。
+GitHub 可直接阅读 Markdown 报告。交互 HTML 需下载后用浏览器打开，或在项目根目录启动本地服务：
+
+```text
+python -m http.server 8000 --bind 127.0.0.1
+```
+
+随后打开 [Case33 HTML 总览](http://127.0.0.1:8000/results/case33bw/latest/report.html)，点击每一行的“回放”。查看已有 HTML 不调用求解器。
+
+回放包含播放 / 暂停、速度切换、前后单步和全历史时间轴，可查看每一步的内域、外域、候选点及割。大回放通过共享重复几何对象减小页面体积，未删帧；原始 `replay.json` 与 `events.jsonl` 保留原格式。32 候选、预算 2 的 16312 帧页面约 8.15 MB。
+
+## 运行主流程
+
+```text
+python main.py --network case33 --candidates 16 --residual-mode auto --budgets 0 1 2 inf --ui --output results/case33bw/run
+python main.py --network case33 --candidates 32 --residual-mode physical --budgets inf --no-ui --no-hold --output results/case33bw/run32
+python main.py --load --ui --output results/case33bw/run
+```
+
+直接运行时读取 `main.py` 顶部设置，命令行可覆盖它们。当前 `CANDIDATE_COUNT=16`，支持 4、8、16、32；预算默认 0、1、2、无限。
+
+- `RESIDUAL_MODE='auto'`：有限预算选择 `light`，无限预算选择 `physical`；可用 `--residual-mode` 强制任一模式。
+- 轻量剩余域使用有效联合割搜索未覆盖部分；物理剩余域在同一预算、割及并集排除约束上加入完整物理方程。两者共用正式模型与构域流程。
+- `CASE_TIME_LIMIT=300` / `--time-limit 300`：每种方法、每档预算的构域总时限。混合方法的两个阶段共享时限；超时保留当前内域和未确定部分。
+- `REGION_TAU=0.002` / `--tau`：SOCP 连续域径向精度。`--divisions` 控制独立 AC 校核网格，不决定构域顶点。
+- 默认每档预算独立计算；`--reuse-budgets` 可复用同一模型在较低预算下的证书和有效割。
+
+`--no-ui` 关闭实时服务，仍导出离线页面；同时设置 `--no-plots` 则跳过页面导出，但保留事件。`--no-hold` 在保存后退出。`--load` 读取主流程生成的 `result.npz` 和回放；基准实验保存的 JSON 数据集直接使用其 HTML 查看。
+
+若 Windows 数值库线程检测失败，入口会重试并记录线程控制状态。该状态会影响耗时比较口径，模型与认证条件保持一致。
+
+## 连续域与质量控制
+
+1. 完整 MP2 在预算内最大化总负荷，MP1 在满足该总负荷要求时寻找最低投资方案。原约束复核通过的主问题运行证书直接复用，仅未获证时补充 SP。
+2. 普通候选先检查所有合法方案的认证内域。已覆盖则跳过重复 SP；其余点由 SP 认证，或生成有效割来缩小外域。
+3. 每个方案的可行点构成该方案的连续凸内域；跨方案只取并集。全局剩余搜索持续寻找并集尚未覆盖的部分。
+4. 顶点分别被不同方案覆盖时，内部仍可能有空隙。算法为全局见证补充必要的同方案支撑证书，只有全局覆盖上界满足容差才标记完成。
+5. 独立 AC 校核比较实际保留的内域并集与 AC 参考域。区域误差为对称差体积 / 两域并集体积；多算率以计算域为分母，漏算率以 AC 域为分母。网格估计不是连续体积误差的严格上界，未确定状态单独保留。
+
+计时按“方法 × 预算”记录，总时间包含建模、求解、几何更新和事件记录；公共准备、AC 校核及页面导出单列。回放速度不改变原始求解时间。
+
+详细说明：[连续构域与覆盖证书](docs/continuous_region.md)、[统一规划模型与联合割](docs/compact_planning.md)、[固定方案 SOCP 数学推导](docs/socp_model.md)。
+
+## 算例与复现
+
+Case33 的 A–D、A–H、A–P、A–AF 为嵌套候选集，32 候选覆盖全部在运线路。节点 18、25、33 的负荷独立变化，其余负荷固定。升级为并联一回、R/X 减半，五条常开联络线保持断开。费用为相对单位：A 为 2，其余 31 项各为 1，全部升级共 33；原有 16 项顺序与费用不变。
+
+四节点五走廊基础算例保留在 `Network/four_bus_five_corridor.py`。江口二维实验的模型口径、运行方式与限制见其独立报告。
+
+重新跑基准时指定新的输出目录，避免覆盖已审核结果：
+
+```text
+python -m tests.benchmark_physical_search --counts 8 16 32 --budgets 0 1 2 inf --variants auto --limit 300 --output results/case33bw/rerun
+python -m tests.benchmark_physical_search --counts 32 --budgets 1 --variants direct_all --limit 300 --output results/case33bw/rerun
+python -m tests.benchmark_physical_search --counts 8 --budgets inf --variants direct_mp --limit 300 --output results/case33bw/rerun
+python -m tests.benchmark_ac_search --counts 8 16 32 --divisions 32 --output results/case33bw/rerun
+python -m unittest discover -s tests -p "test_*.py" -v
+```
+
+基准直接调用正式主流程。`direct_mp`、`direct_all` 分别强制轻量和物理剩余域；`baseline` 是仅供对照的冻结旧算法。两个长时间测试默认跳过。
+
+基准结果的 `protocol.json` 保存运行时源码指纹；后续回放压缩修复另记 `presentation_update`，原始数值与求解时间不变。`final_checks.json` 及 `ac_validation/` 保存审核明细。新试跑默认不进入版本控制，已审核的最新目录与江口实验结果随仓库保存。

@@ -1,0 +1,31 @@
+{
+  "status": "sampled",
+  "seconds": 11.28175470000133,
+  "limit_seconds": 3600.0,
+  "grid_shape": [
+    100,
+    100
+  ],
+  "grid_spacing_kw": 4.045475,
+  "input_domain_status": "time_limit",
+  "tested_designs": 8,
+  "samples": 10000,
+  "socp_inner": 4047,
+  "socp_unknown": 1003,
+  "ac_verified": 4053,
+  "ac_strict_current": 4053,
+  "socp_inside_ac_verified": 4047,
+  "socp_inside_ac_not_verified": 0,
+  "ac_verified_outside_inner": 6,
+  "ac_verified_outside_global_outer": 0,
+  "socp_inside_failing_strict_current": 0,
+  "matched_scheme_checks": 4047,
+  "matched_scheme_failures": 0,
+  "matched_scheme_unknown": 0,
+  "inner_vertices_checked": 21,
+  "inner_vertices_failed": 0,
+  "inner_vertices_unknown": 0,
+  "inner_vertices_exceeding_current_threshold": 16,
+  "inner_vertex_maximum_current_utilization": 1.0029716327146778,
+  "caveat": "AC feasible means at least one tested design passes. Other samples are not globally AC-infeasible proofs. Ray curves refer to the all-max design."
+}

@@ -12,7 +12,7 @@ from Network.case33bw import Case33  # 三档嵌套候选线路配置。
 from model import PlanningEquations, PlanningModel  # 完整规划模型作为直接求解对照。
 from region import sample_region
 from vertify import ac_planning_query, validate_ac_region
-from tests.notebook_flow import workflow  # 主线算法的唯一来源。
+import main
 from tests.watchdog import run_guarded  # 只有测试导入看门狗。
 
 
@@ -27,7 +27,7 @@ class ScaleTests(unittest.TestCase):  # 规模扩展只改变网架设置。
 
     @unittest.skipUnless(os.environ.get('PLANREGION_SLOW_TESTS') == '1', '四／八／十六候选全预算连续构域慢测试')
     def test_grid_matches_direct_point_queries(self):  # 连续域采样逐点对照完整 MILP/MISOCP。
-        flow,budgets,bounds = workflow(),np.array([0.,1.,2.,np.inf]),np.array([540.,5950.,970.])  # 同一公共评价箱。
+        budgets,bounds = np.array([0.,1.,2.,np.inf]),np.array([540.,5950.,970.])  # 同一公共评价箱。
         points = (np.indices((4,)*3).reshape(3,-1).T+.5)*bounds/4  # 小网格的 64 个中心独立检查。
         for count in (4,8,16):  # 同一连续构域流程处理三种规模；这是较慢的全规模回归。
             network = Case33(candidate_count=count)  # 仅物理配置变化。
@@ -70,15 +70,14 @@ class ScaleTests(unittest.TestCase):  # 规模扩展只改变网架设置。
             self.assertTrue(np.all((ac!=1)|(expected['socp']==1)))  # AC 必须包含在 SOCP 外松弛内。
 
     def test_hybrid_rechecks_linear_interior(self):  # SOCP 没有证书时不得继承 LP 内点。
-        flow = workflow()  # 直接调用正式函数。
-        original = flow['joint_benders']  # LP 阶段使用真实优化器。
+        original = main.planning_query  # LP 阶段使用真实优化器。
         def query(equations,**kwargs):  # 测试只替换 SOCP 的认证结果。
             if equations.method=='socp':  # 模拟没有证书也没有可用投资下界。
                 return dict(feasible=False,bound=None,status='unknown'),[]  # 此时必须保持未确定。
             return original(equations,**kwargs)  # LP 阶段仍真实切割。
-        with patch.dict(flow,joint_benders=query):  # 不修改生产代码或引入报告钩子。
+        with patch('main.planning_query', side_effect=query):  # 不修改生产代码或引入报告钩子。
             bounds = np.array([540.,5950.,970.])
-            domain = flow['build_continuous_region'](Case33(candidate_count=8),'hybrid',0.,bounds)
+            domain = main.build_continuous_region(Case33(candidate_count=8),'hybrid',0.,bounds)
             points = (np.indices((4,)*3).reshape(3,-1).T+.5)*bounds/4
             states = sample_region(domain,points,bounds)
         self.assertTrue(np.any(states==0))  # 尚待 SOCP 认证的区域仍为未知。
@@ -92,7 +91,7 @@ class ScaleTests(unittest.TestCase):  # 规模扩展只改变网架设置。
         self.assertFalse(any(m=='tests' or m.startswith('tests.') for m in imports))  # 主入口不得导入看门狗或审核实现。
         self.assertNotIn('run_guarded',source)  # 不保留隐式进程包装。
         self.assertNotIn('report(',source)  # 不保留逐查询报告钩子。
-        self.assertNotIn('deadline',source)  # 主流程不携带测试硬时限参数。
+        self.assertNotIn('joint_benders',source)  # 旧算法只保留在对照测试。
 
     def test_solver_timeout_remains_unknown(self):  # 优化器自身时限不等于不可行证明。
         problem = PlanningModel(PlanningEquations(Case33(candidate_count=8),'socp'),power=[300.,3000.,500.])  # 正常规划查询。

@@ -9,7 +9,8 @@ from model import PlanningEquations, PlanningModel, PlanningSP
 from vertify import ACPowerFlow
 from vertify import ac_planning_query, validate_ac_region
 from region import sample_region
-from tests.notebook_flow import workflow  # 直接测试主 Notebook 中的函数。
+from main import evaluation_bounds, build_continuous_region
+from tests.benchmark_physical_search import joint_benders
 from tests.reference import dispatch_support  # 独立固定网架的消元方程。
 
 
@@ -65,7 +66,7 @@ class FourBusTests(unittest.TestCase):  # 不生成建设组合表，审核代�
         for method in ('linear','socp'):  # LP/SOCP 都走同一个 Notebook 函数。
             e,cuts = PlanningEquations(FourBus(),method),[]  # 各模型独立维护割池。
             for power in ([10.,10.,10.],[25.,15.,20.],[30.,30.,30.]):  # 覆盖无需升级及需要升级的点。
-                answer,new = workflow()['joint_benders'](e,power=power,cuts=cuts)  # 正式联合割求解。
+                answer,new = joint_benders(e,power=power,cuts=cuts)  # 正式联合割求解。
                 cuts.extend(new)  # 跨负荷点复用全局有效割。
                 direct = PlanningModel(e,power=power)  # 完整 MILP/MISOCP 作为独立求解路径。
                 with direct.model:  # 取得直接模型的最优值。
@@ -94,9 +95,9 @@ class FourBusTests(unittest.TestCase):  # 不生成建设组合表，审核代�
                 oracle.close()  # 不影响后续 case33 测试。
 
     def test_same_region_flow_matches_independent_point_queries(self, budgets=None):  # 更换网架不得更换主线算法。
-        c,flow = FourBus(),workflow()
+        c = FourBus()
         budgets = c.budgets[:1] if budgets is None else budgets
-        bounds = flow['evaluation_bounds'](c)
+        bounds = evaluation_bounds(c)
         points = (np.indices((3,)*3).reshape(3,-1).T+.5)*bounds/3  # 27 个中心，跨四个预算共享结果。
         reference = {}  # 仅在测试内保存直接查询标签。
         for method in ('linear','socp','ac'):  # 三类参考分别求解。
@@ -117,14 +118,14 @@ class FourBusTests(unittest.TestCase):  # 不生成建设组合表，审核代�
                 np.testing.assert_array_equal(actual,expected)
             else:
                 for j, budget in enumerate(budgets):
-                    domain = flow['build_continuous_region'](c,method,budget,bounds)
+                    domain = build_continuous_region(c,method,budget,bounds)
                     actual = sample_region(domain,points,bounds).reshape((3,)*3)
                     known = actual != 0  # 径向精度内的薄层不冒充已分类点。
                     self.assertTrue(known.any())
                     np.testing.assert_array_equal(actual[known],expected[j][known])
             reference[method] = expected  # SOCP 标签供混合方法复核。
         for j, budget in enumerate(budgets):
-            domain = flow['build_continuous_region'](c,'hybrid',budget,bounds)
+            domain = build_continuous_region(c,'hybrid',budget,bounds)
             actual = sample_region(domain,points,bounds).reshape((3,)*3)
             known = actual != 0
             self.assertTrue(known.any())

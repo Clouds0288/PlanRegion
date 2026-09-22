@@ -1,8 +1,0 @@
-<!doctype html><html lang="zh-CN"><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
-<title>8 / 16 候选线路 · 独立提速测试</title><style>
-body{font:15px/1.6 system-ui,sans-serif;margin:32px;color:#202630;background:#fafbfc}h1{font-size:24px}
-.table{overflow:auto}table{border-collapse:collapse;background:#fff;width:100%}th,td{padding:9px 12px;text-align:left;border-bottom:1px solid #dde2e8;white-space:nowrap}th{background:#edf1f6}a{color:#145ca3}
-</style><h1>8 / 16 候选线路 · SOCP 独立提速测试</h1>
-<p>正式源代码保持不变。三组使用相同物理方程、τ = 0.002、原始可行性容差、单线程和完整回放。总耗时包含构域和记录，不包含公共评价箱准备及独立审核。</p>
-<p>certified：获得全局覆盖证书；unknown：求解器或几何过程未完成；timeout：达到整组时间预算。超时不能当作完整域结果。各组单次 MP 上限 20 秒，剩余搜索上限 120 秒。</p>
-<div class="table"><table><thead><tr><th>候选线路</th><th>预算</th><th>方案</th><th>完成状态</th><th>总秒数</th><th>MP2 秒</th><th>MP1 秒</th><th>剩余搜索秒</th><th>SP 次数</th><th>最大负荷 kW</th><th>审核</th><th>过程</th></tr></thead><tbody><tr><td>8</td><td>0.0</td><td>原流程</td><td>certified</td><td>0.724</td><td>0.100</td><td>0.007</td><td>0.043</td><td>81</td><td>3163.172</td><td>通过</td><td><a href="n8_b0_baseline/live_view.html">回放</a></td></tr><tr><td>8</td><td>0.0</td><td>完整 MP1/MP2 + 物理剩余域</td><td>certified</td><td>0.832</td><td>0.014</td><td>0.009</td><td>0.136</td><td>84</td><td>3163.172</td><td>通过</td><td><a href="n8_b0_direct_all/live_view.html">回放</a></td></tr><tr><td>8</td><td>0.0</td><td>完整 MP1/MP2</td><td>certified</td><td>0.722</td><td>0.014</td><td>0.010</td><td>0.038</td><td>84</td><td>3163.172</td><td>通过</td><td><a href="n8_b0_direct_mp/live_view.html">回放</a></td></tr></tbody></table></div><p>审核包含独立消元方程对所有保留内域顶点的复核，以及七条全局射线边界检查。全域完整性仍由全局覆盖界判定。本轮不测试 AC。</p><p><a href="summary.json">原始汇总数据</a></p></html>

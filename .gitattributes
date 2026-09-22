@@ -1,9 +1,19 @@
-results/case33bw/planning_16/events.jsonl filter=lfs diff=lfs merge=lfs -text
-results/case33bw/planning_4/events.jsonl filter=lfs diff=lfs merge=lfs -text
-results/case33bw/planning_4/replay.json filter=lfs diff=lfs merge=lfs -text
-results/case33bw/planning_4_refactored/events.jsonl filter=lfs diff=lfs merge=lfs -text
-results/case33bw/planning_4_refactored/replay.json filter=lfs diff=lfs merge=lfs -text
-results/case33bw/planning_4_union_baseline/events.jsonl filter=lfs diff=lfs merge=lfs -text
-results/case33bw/planning_4_union_baseline/replay.json filter=lfs diff=lfs merge=lfs -text
-results/case33bw/planning_4_union_incremental/events.jsonl filter=lfs diff=lfs merge=lfs -text
-results/case33bw/planning_4_union_incremental/replay.json filter=lfs diff=lfs merge=lfs -text
+# Keep source and recorded source hashes stable across platforms.
+*.py -text
+*.html -text
+*.m -text
+*.json -text
+*.jsonl -text
+
+# Generated datasets and embedded replay pages are reviewed through their reports.
+results/** -text -diff
+tests/jiangkou_2d/results/** -text -diff
+results/**/report.md diff
+results/**/protocol.json diff
+
+# Full numerical histories; lightweight reports and HTML stay in ordinary Git.
+results/case33bw/latest/**/replay.json filter=lfs diff=lfs merge=lfs -text
+results/case33bw/latest/**/events.jsonl filter=lfs diff=lfs merge=lfs -text
+tests/jiangkou_2d/results/domain.json filter=lfs diff=lfs merge=lfs -text
+tests/jiangkou_2d/results/domain_checkpoint.json filter=lfs diff=lfs merge=lfs -text
+tests/jiangkou_2d/results/events.jsonl filter=lfs diff=lfs merge=lfs -text

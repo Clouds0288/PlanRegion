@@ -90,11 +90,19 @@ class RegionComparisonTests(unittest.TestCase):  # 三态标签与物理误差�
             count = int((a==0).sum())  # 前半部分对应计算域。
             a[a==0],b[b==0] = bits[:count],bits[count:]  # 后半部分对应 AC 域。
             rates = disagreement(a==1,b==1)  # 该确定情形的真实比例。
-            for key in ('fr','mr'):  # 两个指标都须被区间覆盖。
+            for key in ('fr','mr','region_error'):  # 两个指标都须被区间覆盖。
                 value = rates[key+'_percent']  # 分母为空时比例无定义。
                 if value is not None:  # 只检查有定义的可能比例。
                     self.assertLessEqual(interval[key+'_interval'][0],value)  # 下界不得偏高。
                     self.assertGreaterEqual(interval[key+'_interval'][1],value)  # 上界不得偏低。
+
+    def test_retained_region_error_counts_unretained_shell(self):
+        from vertify import validation_summary
+        states = np.array([[[1, 0, -1]], [[1, 0, -1]], [[1, 1, -1]], [[1, 0, -1]]])
+        rows = validation_summary(states, dict(budgets=[0.], seconds={m:0. for m in METHODS}))
+        self.assertEqual(rows[0]['region_error_percent'], 50.)
+        self.assertEqual(rows[0]['method_unknown_cells'], 1)
+        self.assertEqual(rows[0]['unknown_cells'], 0)
 
     def test_result_stores_only_states_and_metadata(self):  # 不保存方案表、重复掩码或派生指标。
         states = np.random.default_rng(5).choice([-1,0,1],(4,2,3,3,3)).astype(np.int8)  # 包含未知的四方法、两预算网格。

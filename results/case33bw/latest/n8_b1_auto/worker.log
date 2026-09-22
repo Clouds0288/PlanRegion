@@ -1,0 +1,28 @@
+Set parameter WLSAccessID
+Set parameter WLSSecret
+Set parameter LicenseID to value 2685996
+Academic license 2685996 - for non-commercial use only - registered to 20___@mail.scut.edu.cn
+Traceback (most recent call last):
+  File "C:\Users\10856\Desktop\GithubProject\PlanRegion\tests\benchmark_physical_search.py", line 335, in <module>
+    worker(arguments)
+    ~~~~~~^^^^^^^^^^^
+  File "C:\Users\10856\Desktop\GithubProject\PlanRegion\tests\benchmark_physical_search.py", line 261, in worker
+    record['audit'] = audit_region(network, budget, bounds, region)
+                      ~~~~~~~~~~~~^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "C:\Users\10856\Desktop\GithubProject\PlanRegion\tests\benchmark_physical_search.py", line 179, in audit_region
+    equation = models.PlanningEquations(network, 'socp')
+               ^^^^^^
+NameError: name 'models' is not defined
+Traceback (most recent call last):
+  File "<frozen runpy>", line 198, in _run_module_as_main
+  File "<frozen runpy>", line 88, in _run_code
+  File "C:\Users\10856\Desktop\GithubProject\PlanRegion\tests\benchmark_physical_search.py", line 335, in <module>
+    worker(arguments)
+    ~~~~~~^^^^^^^^^^^
+  File "C:\Users\10856\Desktop\GithubProject\PlanRegion\tests\benchmark_physical_search.py", line 261, in worker
+    record['audit'] = audit_region(network, budget, bounds, region)
+                      ~~~~~~~~~~~~^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "C:\Users\10856\Desktop\GithubProject\PlanRegion\tests\benchmark_physical_search.py", line 179, in audit_region
+    equation = models.PlanningEquations(network, 'socp')
+               ^^^^^^
+NameError: name 'models' is not defined

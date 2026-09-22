@@ -1,0 +1,58 @@
+{
+  "counts": [
+    8,
+    16,
+    32
+  ],
+  "budgets": [
+    0.0,
+    1.0,
+    2.0,
+    null
+  ],
+  "variants": [
+    "auto"
+  ],
+  "time_limit": 300.0,
+  "source_hashes": {
+    "main.py": "854516def987edf59be8ec1dd62e4cfe1a8d177cd58e3531a53844bfe5fd6b49",
+    "model.py": "94f9885a78cf944ae03ab3a220ba2c27e8e3d81ed602456ee17de18aefa1c15f",
+    "region.py": "77c0c29bc658b22f959138e74bba6eba41c92eca8343d26396caf2b0542c2732",
+    "vertify.py": "cff650bf208f8cc20c4f842069dd47684d7ed25c4eb321de0337d9fdaa07bec1",
+    "plot.py": "369d57070d3e435fc7d81cacbec4a2cfecc037604c9f5db0f5523fc5b580b9d4",
+    "live_view.html": "f60d465ac3b53c8805cd050f40fb617c088791b0af22198abf441f8a51a8f18c",
+    "Network/__init__.py": "376577cfe1c46f6389b2d65651c8ef5bbe9b6e714d97a0b6d29867cd8c059b97",
+    "Network/case33bw.py": "093b65b70dfb58fb2faf9148d7330bae0fcba115c86a647028aed2d71b45315f",
+    "Network/data/case33bw.m": "60c5d6312a89607e76c86cb62268b548f37d81f1f037c1ff53aca1a8ecaf83c1"
+  },
+  "tau": 0.002,
+  "physical_tolerance": 1e-08,
+  "geometry_tolerance": 1e-08,
+  "repeats": 1,
+  "order": "Variant order rotates by case; cases run sequentially.",
+  "additional_controls": [
+    {
+      "candidate_count": 32,
+      "budget": 1.0,
+      "variant": "direct_all"
+    },
+    {
+      "candidate_count": 8,
+      "budget": null,
+      "variant": "direct_mp"
+    }
+  ],
+  "presentation_update": {
+    "changed_sources": [
+      "plot.py",
+      "live_view.html"
+    ],
+    "source_hashes": {
+      "plot.py": "26c184e00844fb39683894ea82bd7141f65086039df9fdea03250b494fc9ea0d",
+      "live_view.html": "1b281df443b8a1c7e4a092bb24dd87fd78b200bf23194a6a44e04204c85ab64f"
+    },
+    "reason": "Lossless offline replay packing and chunked decoding only; solver equations, decisions, geometry and AC checks unchanged.",
+    "events_unchanged": true,
+    "original_solve_times_preserved": true
+  }
+}

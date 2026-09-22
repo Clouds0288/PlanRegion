@@ -13,7 +13,7 @@ import unittest
 import numpy as np
 from threadpoolctl import threadpool_limits
 
-from main import Case33, evaluation_bounds, joint_benders
+from main import Case33, evaluation_bounds, planning_query
 from model import PlanningEquations, PlanningModel
 from main import ContinuousRegion
 from region import sample_region
@@ -29,6 +29,43 @@ class ContinuousTests(unittest.TestCase):
         cls.threads = threadpool_limits(limits=1)
         cls.network = Case33(candidate_count=4)
         cls.bounds = evaluation_bounds(cls.network)
+
+    def test_auto_policy_and_explicit_overrides(self):
+        from main import resolve_residual_mode
+        for budget, expected in [(0., 'light'), (2., 'light'), (np.inf, 'physical')]:
+            self.assertEqual(resolve_residual_mode('auto', budget), expected)
+            for mode in ('light', 'physical'):
+                self.assertEqual(resolve_residual_mode(mode, budget), mode)
+        with self.assertRaises(ValueError):
+            resolve_residual_mode('invalid', 0.)
+
+    def test_deadline_preserves_unknown_domain(self):
+        solver = ContinuousRegion(self.network, 'socp', 0., self.bounds, time_limit=0.)
+        result = solver.solve()
+        self.assertEqual(result['status'], 'time_limit')
+        self.assertEqual(result['inner'], [])
+        self.assertGreater(result['outer_volume'], 0.)
+        self.assertEqual(result['counts']['mp2'], 0)
+
+    def test_complete_query_reuses_verified_state_without_sp(self):
+        e = PlanningEquations(self.network, 'socp')
+        with patch('main.PlanningSP.solve', side_effect=AssertionError('Redundant SP')):
+            answer, cuts = planning_query(e, budget=0.)
+        self.assertTrue(answer['feasible'])
+        self.assertGreaterEqual(e.margin(answer['x'], answer['p'], answer['state']), -1e-8)
+        self.assertEqual(cuts, [])
+
+    def test_residual_modes_agree_on_small_certified_union(self):
+        points = (np.indices((5,)*3).reshape(3, -1).T+.5)*self.bounds/5
+        results = [ContinuousRegion(self.network, 'socp', 0., self.bounds,
+                                   residual_mode=mode).solve() for mode in ('light', 'physical')]
+        for result in results:
+            self.assertEqual(result['status'], 'certified')
+            self.assertEqual(len(result['queries']), 2)
+            self.assertGreater(result['phases']['residual'], 0.)
+        a, b = [sample_region(r, points, self.bounds) for r in results]
+        self.assertFalse(np.any(a*b == -1))
+        self.assertLess(abs(results[0]['inner_volume']-results[1]['inner_volume'])/results[0]['inner_volume'], .01)
 
     @classmethod
     def tearDownClass(cls):
@@ -70,7 +107,7 @@ class ContinuousTests(unittest.TestCase):
 
     def test_mp1_total_allows_load_redistribution(self):
         equations = PlanningEquations(self.network, 'linear')
-        answer, _ = joint_benders(equations, min_total=3800.)
+        answer, _ = planning_query(equations, min_total=3800.)
         self.assertTrue(answer['feasible'])
         self.assertEqual(answer['objective'], 1.)
         self.assertGreaterEqual(sum(answer['p']), 3800.-1e-6)
@@ -80,7 +117,7 @@ class ContinuousTests(unittest.TestCase):
         self.assertEqual(answer['objective'], reference['objective'])
 
     def test_continuous_domain_covers_other_plans_and_ignores_grid(self):
-        result = ContinuousRegion(self.network, 'linear', 1., self.bounds, joint_benders).solve()
+        result = ContinuousRegion(self.network, 'linear', 1., self.bounds, planning_query).solve()
         self.assertEqual(result['status'], 'certified')
         self.assertGreater(result['schemes'], 1)
         self.assertLessEqual(result['coverage_bound'], 1e-8)
@@ -99,7 +136,7 @@ class ContinuousTests(unittest.TestCase):
 
     def test_unfinished_global_search_does_not_certify_domain(self):
         with patch.object(ContinuousRegion, 'residual', return_value=dict(complete=False, bound=1., x=None, p=None)):
-            result = ContinuousRegion(self.network, 'linear', 0., self.bounds, joint_benders).solve()
+            result = ContinuousRegion(self.network, 'linear', 0., self.bounds, planning_query).solve()
         self.assertEqual(result['status'], 'unknown')
         self.assertGreater(result['outer_volume'], result['inner_volume'])
 

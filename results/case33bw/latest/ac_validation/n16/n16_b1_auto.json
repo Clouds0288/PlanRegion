@@ -1,0 +1,290 @@
+{
+  "candidate_count": 16,
+  "budget": 1.0,
+  "variant": "auto",
+  "construction_status": "certified",
+  "construction_seconds": 9.974942500004545,
+  "strict_vertices": {
+    "total": 195,
+    "feasible": 195,
+    "infeasible": 0,
+    "unknown": 0,
+    "details": [
+      {
+        "choice": [
+          0,
+          0,
+          1,
+          0,
+          0,
+          0,
+          0,
+          0,
+          0,
+          0,
+          0,
+          0,
+          0,
+          0,
+          0,
+          0
+        ],
+        "points": 42,
+        "feasible": 42,
+        "unknown": 0
+      },
+      {
+        "choice": [
+          0,
+          0,
+          0,
+          1,
+          0,
+          0,
+          0,
+          0,
+          0,
+          0,
+          0,
+          0,
+          0,
+          0,
+          0,
+          0
+        ],
+        "points": 34,
+        "feasible": 34,
+        "unknown": 0
+      },
+      {
+        "choice": [
+          0,
+          0,
+          0,
+          0,
+          0,
+          0,
+          0,
+          0,
+          0,
+          0,
+          0,
+          1,
+          0,
+          0,
+          0,
+          0
+        ],
+        "points": 26,
+        "feasible": 26,
+        "unknown": 0
+      },
+      {
+        "choice": [
+          0,
+          0,
+          0,
+          0,
+          0,
+          0,
+          0,
+          0,
+          0,
+          0,
+          0,
+          0,
+          0,
+          0,
+          0,
+          0
+        ],
+        "points": 1,
+        "feasible": 1,
+        "unknown": 0
+      },
+      {
+        "choice": [
+          0,
+          1,
+          0,
+          0,
+          0,
+          0,
+          0,
+          0,
+          0,
+          0,
+          0,
+          0,
+          0,
+          0,
+          0,
+          0
+        ],
+        "points": 30,
+        "feasible": 30,
+        "unknown": 0
+      },
+      {
+        "choice": [
+          0,
+          0,
+          0,
+          0,
+          1,
+          0,
+          0,
+          0,
+          0,
+          0,
+          0,
+          0,
+          0,
+          0,
+          0,
+          0
+        ],
+        "points": 39,
+        "feasible": 39,
+        "unknown": 0
+      },
+      {
+        "choice": [
+          0,
+          0,
+          0,
+          0,
+          0,
+          0,
+          0,
+          0,
+          0,
+          0,
+          1,
+          0,
+          0,
+          0,
+          0,
+          0
+        ],
+        "points": 11,
+        "feasible": 11,
+        "unknown": 0
+      },
+      {
+        "choice": [
+          0,
+          0,
+          0,
+          0,
+          0,
+          1,
+          0,
+          0,
+          0,
+          0,
+          0,
+          0,
+          0,
+          0,
+          0,
+          0
+        ],
+        "points": 12,
+        "feasible": 12,
+        "unknown": 0
+      }
+    ],
+    "failures": [],
+    "union_infeasible": 0,
+    "union_unknown": 0,
+    "maximum_inward_retreat_kw": 0.0
+  },
+  "maximum": {
+    "point": [
+      44.37282375376873,
+      3681.432056162861,
+      50.94277392528008
+    ],
+    "choice": [
+      0,
+      0,
+      1,
+      0,
+      0,
+      0,
+      0,
+      0,
+      0,
+      0,
+      0,
+      0,
+      0,
+      0,
+      0,
+      0
+    ],
+    "total_kw": 3776.74765384191,
+    "ac_status": 1,
+    "diagnostic": {
+      "converged": true,
+      "equation_residual": 4.156675004196586e-13,
+      "maximum_violation_pu": -1.3433428036613293e-08,
+      "undervoltage_pu": 0.0,
+      "minimum_voltage_pu": 0.9000000074630156
+    }
+  },
+  "grid": {
+    "fr_percent": null,
+    "mr_percent": null,
+    "region_error_percent": null,
+    "fr_interval": [
+      0.0,
+      0.23510971786833856
+    ],
+    "mr_interval": [
+      0.0,
+      0.4691164972634871
+    ],
+    "region_error_interval": [
+      0.0,
+      0.7020280811232449
+    ],
+    "unknown_cells": 9,
+    "points": 32768,
+    "ac_inside": 1279,
+    "inner_inside": 1273,
+    "definite_extra": 0,
+    "definite_missed": 0,
+    "ac_not_retained": 6,
+    "ac_retained_percent": 99.53088350273651,
+    "retained_inner_fr_percent": 0.0,
+    "ac_in_unknown": 6,
+    "method_unknown": 9,
+    "ac_unknown": 0
+  },
+  "volume_error": {
+    "fr_percent": 0.0,
+    "mr_percent": 0.4691164972634871,
+    "region_error_percent": 0.4691164972634871,
+    "computed_cells": 1273,
+    "ac_cells": 1279,
+    "extra_cells": 0,
+    "missed_cells": 6,
+    "fr_interval": [
+      0.0,
+      0.0
+    ],
+    "mr_interval": [
+      0.4691164972634871,
+      0.4691164972634871
+    ],
+    "region_error_interval": [
+      0.4691164972634871,
+      0.4691164972634871
+    ],
+    "unknown_cells": 0
+  },
+  "boundary_ac_seconds": 0.02735950006172061,
+  "comparison_seconds": 0.10564359999261796
+}

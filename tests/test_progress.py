@@ -16,11 +16,26 @@ import numpy as np
 from threadpoolctl import threadpool_limits
 
 import main
-from plot import RunMonitor, cut_slice
+from plot import RunMonitor, cut_slice, pack_replay
 from vertify import validate_ac_region
 
 
 class ProgressTests(unittest.TestCase):
+    def test_packed_replay_preserves_every_frame_and_numeric_value(self):
+        geometry = {'vertices': [[0., -0., 1e-12], [1., 2., 3.]], 'faces': [[0, 1, 0]]}
+        original = dict(history=[dict(id=i, patch=dict(geometry=geometry, query=i,
+                                                      feasible=i % 2 == 0)) for i in range(1000)],
+                        budget=None, recording_version=1)
+        packed = pack_replay(original)
+        restored = []
+        def resolve(value):
+            return restored[value['ref']] if isinstance(value, dict) else value
+        for kind, node in packed['objects']:
+            restored.append({k: resolve(v) for k, v in node.items()} if kind else [resolve(v) for v in node])
+        decoded = resolve(packed['root'])
+        self.assertEqual(json.dumps(decoded), json.dumps(original))
+        self.assertIs(decoded['history'][0]['patch']['geometry'], decoded['history'][-1]['patch']['geometry'])
+
     def test_import_and_help_do_not_start_computation(self):
         for args in (['-c', 'import main; print("imported")'], ['main.py', '--help']):
             process = subprocess.run([sys.executable, '-X', 'utf8', *args], cwd=main.ROOT,
@@ -68,18 +83,18 @@ class ProgressTests(unittest.TestCase):
 
     def test_hybrid_phase_reset_is_visible(self):
         phases = []
-        original = main.joint_benders
+        original = main.planning_query
         with threadpool_limits(limits=1), RunMonitor(stream=StringIO()) as monitor:
             def query(equations, **kwargs):
                 if equations.method == 'socp':
                     self.assertGreater(len(kwargs['cuts']), 0)
-                    return dict(bound=None, feasible=False), []
+                    return dict(bound=None, feasible=False, status='unknown', objective=None), []
                 return original(equations, **kwargs)
             def observe(event, **data):
                 monitor(event, **data)
                 if event == 'phase_start':
                     phases.append((data['phase'], monitor.state['geometry']))
-            with patch('main.joint_benders', side_effect=query):
+            with patch('main.planning_query', side_effect=query):
                 result = main.build_continuous_region(main.Case33(candidate_count=4), 'hybrid', 0.,
                                                        [400., 4670., 630.], observer=observe)
         self.assertEqual([p[0] for p in phases], ['linear', 'socp'])

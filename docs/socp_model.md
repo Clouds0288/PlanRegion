@@ -1,6 +1,6 @@
 # 线性域之后的 SOCP 校正模型与对偶割
 
-**状态：模型审核稿，尚未接入求解程序。**
+**定位：固定方案 SOCP 数学背景。** 当前正式主线与实现入口见第 11 节；早期方案讨论不代表当前默认算法。
 
 本文针对当前四节点算例，推导“先用线性模型形成候选域，再用 SOCP 检查并切割”的数学模型。预算与建设方案沿用原问题；电气子问题补回线路损耗、完整平方电压降和配变实际视在功率约束。
 
@@ -639,39 +639,25 @@ M_{\bar x}=
 3. **割的范围：** 首版固定方案求 SOCP、按方案保存对偶割，最终对所有预算允许方案取并集。
 4. **输出含义：** 有限计算保留内、外两层区域；认证内域作为认证结果，外域用于展示剩余不确定部分，继续记录 E、FR、MR。
 
-上述为最初提交审核的模型。根据后续测试要求，现已新增 SOCP 求解和四方法比较，原线性流程的数学模型保持不变；实现口径见下节。
+上述保留最初模型的审核边界。当前统一规划模型与模块职责见下节。
 
 已做的代数核对：对当前 216 个建设方案，式 (11)–(14) 与独立 AC 程序的状态计算一致；数值检查中最大差为 \(1.11\times10^{-16}\)，且 \(A,H\) 逐元素非负。该核对辅助排查推导与代码的记号错误，不替代第 4 节证明，也不是 SOCP 性能实验。
 
-## 11. 实现与四方法实验
+## 11. 与当前主线的关系
 
-`model.SOCPSP` 使用 Clarabel 的原生锥接口实现式 (29)。`main.ipynb` 显式维护固定方案内外域、执行预算及方法循环；`model.ACPowerFlow` 独立求解完整 AC，`vertify.py` 仅提供比较与存取工具。
+本文保留固定建设方案下的 SOCP 方程、对偶割与适用条件，作为数学背景。当前主线已使用统一的规划变量与运行约束，不再采用早期 Notebook 中逐方案枚举的实现；统一联合割的依据见 [紧凑规划模型](compact_planning.md)。
 
-纯 SOCP 从负荷单纯形开始；混合方法先实际运行原 LP 流程，再以各方案的 LP 候选外域为初值。它传递的是几何区域及已经生效的线性割，不声称复用了 SOCP 原始变量或实现了求解器级热启动。LP 阶段时间完整计入混合方法。
+- `main.py` 组织完整 MP2 / MP1、必要 SP 与连续覆盖循环。
+- `model.py` 实现统一 LP / SOCP 物理方程、主问题、SP 和轻量 / 物理剩余域搜索。
+- `region.py` 管理每个方案的认证内域、候选外域以及跨方案并集。
+- `vertify.py` 独立进行 AC 校核；`plot.py` 与 `live_view.html` 保存和回放全部过程。
 
-两种方法逐方案达到同一个停止条件：
+当前区域误差以**实际保留的认证内域并集**为计算域；覆盖状态、径向容差、未知薄层及超时结果的解释见 [连续构域说明](continuous_region.md)。本稿中针对单个方案的恢复证明，不能替代具体算例的约束核对、全局覆盖证书或独立 AC 检查。
 
-\[
-(1-\tau)\mathcal U_x\subseteq\mathcal I_x\subseteq\mathcal D_{\mathrm{SOC},x}\subseteq\mathcal U_x,
-\qquad \tau=0.002.
-\]
-
-其中内域来自可行证书凸包，外域来自有效割。认证按同方案进行，最终取并集；不读取 AC 参考标签。三维下连续内外域的相对体积间隙不超过 \(1-(1-\tau)^3=0.5988008\%\)，实现另有 \(10^{-8}\) kW 的几何距离容差。达到迭代上限会报错，不会作为收敛发布结果。
-
-本次用户要求比较“切割后的区域”，因此 FR/MR **主表采用切割外域**；完整内域同时保存在各方案 JSON 中，可独立复核停止条件。外域还有有限切割误差，不称为已认证的安全内域。在本项目第 4.3 节假设成立时，SOCP 投影等于 AC 域；这一特殊结论不能推广到一般含反送电、离散控制或不同约束的网络。
-
-浮点求解的两处处理都有明确数学依据：
-
-1. 对锥乘子 \(\lambda\) 先恢复锥可行性。令 \(q=G^T\lambda\)，由 \(0\le\ell_e\le\overline P_e/r_e\) 将割截距向外放宽 \(\sum_e\max(q_e,0)\overline P_e/r_e\)，再加 \(10^{-10}\) 数值余量。因为 \(\lambda^T(c+Fd+G\ell)\ge0\)，得到的修正割仍保留全部可行点。
-2. 对原始状态同时缩放 \((d,\ell)\mapsto(\alpha d,\alpha\ell)\)。此时 \(P',Q'=\alpha(P,Q)\)，\(u'=1-\alpha+\alpha u\)，故每条电流锥只需
-   \(\alpha\le\ell/[P^2+Q^2+(1-u)\ell]\)。再与电压、线路有功和配变视在功率给出的缩放界取最小值，即得可核查的内点；空负荷子树的电流取零。边界数值残差使证书过度内缩时，按统一规则额外检查略向内的点，调用次数及时间均计入。
-
-计时在每档预算、每种方法重新建模后进行，包含建模、优化、几何更新和同一网格上的成员判定；共享导入、一次性许可证启动、公共网格准备、绘图及导出不计。独立 AC 扫描成本单列，不重复加到三个近似方法。数值求解与线性代数均限制为单线程。
-
-实现使用 [Clarabel 标准锥形式](https://clarabel.org/stable/python/getting_started_py/)及其[数据更新接口](https://clarabel.org/stable/user_guide_data_updating/)；两种 SOCP 方法使用相同求解器和容差，LP 及 AC 非凸兜底使用 Gurobi。因求解器和区域构建算法不同，耗时用于比较这些实际实现，不能解释为 LP 与 SOCP 的理论复杂度结论。
+最新 Case33 数值、实际构域耗时和独立 AC 审核见 [最新测试报告](../results/case33bw/latest/report.md)。测试记录保留原始源文件指纹，后续显示层变化单独登记。
 
 ## 参考依据
 
-- Yue Chen and Changhong Zhao. *Improved Approximation of Dispatchable Region in Radial Distribution Networks via Dual SOCP*. IEEE Transactions on Power Systems, 38(6), 5585–5597, 2023. [DOI](https://doi.org/10.1109/TPWRS.2022.3226894)；[用户提供的 PDF](<C:/Users/Admin/Zotero/storage/7G4EDP2L/Chen和Zhao - 2023 - Improved Approximation of Dispatchable Region in Radial Distribution Networks via Dual SOCP.pdf>)。本稿参考其可行性 SOCP、强对偶、外域切割与顶点检查思路，以及第 5594 页的 FR、MR 定义；第 4.3 节是针对本项目限定模型给出的恢复证明，不归为该论文的一般结论。
+- Yue Chen and Changhong Zhao. *Improved Approximation of Dispatchable Region in Radial Distribution Networks via Dual SOCP*. IEEE Transactions on Power Systems, 38(6), 5585–5597, 2023. [DOI](https://doi.org/10.1109/TPWRS.2022.3226894)。本稿参考其可行性 SOCP、强对偶、外域切割与顶点检查思路，以及第 5594 页的 FR、MR 定义；第 4.3 节是针对本项目限定模型给出的恢复证明，不归为该论文的一般结论。
 - Stephen Boyd and Lieven Vandenberghe. *Convex Optimization*. 第 5.2.3 节（Slater 条件），第 5.9 节（广义不等式与锥对偶）。[作者提供的教材](https://web.stanford.edu/~boyd/cvxbook/bv_cvxbook.pdf)。
-- 本项目对照文件：[网络参数](D:/GithubProject/PlanRegion/Network/four_bus_five_corridor.py)、[现有线性 SP](D:/GithubProject/PlanRegion/model.py)、[独立 AC 验证](D:/GithubProject/PlanRegion/vertify.py)。
+- 本项目对照文件：[网络参数](../Network/four_bus_five_corridor.py)、[现有线性 SP](../model.py)、[独立 AC 验证](../vertify.py)。

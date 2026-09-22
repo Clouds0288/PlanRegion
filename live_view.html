@@ -22,14 +22,17 @@
 <div id="chart" aria-label="连续内域、外域、候选点和方案条件切面"></div>
 <div class="toolbar"><div class="legend"><span><i class="dot" style="background:#229d88"></i>认证内域并集</span><span><i class="dot" style="background:#5a91c3"></i>连续外域</span><span><i class="dot" style="background:#dc5963"></i>当前候选点</span><span><i class="dot" style="background:#e2ac39"></i>方案条件割</span></div><div class="controls"><label><input id="inner" type="checkbox" checked>内域</label><label><input id="outer" type="checkbox" checked>外域</label><label><input id="plane" type="checkbox" checked>当前割</label></div></div>
 <p class="hint" id="geometry-note">内域按同一建设方案形成凸多面体，不同方案取并集。坐标单位 kW；拖动旋转、滚轮缩放。</p></section>
-<aside class="panel"><h2>计算过程 · 当前步骤</h2><div id="message">等待计算记录</div><div id="stage" class="subtle">—</div><div class="row"><span>阶段 / 轮次</span><strong id="iteration">—</strong></div><div class="row"><span>该步骤耗时</span><strong id="step">—</strong></div><div class="row"><span>内外域体积间隙</span><strong id="gap">—</strong></div><div class="row"><span>全局覆盖上界</span><strong id="coverage">—</strong></div><hr><div class="subtle">节点负荷 / kW</div><div id="point" class="mono">—</div><div class="subtle" style="margin-top:12px">线路选型（A、B、C、D：0 原状，1 并联）</div><div id="choice" class="mono">—</div><div class="cutbox"><div id="cut-equation" class="mono">尚无联合割</div><p class="hint">a + bᵀp + dᵀx ≥ 0。切面固定在生成它的方案 x；它不是整个规划域的统一边界。</p></div><p class="hint">MP1 / MP2 / SP 与剩余区域搜索共同形成连续域。AC 点集只用于独立校核。回放不会重新求解，也不会改变原始计时。</p></aside>
+<aside class="panel"><h2>计算过程 · 当前步骤</h2><div id="message">等待计算记录</div><div id="stage" class="subtle">—</div><div class="row"><span>剩余域模式</span><strong id="residual-mode">—</strong></div><div class="row"><span>阶段 / 轮次</span><strong id="iteration">—</strong></div><div class="row"><span>该步骤耗时</span><strong id="step">—</strong></div><div class="row"><span>内外域体积间隙</span><strong id="gap">—</strong></div><div class="row"><span>全局覆盖上界</span><strong id="coverage">—</strong></div><hr><div class="subtle">节点负荷 / kW</div><div id="point" class="mono">—</div><div class="subtle" style="margin-top:12px">线路选型（按候选顺序：0 原状，1 并联）</div><div id="choice" class="mono">—</div><div class="cutbox"><div id="cut-equation" class="mono">尚无联合割</div><p class="hint">a + bᵀp + dᵀx ≥ 0。切面固定在生成它的方案 x；它不是整个规划域的统一边界。</p></div><p class="hint">MP1 / MP2 / SP 与剩余区域搜索共同形成连续域。AC 点集只用于独立校核。回放不会重新求解，也不会改变原始计时。</p></aside>
 </div>
 <section id="comparison-panel" class="panel section hidden"><h2>优化前后对比</h2><p id="comparison-summary" class="hint"></p><div class="table-wrap"><table><thead><tr><th>方法</th><th>预算</th><th>原流程 s</th><th>优化后独立求解 s</th><th>优化后预算复用 s</th><th>SP：原 / 独立 / 复用</th><th>质量核对</th></tr></thead><tbody id="comparison"></tbody></table></div><p class="hint">独立求解不继承前一预算；预算复用仅继承同一模型的合法证书。三组均包含完整过程记录，审核和 AC 另计。跳过候选数是过程计数，实际节省以两次运行的 SP 差值和总耗时为准。</p></section>
-<section class="panel section"><div class="toolbar"><h2>最终结果与求解时间</h2><span class="subtle" id="timing-mode">混合方法包含自己的 LP 阶段</span></div><div class="table-wrap"><table><thead><tr><th>方法</th><th>预算</th><th>认证</th><th>最大总负荷 kW</th><th>内域体积 kW³</th><th>外域体积 kW³</th><th>间隙 %</th><th>总耗时 s</th><th>MP s</th><th>SP s</th><th>几何 s</th><th>割 / SP</th><th>覆盖跳过</th><th>空隙支撑 SP</th><th>继承方案</th><th>计时方式</th><th>FR % / MR %</th></tr></thead><tbody id="results"></tbody></table></div><p id="audit" class="hint"></p><p id="timing" class="hint">计算结束后显示完整统计。点击结果行查看该连续域。</p></section>
+<section class="panel section"><div class="toolbar"><h2>最终结果与求解时间</h2><span class="subtle" id="timing-mode">混合方法包含自己的 LP 阶段</span></div><div class="table-wrap"><table><thead><tr><th>方法</th><th>预算</th><th>剩余域</th><th>认证</th><th>最大总负荷 kW</th><th>内域体积 kW³</th><th>外域体积 kW³</th><th>间隙 %</th><th>总耗时 s</th><th>MP2 s</th><th>MP1 s</th><th>剩余搜索 s</th><th>MP 求解 s</th><th>SP s</th><th>几何 s</th><th>割 / SP</th><th>覆盖跳过</th><th>空隙支撑 SP</th><th>继承方案</th><th>计时方式</th><th>区域误差 %</th><th>多算 % / 漏算 %</th><th>原始证书复用</th></tr></thead><tbody id="results"></tbody></table></div><p id="audit" class="hint"></p><p id="timing" class="hint">计算结束后显示完整统计。点击结果行查看该连续域。</p></section>
 <section class="panel section"><div class="toolbar"><h2>完整事件记录</h2><span id="event-count" class="subtle">点击任意事件还原当时的全部状态</span></div><div class="table-wrap"><table><thead><tr><th>帧</th><th>时间</th><th>方法 / 预算</th><th>阶段</th><th>过程</th></tr></thead><tbody id="events"></tbody></table></div><p class="hint">表格显示当前帧附近的事件；全部历史始终保存在时间轴和回放文件中。</p></section>
 <script>
 'use strict';
 const $=id=>document.getElementById(id), names={linear:'线性',socp:'SOCP',hybrid:'LP → SOCP',ac:'独立 AC 校核'};
+const modeName=v=>({light:'轻量',physical:'物理',auto:'自动'})[v]||'历史记录';
+const statusName=v=>({certified:'已认证',time_limit:'达到时限',timeout:'达到时限',unknown:'未确定'})[v]||'未确定';
+const errorRate=v=>v.region_error_percent!=null?fmt(v.region_error_percent,3):v.region_error_interval?'['+v.region_error_interval.map(x=>fmt(x,3)).join(', ')+']':'待校验';
 const fmt=(v,n=3)=>v==null?'—':Number(v).toLocaleString('zh-CN',{maximumFractionDigits:n,minimumFractionDigits:n});
 let latest=null, state=null, frames=[], contexts=[], checkpoints=[], rolling={}, cursor=-1, view='live', timer=null, playing=false, renderVersion=0, budgetKey='', offline=false;
 function td(tr,value){const el=document.createElement('td');el.textContent=value;tr.append(el)}
@@ -87,19 +90,21 @@ function resultRows(){
  $('audit').textContent=audit?.passed?`独立核验通过：${audit.designs} 种线路组合、${audit.support_queries} 次边界优化、${audit.inner_vertices_checked.toLocaleString()} 个内域顶点、${audit.cuts_globally_checked} 条代表性割、${audit.ac_design_point_checks.toLocaleString()} 次 AC 方案点校核。审核另耗时 ${fmt(audit.seconds)} s。`:'';
  $('results').replaceChildren();for(const r of latest?.results||[]){
   const tr=document.createElement('tr');tr.className='clickable';const v=r.validation||{},rates=['fr','mr'].map(k=>v[k+'_percent']!=null?fmt(v[k+'_percent'],2):v[k+'_interval']?'['+v[k+'_interval'].map(x=>fmt(x,2)).join(', ')+']':'未定').join(' / ');
-  for(const value of [names[r.method],r.budget==null?'无限':r.budget,r.status==='certified'?'已认证':'未确定',fmt(r.max_total),fmt(r.inner_volume,0),fmt(r.outer_volume,0),fmt(r.volume_gap*100,4),fmt(r.timing.total_seconds),fmt(r.timing.mp_seconds),fmt(r.timing.sp_seconds),fmt(r.timing.geometry_seconds),r.counts.cuts+' / '+r.counts.sp,r.counts.sp_skipped??0,r.counts.gap_support_sp??0,r.counts.reused_schemes??0,r.timing_mode==='incremental'?'增量':'独立',rates])td(tr,value);
+  for(const value of [names[r.method],r.budget==null?'无限':r.budget,modeName(r.residual_mode),statusName(r.status),fmt(r.max_total),fmt(r.inner_volume,0),fmt(r.outer_volume,0),fmt(r.volume_gap*100,4),fmt(r.timing.total_seconds),fmt(r.phases?.MP2),fmt(r.phases?.MP1),fmt(r.phases?.residual),fmt(r.timing.mp_seconds),fmt(r.timing.sp_seconds),fmt(r.timing.geometry_seconds),r.counts.cuts+' / '+r.counts.sp,r.counts.sp_skipped??0,r.counts.gap_support_sp??0,r.counts.reused_schemes??0,r.timing_mode==='incremental'?'增量':'独立',errorRate(v),rates,r.counts.reused_certificates??0])td(tr,value);
   tr.onclick=()=>{stop();view='final';$('method').value=r.method;$('budget').value=r.budget_index;render(latest)};$('results').append(tr);
  }
  $('timing-mode').textContent=(m?.reuse_budgets?'递增预算复用同模型证书':'每档预算独立求解')+'；混合方法包含自己的 LP 阶段';
- if(m)$('timing').textContent=`公共准备 ${fmt(m.preparation_seconds)} s；独立 AC 校核 ${fmt(m.seconds?.ac)} s；导出前总墙钟 ${fmt(m.wall_seconds_before_export)} s。FR/MR 基于 ${m.divisions}³ 公共校核网格；连续构域独立于网格。几何容差在公共评价箱归一化坐标中为 10⁻⁸。`;
+ if(m)$('timing').textContent=`公共准备 ${fmt(m.preparation_seconds)} s；独立 AC 校核 ${fmt(m.seconds?.ac)} s；导出前总墙钟 ${fmt(m.wall_seconds_before_export)} s。区域误差基于 ${m.divisions}³ 公共校核网格上的保留内域与 AC 域；连续构域独立于网格。几何容差在公共评价箱归一化坐标中为 10⁻⁸。`;
+ if(!m){const d=latest?.ac_validation?.divisions;$('timing').textContent=d?`AC 区域误差由 ${d}³ 公共网格中心估计：对称差体积 / 两域并集体积。多算率以计算域为分母，漏算率以 AC 域为分母。网格估计不是连续误差的严格上界。`:'构域时间含几何与记录；独立 AC 校验和导出另计。';}
  comparisonRows();
 }
 async function render(s){if(view==='final'&&$('method').value==='auto')$('method').value='socp';state=s;const version=++renderVersion;const key=JSON.stringify(latest?.budgets||s.budgets||[]);if(key!==budgetKey){budgetKey=key;const value=$('budget').value;$('budget').replaceChildren(new Option('跟随步骤','auto'));(latest?.budgets||s.budgets||[]).forEach((v,i)=>$('budget').add(new Option(v==null?'无限预算':String(v),i)));$('budget').value=view==='final'&&value==='auto'?'0':value||'auto'}
  const r=selectedResult(s),isFinal=view==='final',current=r||(isFinal?null:s.region),counts=r?.counts||(isFinal?{}:s.counts_algorithm)||{};const label={running:'正在计算',completed:'计算完成',failed:'计算失败',interrupted:'已中断'};
  $('status').textContent=(view==='replay'?'历史回放':view==='final'?'最终结果':label[s.status]||'实时计算');$('status').classList.toggle('error',['failed','interrupted'].includes(s.status));
  $('network').textContent=`${latest?.network||s.network||'PlanRegion'} · 连续负荷节点 ${(s.load_nodes||latest?.load_nodes||[18,25,33]).join(' / ')} · ${frames.length.toLocaleString()} 条完整算法事件`;
- $('certificate').textContent=current?(current.status==='certified'?'连续域已认证':'存在未确定'):isFinal?'AC 采样校核':s.coverage_complete?'覆盖已认证':'正在构域';$('queries').textContent=isFinal&&!r?'—':(counts.sp??s.query??0)+' / '+(r?.schemes??s.geometry?.length??0);$('cuts').textContent=isFinal?(r?.counts?.cuts??'—'):s.pool_size??0;$('elapsed').textContent=fmt(r?.timing?.total_seconds??(isFinal?latest?.metadata?.seconds?.ac:s.elapsed),2)+' s';
- $('skipped').textContent=`覆盖跳过 ${counts.sp_skipped??0} · 空隙支撑 SP ${counts.gap_support_sp??0}`;
+ $('certificate').textContent=current?statusName(current.status):isFinal?'AC 采样校核':s.coverage_complete?'覆盖已认证':'正在构域';$('queries').textContent=isFinal&&!r?'—':(counts.sp??s.query??0)+' / '+(r?.schemes??s.geometry?.length??0);$('cuts').textContent=isFinal?(r?.counts?.cuts??'—'):s.pool_size??0;$('elapsed').textContent=fmt(r?.timing?.total_seconds??(isFinal?latest?.metadata?.seconds?.ac:s.elapsed),2)+' s';
+ $('residual-mode').textContent=modeName(current?.residual_mode||s.residual_mode);
+ $('skipped').textContent=`覆盖跳过 ${counts.sp_skipped??0} · 原始证书复用 ${counts.reused_certificates??0} · 空隙支撑 SP ${counts.gap_support_sp??0}`;
  $('message').textContent=r?`${names[r.method]} · 预算 ${r.budget==null?'无限':r.budget} · ${r.status==='certified'?'连续内外域已认证':'保留未确定部分'}`:isFinal?'独立 AC 校核 · 公共网格上的可行性':s.message||'等待记录';$('stage').textContent=(names[r?.method||s.method]||'公共准备')+' / '+(isFinal?'最终结果':s.phase||'初始化');$('iteration').textContent=isFinal?'—':(s.mode||'—')+' / '+(s.iteration||'—');$('step').textContent=isFinal?'—':fmt(s.step_seconds,3)+' s';$('gap').textContent=current?fmt(current.volume_gap*100,4)+'%':'—';$('coverage').textContent=fmt(current?.coverage_bound??(isFinal?null:s.coverage_bound),9);
  const point=isFinal?r?.max_point:s.point,choice=isFinal?r?.max_choice:s.choice;$('point').textContent=point?(isFinal?'最大总负荷对应点\n':'')+'('+point.map(v=>fmt(v)).join(', ')+')':'—';$('choice').textContent=choice?'['+choice.join(', ')+']'+(isFinal?' · 投资 '+fmt(r.max_cost,0):''):'—';
  const cut=isFinal?null:s.latest_cut;$('cut-equation').textContent=cut?`割 #${cut.number}\n${Number(cut.constant).toPrecision(4)} + (${cut.normal.map(v=>Number(v).toPrecision(3)).join(', ')}) · p ≥ 0\n生成方案：[${(cut.choice||[]).join(', ')}]`:isFinal?'选择历史步骤查看当时生成的割':'该步骤没有当前割';
@@ -117,7 +122,27 @@ for(const id of ['method','budget'])$(id).onchange=()=>{stop();if(view==='final'
 for(const id of ['inner','outer','plane'])$(id).onchange=()=>state&&draw(state,selectedResult(state));
 $('file').onchange=async()=>{try{const data=JSON.parse(await $('file').files[0].text());if(data.recording_version!==1||!Array.isArray(data.history))throw Error('不是完整的 PlanRegion 回放文件');stop();offline=true;$('live').disabled=true;ingest(data,true);view='final';await render(latest);$('connection').textContent='已载入完整离线回放'}catch(error){$('connection').textContent='载入失败：'+error.message}};
 async function poll(){if(offline)return;try{const response=await fetch('/state?after='+frames.length,{cache:'no-store'});if(!response.ok)throw Error('HTTP '+response.status);const data=await response.json();if(offline)return;ingest(data);if(view==='live'){if(latest.status==='completed')view='final';await render(latest)};$('connection').textContent='本地实时连接 · 历史可随时回放'}catch(error){$('connection').textContent='连接已断开；已收到的历史仍可回放'}setTimeout(poll,750)}
-async function restoreCompressed(){offline=true;$('live').disabled=true;try{const bytes=Uint8Array.from(atob(window.SAVED_REPLAY_GZIP),c=>c.charCodeAt(0));const text=await new Response(new Blob([bytes]).stream().pipeThrough(new DecompressionStream('gzip'))).text();ingest(JSON.parse(text),true);view='final';await render(latest);$('connection').textContent='完整离线回放 · 无需重新求解'}catch(e){$('connection').textContent='离线回放解压失败：'+e.message}}
+function unpackReplay(data){
+ if(data.packed_replay_version!==1)return data;
+ const objects=data.objects,resolve=value=>value&&typeof value==='object'?objects[value.ref]:value;
+ for(let i=0;i<objects.length;i++){
+  const [kind,node]=objects[i];
+  objects[i]=kind?Object.fromEntries(Object.entries(node).map(([key,value])=>[key,resolve(value)])):node.map(resolve);
+ }
+ return resolve(data.root);
+}
+async function restoreCompressed(){offline=true;$('live').disabled=true;try{
+ // 分段解码，避免 TypedArray.from 把大字符串展开为数亿个临时元素。
+ const encoded=window.SAVED_REPLAY_GZIP,parts=[],chunkSize=4*1024*1024;
+ for(let offset=0;offset<encoded.length;offset+=chunkSize){
+  const raw=atob(encoded.slice(offset,offset+chunkSize)),bytes=new Uint8Array(raw.length);
+  for(let i=0;i<raw.length;i++)bytes[i]=raw.charCodeAt(i);
+  parts.push(bytes);
+ }
+ window.SAVED_REPLAY_GZIP=null;
+ const text=await new Response(new Blob(parts).stream().pipeThrough(new DecompressionStream('gzip'))).text();
+ parts.length=0;ingest(unpackReplay(JSON.parse(text)),true);view='final';await render(latest);$('connection').textContent='完整离线回放 · 无需重新求解';
+ }catch(e){$('connection').textContent='离线回放解压失败：'+e.message}}
 if(window.SAVED_REPLAY_GZIP){$('connection').textContent='正在载入完整回放…';restoreCompressed()}else if(window.SAVED_STATE){offline=true;$('live').disabled=true;ingest(window.SAVED_STATE,true);view='final';render(latest);$('connection').textContent='完整离线回放 · 无需重新求解'}else if(location.protocol==='file:'){$('status').textContent='页面模板';$('network').textContent='请打开结果目录中的 live_view.html，或运行 main.py --load --ui';$('connection').textContent='离线结果包含相同页面、完整数据和绘图资源';$('message').textContent='等待载入已保存的计算过程';}else poll();
 window.PlanRegionReplay={seek,at,ingest,get history(){return frames},get state(){return state},get view(){return view}};
 </script></body></html>

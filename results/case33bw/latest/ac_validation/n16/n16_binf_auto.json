@@ -1,0 +1,129 @@
+{
+  "candidate_count": 16,
+  "budget": null,
+  "variant": "auto",
+  "construction_status": "certified",
+  "construction_seconds": 6.964833099977113,
+  "strict_vertices": {
+    "total": 55,
+    "feasible": 55,
+    "infeasible": 0,
+    "unknown": 0,
+    "details": [
+      {
+        "choice": [
+          1,
+          1,
+          1,
+          1,
+          1,
+          1,
+          1,
+          1,
+          1,
+          1,
+          1,
+          1,
+          1,
+          1,
+          1,
+          1
+        ],
+        "points": 55,
+        "feasible": 55,
+        "unknown": 0
+      }
+    ],
+    "failures": [],
+    "union_infeasible": 0,
+    "union_unknown": 0,
+    "maximum_inward_retreat_kw": 0.0
+  },
+  "maximum": {
+    "point": [
+      249.88506259221955,
+      5494.887276956262,
+      379.88564838330893
+    ],
+    "choice": [
+      1,
+      1,
+      1,
+      1,
+      1,
+      1,
+      1,
+      1,
+      1,
+      1,
+      1,
+      1,
+      1,
+      1,
+      1,
+      1
+    ],
+    "total_kw": 6124.657987931791,
+    "ac_status": 1,
+    "diagnostic": {
+      "converged": true,
+      "equation_residual": 8.570921750106208e-14,
+      "maximum_violation_pu": -1.1879459815844484e-07,
+      "undervoltage_pu": 0.0,
+      "minimum_voltage_pu": 0.9126283046995971
+    }
+  },
+  "grid": {
+    "fr_percent": null,
+    "mr_percent": null,
+    "region_error_percent": null,
+    "fr_interval": [
+      0.0,
+      0.12763721000075082
+    ],
+    "mr_interval": [
+      0.0,
+      0.4341317365269461
+    ],
+    "region_error_interval": [
+      0.0,
+      0.5606638259699485
+    ],
+    "unknown_cells": 75,
+    "points": 32768,
+    "ac_inside": 13360,
+    "inner_inside": 13302,
+    "definite_extra": 0,
+    "definite_missed": 0,
+    "ac_not_retained": 58,
+    "ac_retained_percent": 99.56586826347305,
+    "retained_inner_fr_percent": 0.0,
+    "ac_in_unknown": 58,
+    "method_unknown": 75,
+    "ac_unknown": 0
+  },
+  "volume_error": {
+    "fr_percent": 0.0,
+    "mr_percent": 0.4341317365269461,
+    "region_error_percent": 0.4341317365269461,
+    "computed_cells": 13302,
+    "ac_cells": 13360,
+    "extra_cells": 0,
+    "missed_cells": 58,
+    "fr_interval": [
+      0.0,
+      0.0
+    ],
+    "mr_interval": [
+      0.4341317365269461,
+      0.4341317365269461
+    ],
+    "region_error_interval": [
+      0.4341317365269461,
+      0.4341317365269461
+    ],
+    "unknown_cells": 0
+  },
+  "boundary_ac_seconds": 0.009499400039203465,
+  "comparison_seconds": 0.028762900037690997
+}

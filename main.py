@@ -19,17 +19,19 @@ from threadpoolctl import threadpool_limits
 
 from Network.case33bw import Case33
 from Network.four_bus_five_corridor import FourBus
-from model import PlanningEquations, PlanningModel, PlanningSP, RemainingRegionModel
+from model import PlanningEquations, PlanningModel, PlanningSP, RemainingRegionModel, PLANNING_TOL
 from region import GEOMETRY_TOL, RegionState, sample_region, contains
 from vertify import METHODS, METHOD_NAMES, validate_ac_region, comparison_labels, validation_summary
 from plot import RunMonitor, json_value, print_summary
 
 # 常用设置：直接修改这里，或用命令行参数覆盖。
 NETWORK = 'case33'                   # 'case33' 或 'fourbus'
-CANDIDATE_COUNT = 16                 # case33 支持 4 / 8 / 16
+CANDIDATE_COUNT = 16                 # case33 支持 4 / 8 / 16 / 32
 BUDGETS = None                       # None 使用网架默认预算；也可填列表
 DIVISIONS = 8
 REGION_TAU = .002                   # SOCP 连续内外域的相对径向精度，与 DIVISIONS 无关。
+RESIDUAL_MODE = 'auto'               # 有限预算 light；无限预算 physical，可显式覆盖
+CASE_TIME_LIMIT = 300.               # 每个预算、每种方法的构域时限（秒）
 RECOMPUTE = True                     # False 只读取已有 result.npz
 SHOW_UI = True                      # True 自动打开本地实时监视页面
 OUTPUT = None                       # None 按网架自动选择结果目录
@@ -69,78 +71,78 @@ def numerical_threads(observer=None):
             limiter.restore_original_limits()
 
 
-def joint_benders(equations, *, power=None, budget=np.inf, direction=None,
-                  cuts=(), start=None, radial_gap_kw=1e-3, observer=None,
-                  min_total=None, fixed_x=None, incumbent=None):
-    """MP1/MP2 与 SP 的联合割迭代；observer 只接收阶段信息。"""
-    emit(observer, 'query_model', message='建立联合割主问题与连续子问题', reused_cuts=len(cuts))
-    problem = PlanningModel(equations, power=power, budget=budget,
-                            direction=direction, cuts_only=True, min_total=min_total, fixed_x=fixed_x)
-    oracle, generated = PlanningSP(equations), []
+class RegionTimeout(RuntimeError):
+    """单预算构域到时；保留已获证内域，不能作为覆盖完成的证明。"""
+
+
+def resolve_residual_mode(mode, budget):
+    if mode not in ('auto', 'light', 'physical'):
+        raise ValueError('residual_mode must be auto, light or physical')
+    return ('physical' if np.isinf(budget) else 'light') if mode == 'auto' else mode
+
+
+def planning_query(equations, *, power=None, budget=np.inf, direction=None,
+                   cuts=(), start=None, radial_gap_kw=1e-3, observer=None,
+                   min_total=None, fixed_x=None, incumbent=None, deadline=np.inf):
+    """完整 MP1/MP2；原始运行证书可直接复用，数值未获证时才调用 SP。"""
     minimizing = power is not None or min_total is not None
     mode = 'MP1' if minimizing else 'MP2'
-    bound = -np.inf if minimizing else np.inf
+    emit(observer, 'query_model', message='建立完整物理主问题', reused_cuts=len(cuts))
+    problem = PlanningModel(equations, power=power, budget=budget, direction=direction,
+                            min_total=min_total, fixed_x=fixed_x)
     with problem.model:
         for cut in cuts:
             problem.add_cut(cut)
         if start is not None:
             problem.x.Start = start
         if incumbent is not None:
-            incumbent_cost = problem.use_incumbent(incumbent, budget=budget, power=power,
-                                                    min_total=min_total)
-        iteration = 0
-        while True:
-            iteration += 1
-            emit(observer, 'mp_start', iteration=iteration, mode=mode, message=f'求解主问题 {mode}')
-            answer = problem.solve()
-            if answer is None:
-                emit(observer, 'query_end', status='infeasible', message='主问题已证不可行')
-                return None, generated
-            bound = max(bound, answer['bound']) if minimizing else min(bound, answer['bound'])
-            answer['bound'] = bound
-            if incumbent is not None and bound >= incumbent_cost-1e-7:
-                answer = dict(incumbent, objective=incumbent_cost, bound=bound, status='optimal')
-                emit(observer, 'query_end', status='optimal', objective=incumbent_cost, bound=bound,
-                     message='MP1 全局费用下界达到已有可行方案费用，最优性已认证')
-                return answer, generated
-            if answer['x'] is None:
-                emit(observer, 'query_end', status='unknown', bound=bound,
-                     message=f"无整数候选，保持未确定：{answer['termination']}")
-                return answer, generated
-            point = answer['p']
-            if not minimizing and point.sum() > 0.:
-                point = point * max(0., 1. - radial_gap_kw / point.sum())
-            emit(observer, 'sp_start', point=point, choice=equations.choice(answer['x']),
-                 bound=bound, objective=answer['objective'], message='验证当前选型的运行约束 SP')
-            checked = oracle.solve(answer['x'], point)
-            emit(observer, 'sp_end', feasible=checked['feasible'], eta=checked['eta'],
-                 message=f"SP {'通过' if checked['feasible'] else '未获证'}：{checked['termination']}")
-            if checked['feasible']:
-                value = answer['objective'] if minimizing else point.sum()
-                gap = value-bound if minimizing else bound-value
-                tolerance = 1e-7 if minimizing else radial_gap_kw+1e-5
-                answer.update(p=point, state=checked['state'], feasible=True, objective=value,
-                              status='optimal' if gap <= tolerance else 'feasible')
-                emit(observer, 'query_end', status=answer['status'], objective=value, bound=bound,
-                     message='获得运行可行证书')
-                return answer, generated
-            if checked['cut'] is None:
-                answer.update(status='unknown', termination=checked['termination'],
-                              feasible=False, objective=None)
-                emit(observer, 'query_end', status='unknown', message='没有可靠新割，保持未确定')
-                return answer, generated
-            generated.append(checked['cut'])
-            problem.add_cut(checked['cut'])
-            emit(observer, 'cut', cut=checked['cut'], selection=answer['x'], point=point,
-                 pool_size=len(cuts)+len(generated), message='加入全局有效联合割，继续求解 MP')
+            problem.use_incumbent(incumbent, budget=budget, power=power, min_total=min_total)
+            problem.x.Start, problem.state.Start = incumbent['x'], incumbent['state']
+        emit(observer, 'mp_start', mode=mode, iteration=1, message=f'求解完整物理主问题 {mode}')
+        answer = problem.solve(time_limit=min(20., max(0., deadline-perf_counter())))
+    emit(observer, 'mp_end', mode=mode)
+    if answer is None:
+        emit(observer, 'query_end', status='infeasible', message='完整主问题已证不可行')
+        return None, []
+    if answer['x'] is not None and not minimizing and answer['p'].sum() > 0.:
+        # 与历史基准一致的 0.001 kW 退让，也必须逐项复核原约束。
+        point = answer['p']*max(0., 1.-radial_gap_kw/answer['p'].sum())
+        state = equations.restore(answer['x'], point, answer['state'])
+        if equations.margin(answer['x'], point, state) >= -PLANNING_TOL:
+            answer.update(p=point, state=state, feasible=True, objective=float(point.sum()))
+    if answer['x'] is not None and not answer['feasible'] and perf_counter() < deadline:
+        emit(observer, 'sp_start', point=answer['p'], choice=equations.choice(answer['x']),
+             numerical_repair=True, message='主问题数值证书未通过，进行必要 SP 复核')
+        checked = PlanningSP(equations).solve(answer['x'], answer['p'],
+                                            time_limit=min(10., deadline-perf_counter()))
+        emit(observer, 'sp_end', feasible=checked['feasible'], eta=checked['eta'])
+        if checked['feasible']:
+            answer.update(state=checked['state'], feasible=True)
+    if answer['feasible']:
+        gap = answer['objective']-answer['bound'] if minimizing else answer['bound']-answer['objective']
+        answer['status'] = 'optimal' if gap <= (1e-7 if minimizing else radial_gap_kw+1e-5) else 'feasible'
+        emit(observer, 'certificate_reuse', origin=mode, point=answer['p'],
+             message='复用完整主问题的运行证书，无需重复 SP')
+    else:
+        answer['status'] = 'unknown'
+    emit(observer, 'query_end', status=answer['status'], objective=answer['objective'],
+         bound=answer['bound'], message='完整主问题查询结束')
+    return answer, []
 
 
 class ContinuousRegion:
-    def __init__(self, network, method, budget, bounds, query, *, tau=.002,
-                 observer=None, cuts=(), start=None, reuse=None):
+    def __init__(self, network, method, budget, bounds, query=None, *, tau=.002,
+                 observer=None, cuts=(), start=None, reuse=None,
+                 residual_mode=RESIDUAL_MODE, time_limit=CASE_TIME_LIMIT):
         self.started = perf_counter()
+        if np.isnan(time_limit) or time_limit < 0:
+            raise ValueError('time_limit must be nonnegative')
+        self.deadline = self.started+time_limit
+        self.time_limit = time_limit
         self.network, self.method, self.budget = network, method, float(budget)
-        self.bounds, self.query = np.asarray(bounds, dtype=float), query
+        self.bounds, self.query = np.asarray(bounds, dtype=float), query or planning_query
+        self.residual_requested = residual_mode
+        self.residual_mode = resolve_residual_mode(residual_mode, self.budget)
         self.tau = 0. if method == 'linear' else float(tau)
         if not 0 <= self.tau < 1:
             raise ValueError('tau must be in [0, 1)')
@@ -168,8 +170,12 @@ class ContinuousRegion:
         self.counts = dict(mp1=0, mp2=0, residual=0, sp=0, cuts=0, vertices=0,
                            sp_skipped=0, residual_points=0, gap_support_sp=0, covered_support_sp=0,
                            reused_schemes=0, reused_vertices=0,
+                           reused_certificates=0, physical_repairs=0,
                            reused_cuts=len(self.region.cuts))
         self.times = dict(mp_seconds=0., sp_seconds=0., geometry_seconds=0.)
+        self.phase_seconds = dict(MP2=0., MP1=0., residual=0.)
+        self.query_results = []
+        self.last_residual = None
         self.maximum = None
         self.clock = None
         self.skipped = set()
@@ -180,7 +186,7 @@ class ContinuousRegion:
 
     def observe(self, event, **data):
         now = perf_counter()
-        if self.clock is not None and event in ('sp_start', 'sp_end', 'query_end'):
+        if self.clock is not None and event in ('mp_end', 'sp_start', 'sp_end', 'query_end'):
             kind, previous = self.clock
             self.times[kind+'_seconds'] += now-previous
             self.clock = None
@@ -189,11 +195,37 @@ class ContinuousRegion:
             self.clock = ('mp', now)
         elif event == 'sp_start':
             self.counts['sp'] += 1
+            self.counts['physical_repairs'] += int(data.get('numerical_repair', False))
             self.clock = ('sp', now)
+        elif event == 'certificate_reuse':
+            self.counts['reused_certificates'] += 1
         elif event == 'cut':
             self.counts['cuts'] += 1
         self.emit(event, **data)
 
+    def remaining_time(self, limit):
+        remaining = self.deadline-perf_counter()
+        if remaining <= 0.:
+            raise RegionTimeout('单预算构域达到时限')
+        return min(limit, remaining)
+
+    def call_query(self, **kwargs):
+        self.remaining_time(np.inf)
+        phase = 'MP1' if kwargs.get('power') is not None or kwargs.get('min_total') is not None else 'MP2'
+        before = perf_counter()
+        answer = None
+        try:
+            answer, cuts = self.query(self.equations, deadline=self.deadline,
+                                      observer=self.observe, **kwargs)
+            return answer, cuts
+        finally:
+            seconds = perf_counter()-before
+            self.phase_seconds[phase] += seconds
+            self.query_results.append(dict(phase=phase, seconds=seconds,
+                status='infeasible' if answer is None else answer.get('status', 'unknown'),
+                objective=None if answer is None else answer.get('objective'),
+                bound=None if answer is None else answer['bound'],
+                feasible=False if answer is None else answer['feasible']))
     
     def geometry(self, **extra):
         before = perf_counter()
@@ -223,7 +255,7 @@ class ContinuousRegion:
         self.emit('sp_start', point=point, choice=self.equations.choice(x),
                   message='固定方案，SP 认证连续域候选')
         started = perf_counter()
-        checked = self.oracle.solve(x, point)
+        checked = self.oracle.solve(x, point, time_limit=self.remaining_time(5. if self.method == 'linear' else 10.))
         self.times['sp_seconds'] += perf_counter()-started
         self.emit('sp_end', feasible=checked['feasible'], eta=checked['eta'],
                   message=f"SP {'通过' if checked['feasible'] else '未通过'}：{checked['termination']}")
@@ -253,6 +285,7 @@ class ContinuousRegion:
             self.geometry(message='登记 MP 已有可行证书，无需再次调用 SP')
         pending = None if witness is None else (1-self.tau)*np.asarray(witness)/self.bounds
         for _ in range(max_checks):
+            self.remaining_time(np.inf)
             if not len(row['outer']):
                 break
             before = perf_counter()
@@ -314,19 +347,32 @@ class ContinuousRegion:
 
     
     def residual(self):
+        self.remaining_time(np.inf)
         self.counts['residual'] += 1
         self.emit('mp_start', mode='residual', iteration=self.counts['residual'],
-                  message='全局搜索尚未覆盖的连续区域（包含未发现方案）')
+                  residual_mode=self.residual_mode,
+                  message=f'{self.residual_mode}：全局搜索尚未覆盖的连续区域')
+        started = perf_counter()
         state = self.region
         problem = RemainingRegionModel(self.equations, self.budget, self.bounds, state.total_bound,
-                                       state.cuts, state.inner_halfspaces(), self.tau)
+                                       state.cuts, state.inner_halfspaces(), self.tau, mode=self.residual_mode)
         with problem.model:
-            answer = problem.solve(GEOMETRY_TOL)
+            answer = problem.solve(GEOMETRY_TOL, time_limit=self.remaining_time(120.))
         self.times['mp_seconds'] += answer.pop('solve_seconds')
+        self.phase_seconds['residual'] += perf_counter()-started
+        self.last_residual = {k: v for k, v in answer.items() if k != 'state'}
+        if answer.get('feasible'):
+            self.counts['reused_certificates'] += 1
+            self.emit('certificate_reuse', origin='residual', point=answer['p'],
+                      message='复用物理剩余域原始证书，无需重复 SP')
+        elif self.residual_mode == 'physical' and answer['x'] is not None:
+            self.counts['physical_repairs'] += 1
         return answer
 
     
     def finish(self, status, coverage, maximum):
+        if status == 'unknown' and perf_counter() >= self.deadline:
+            status = 'time_limit'
         before = perf_counter()
         domain = self.region.finish(status == 'certified')
         self.times['geometry_seconds'] += perf_counter()-before
@@ -335,6 +381,9 @@ class ContinuousRegion:
         self.times['other_seconds'] = max(0., elapsed-sum(v for k, v in self.times.items() if k != 'total_seconds'))
         result = dict(method=self.method, budget=None if np.isinf(self.budget) else self.budget,
                       model_key=self.model_key, strategy='union',
+                      residual_requested=self.residual_requested, residual_mode=self.residual_mode,
+                      time_limit=self.time_limit, phases=self.phase_seconds.copy(),
+                      queries=self.query_results, last_residual=self.last_residual,
                       reuse_from_budget=None if self.reuse is None else self.reuse['budget'],
                       timing_mode='independent' if self.reuse is None else 'incremental',
                       status=status, tau=self.tau, geometry_tolerance=GEOMETRY_TOL,
@@ -349,81 +398,91 @@ class ContinuousRegion:
         return result
 
     def solve(self):
-        self.geometry(message='初始化连续外域，开始 MP2 → MP1 → SP 协作')
-        answer, new = self.query(self.equations, budget=self.budget, cuts=self.region.cuts,
-                                 start=self.start, observer=self.observe)
-        self.region.cuts.extend(new)
-        if answer is None:
-            self.region.total_bound = 0.
-            return self.finish('certified', None, 0.)
-        if not answer['feasible']:
-            return self.finish('unknown', None, None)
-        self.region.total_bound = min(self.region.total_bound, answer['bound'])
-        self.maximum = answer
-        maximum = float(answer['p'].sum())
-        self.emit('maximum', max_total=maximum, max_total_bound=self.region.total_bound,
-                  point=answer['p'], choice=self.equations.choice(answer['x']),
-                  message='MP2 获得最大总负荷的可行下界与全局上界')
-        # MP1 固定总量而非节点分配；避免把最大总量点当成整个三维域。
-        cheapest, new = self.query(self.equations, min_total=max(0., maximum-1e-6),
-                                   budget=self.budget, cuts=self.region.cuts, start=answer['x'],
-                                   incumbent=answer, observer=self.observe)
-        self.region.cuts.extend(new)
-        if self.reuse is not None:
-            before = perf_counter()
-            for certificate in self.reuse['certificates']:
-                x = np.asarray(certificate['x'], dtype=int)
-                cost = float(self.equations.cost@x)
-                points = np.asarray(certificate['inner']).reshape(-1, 3)
-                if cost > self.budget+1e-8 or not len(points):
-                    continue
-                self.region.add_scheme(x, self.equations.choice(x).tolist(), cost)
-                self.region.add_point(x, points)
-                self.counts['reused_schemes'] += 1
-                self.counts['reused_vertices'] += len(points)
-            self.times['geometry_seconds'] += perf_counter()-before
-            self.geometry(reuse_from_budget=self.reuse['budget'],
-                          message='继承更低预算下同一模型的认证内域；只探索当前预算新增部分')
-        seeds = [answer]
-        if cheapest is not None and cheapest['feasible']:
-            seeds.insert(0, cheapest)
-        for seed in seeds:
-            if not self.refine(seed['x'], seed['p']):
-                return self.finish('unknown', None, maximum)
-        while True:
-            witness = self.residual()
-            self.emit('coverage', coverage_bound=witness['bound'], coverage_complete=witness['complete'],
-                      message='已证明全部整数方案的连续外域被覆盖' if witness['complete'] else '仍存在未覆盖的连续候选区域')
-            if witness['complete']:
-                return self.finish('certified', witness['bound'], maximum)
-            if witness['x'] is None:
-                return self.finish('unknown', witness['bound'], maximum)
-            self.emit('candidate', point=witness['p'], choice=self.equations.choice(witness['x']),
-                      message='剩余区域搜索发现候选建设方案')
-            before = self.region.progress
-            if not self.refine(witness['x'], witness=witness['p']):
-                return self.finish('unknown', witness['bound'], maximum)
-            after = self.region.progress
-            if before == after:
-                self.emit('unknown', message='剩余区域搜索与几何容差不一致，停止并保留未确定')
-                return self.finish('unknown', witness['bound'], maximum)
+        try:
+            self.geometry(message='初始化连续外域，开始 MP2 → MP1 → SP 协作')
+            answer, new = self.call_query(budget=self.budget, cuts=self.region.cuts, start=self.start)
+            self.region.cuts.extend(new)
+            if answer is None:
+                self.region.total_bound = 0.
+                return self.finish('certified', None, 0.)
+            if not answer['feasible']:
+                return self.finish('unknown', None, None)
+            self.region.total_bound = min(self.region.total_bound, answer['bound'])
+            self.maximum = answer
+            maximum = float(answer['p'].sum())
+            self.emit('maximum', max_total=maximum, max_total_bound=self.region.total_bound,
+                      point=answer['p'], choice=self.equations.choice(answer['x']),
+                      message='MP2 获得最大总负荷的可行下界与全局上界')
+            # MP1 固定总量而非节点分配；避免把最大总量点当成整个三维域。
+            cheapest, new = self.call_query(min_total=max(0., maximum-1e-6),
+                                       budget=self.budget, cuts=self.region.cuts, start=answer['x'],
+                                       incumbent=answer)
+            self.region.cuts.extend(new)
+            if self.reuse is not None:
+                before = perf_counter()
+                for certificate in self.reuse['certificates']:
+                    x = np.asarray(certificate['x'], dtype=int)
+                    cost = float(self.equations.cost@x)
+                    points = np.asarray(certificate['inner']).reshape(-1, 3)
+                    if cost > self.budget+1e-8 or not len(points):
+                        continue
+                    self.region.add_scheme(x, self.equations.choice(x).tolist(), cost)
+                    self.region.add_point(x, points)
+                    self.counts['reused_schemes'] += 1
+                    self.counts['reused_vertices'] += len(points)
+                self.times['geometry_seconds'] += perf_counter()-before
+                self.geometry(reuse_from_budget=self.reuse['budget'],
+                              message='继承更低预算下同一模型的认证内域；只探索当前预算新增部分')
+            seeds = [answer]
+            if cheapest is not None and cheapest['feasible']:
+                seeds.insert(0, cheapest)
+            for seed in seeds:
+                if not self.refine(seed['x'], seed['p']):
+                    return self.finish('unknown', None, maximum)
+            while True:
+                witness = self.residual()
+                self.emit('coverage', coverage_bound=witness['bound'], coverage_complete=witness['complete'],
+                          message='已证明全部整数方案的连续外域被覆盖' if witness['complete'] else '仍存在未覆盖的连续候选区域')
+                if witness['complete']:
+                    return self.finish('certified', witness['bound'], maximum)
+                if witness['x'] is None:
+                    return self.finish('unknown', witness['bound'], maximum)
+                self.emit('candidate', point=witness['p'], choice=self.equations.choice(witness['x']),
+                          message='剩余区域搜索发现候选建设方案')
+                before = self.region.progress
+                seed = witness['p'] if witness.get('feasible') else None
+                if not self.refine(witness['x'], seed=seed, witness=witness['p']):
+                    return self.finish('unknown', witness['bound'], maximum)
+                after = self.region.progress
+                if before == after:
+                    self.emit('unknown', message='剩余区域搜索与几何容差不一致，停止并保留未确定')
+                    return self.finish('unknown', witness['bound'], maximum)
+        except RegionTimeout:
+            maximum = None if self.maximum is None else float(self.maximum['p'].sum())
+            return self.finish('time_limit', None, maximum)
+
 
 
 def build_continuous_region(network, method, budget, bounds, *, tau=REGION_TAU,
-                            observer=None, budget_index=0, budgets=None, reuse=None):
+                            observer=None, budget_index=0, budgets=None, reuse=None,
+                            residual_mode=RESIDUAL_MODE, time_limit=CASE_TIME_LIMIT):
     """单预算连续构域；混合方法只传递有效割，SOCP 内域重新认证。"""
     if method not in ('linear', 'socp', 'hybrid'):
         raise ValueError('continuous method must be linear, socp or hybrid')
     started = perf_counter()
+    chosen_mode = resolve_residual_mode(residual_mode, budget)
     phases = ('linear', 'socp') if method == 'hybrid' else (method,)
     cuts, phase_results = [], []
     for phase_number, phase in enumerate(phases, 1):
         emit(observer, 'phase_start', method=method, phase=phase, phase_number=phase_number,
              phase_count=len(phases), budget_index=budget_index, budget=budget,
              budgets=[budget] if budgets is None else budgets, bounds=bounds, load_nodes=network.load_nodes,
+             residual_requested=residual_mode, residual_mode=chosen_mode,
              representation='continuous', message=f'{method} · 预算 {budget:g} · {phase} 连续构域')
-        solver = ContinuousRegion(network, phase, budget, bounds, joint_benders,
+        solver = ContinuousRegion(network, phase, budget, bounds,
                                   tau=tau, observer=observer, cuts=cuts,
+                                  residual_mode=residual_mode,
+                                  time_limit=max(0., time_limit-(perf_counter()-started)),
                                   reuse=None if reuse is None else reuse.get(phase))
         region = solver.solve()
         if reuse is not None:
@@ -436,6 +495,8 @@ def build_continuous_region(network, method, budget, bounds, *, tau=REGION_TAU,
         region['phase_timing'] = [r['timing'] for r in phase_results]
         region['timing'] = {k: sum(r['timing'][k] for r in phase_results) for k in region['timing']}
         region['counts'] = {k: sum(r['counts'][k] for r in phase_results) for k in region['counts']}
+        region['phases'] = {k: sum(r['phases'][k] for r in phase_results) for k in region['phases']}
+        region['queries'] = [q for r in phase_results for q in r['queries']]
         region['linear_status'] = phase_results[0]['status']
     region['timing']['total_seconds'] = perf_counter()-started
     return region
@@ -502,10 +563,13 @@ def evaluation_bounds(network, observer=None):
 
 def run(network=None, *, budgets=None, divisions=DIVISIONS, recompute=RECOMPUTE,
         show_ui=SHOW_UI, output=None, plots=True, open_browser=True, keep_ui=False,
-        tau=REGION_TAU, reuse_budgets=False):
+        tau=REGION_TAU, reuse_budgets=False, residual_mode=RESIDUAL_MODE, time_limit=CASE_TIME_LIMIT):
     """先构造连续域，再独立采样校核；完整算法事件用于同一 HTML 的回放。"""
 
     network = Case33(candidate_count=CANDIDATE_COUNT) if network is None else network
+    resolve_residual_mode(residual_mode, 0.)
+    if np.isnan(time_limit) or time_limit < 0:
+        raise ValueError('time_limit must be nonnegative')
     if not np.isfinite(tau) or not 0 <= tau < 1:
         raise ValueError('tau 必须是 [0, 1) 内的有限数')
     budgets = np.asarray(network.budgets if budgets is None else budgets, dtype=float)
@@ -527,6 +591,7 @@ def run(network=None, *, budgets=None, divisions=DIVISIONS, recompute=RECOMPUTE,
                                 divisions=int(divisions), bounds=bounds.tolist(),
                                 preparation_seconds=perf_counter()-prepared, seconds={}, show_ui=show_ui,
                                 mode='continuous', tau=tau, continuous=[], reuse_budgets=bool(reuse_budgets),
+                                residual_requested=residual_mode, case_time_limit=time_limit,
                                 thread_control=thread_control,
                                 strategy='union')
                 metadata['hashes'] = {name: sha256((ROOT/name).read_bytes()).hexdigest()
@@ -541,7 +606,8 @@ def run(network=None, *, budgets=None, divisions=DIVISIONS, recompute=RECOMPUTE,
                     reuse = {} if reuse_budgets else None
                     for j, budget in enumerate(budgets):
                         region = build_continuous_region(network, method, budget, bounds, tau=tau,
-                                                         observer=monitor, budget_index=j, budgets=budgets, reuse=reuse)
+                                                         observer=monitor, budget_index=j, budgets=budgets, reuse=reuse,
+                                                         residual_mode=residual_mode, time_limit=time_limit)
                         method_seconds += region['timing']['total_seconds']
                         result.states[METHODS.index(method), j] = sample_region(region, points, bounds).reshape((divisions,)*3)
                         metadata['continuous'].append(json_value(region))
@@ -592,7 +658,10 @@ def main(argv=None):
             stream.reconfigure(encoding='utf-8')
     parser = ArgumentParser(description=__doc__)
     parser.add_argument('--network', choices=('case33', 'fourbus'), default=NETWORK)
-    parser.add_argument('--candidates', type=int, choices=(4, 8, 16), default=CANDIDATE_COUNT)
+    parser.add_argument('--candidates', type=int, choices=(4, 8, 16, 32), default=CANDIDATE_COUNT)
+    parser.add_argument('--residual-mode', choices=('auto', 'light', 'physical'), default=RESIDUAL_MODE,
+                        help='auto：有限预算轻量搜索，无限预算完整物理搜索')
+    parser.add_argument('--time-limit', type=float, default=CASE_TIME_LIMIT, help='每个预算、每种方法的构域时限（秒）')
     parser.add_argument('--divisions', type=int, default=DIVISIONS)
     parser.add_argument('--tau', type=float, default=REGION_TAU, help='SOCP 连续域径向精度，默认 0.002')
     parser.add_argument('--reuse-budgets', action=BooleanOptionalAction, default=False,
@@ -613,7 +682,7 @@ def main(argv=None):
         run(network, budgets=args.budgets, divisions=args.divisions, recompute=args.recompute,
             show_ui=args.ui, output=args.output, plots=not args.no_plots,
             open_browser=not args.no_open_browser, keep_ui=not args.no_hold, tau=args.tau,
-            reuse_budgets=args.reuse_budgets)
+            reuse_budgets=args.reuse_budgets, residual_mode=args.residual_mode, time_limit=args.time_limit)
     except KeyboardInterrupt:
         return 130
     return 0

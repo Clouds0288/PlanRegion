@@ -5,7 +5,7 @@ from threadpoolctl import threadpool_limits  # 所有比较保持单线程。
 from Network.case33bw import Case33  # 四、八、十六条候选使用同一网架定义。
 from model import PlanningEquations, PlanningModel, PlanningSP  # 正式方程、主问题和连续 SP。
 from tests.reference import dispatch_support  # 独立固定网架消元方程。
-from tests.notebook_flow import workflow  # 读取主 Notebook 的正式联合割流程。
+from tests.benchmark_physical_search import joint_benders  # 冻结的旧算法，与完整模型对照。
 
 
 class CompactPlanningTests(unittest.TestCase):  # 核对物理映射、最优值和全域割有效性。
@@ -44,7 +44,7 @@ class CompactPlanningTests(unittest.TestCase):  # 核对物理映射、最优值
                 budgets = (0.,1.,2.) if count==16 and method=='socp' else (0.,1.,2.,np.inf)  # 仅十六线路 SOCP 的无限预算高精度射线单列为慢性能试验；无限预算构域仍由网格测试逐点核对。
                 queries += [dict(budget=b,direction=d) for b in budgets for d in ([1.,0.,0.],[0.,1.,0.],[1.,6.,1.])]  # 覆盖预算切换与轴向、偏斜边界。
                 for query in queries:  # 每次使用完全相同的输入。
-                    actual,new = workflow()['joint_benders'](equations,cuts=cuts,**query)  # 正式 MP/SP 查询。
+                    actual,new = joint_benders(equations,cuts=cuts,**query)  # 正式 MP/SP 查询。
                     cuts.extend(new)  # 后续查询复用同一批有效割。
                     direct = PlanningModel(equations,**query)  # 完整 MILP/MISOCP 独立求解路径。
                     with direct.model:  # 不把直接模型加入联合割池。

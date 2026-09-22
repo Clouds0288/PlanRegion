@@ -1,0 +1,113 @@
+{
+  "candidate_count": 8,
+  "budget": 0.0,
+  "variant": "auto",
+  "construction_status": "certified",
+  "construction_seconds": 0.7585274999728426,
+  "strict_vertices": {
+    "total": 47,
+    "feasible": 47,
+    "infeasible": 0,
+    "unknown": 0,
+    "details": [
+      {
+        "choice": [
+          0,
+          0,
+          0,
+          0,
+          0,
+          0,
+          0,
+          0
+        ],
+        "points": 47,
+        "feasible": 47,
+        "unknown": 0
+      }
+    ],
+    "failures": [],
+    "union_infeasible": 0,
+    "union_unknown": 0,
+    "maximum_inward_retreat_kw": 0.0
+  },
+  "maximum": {
+    "point": [
+      69.10864371319377,
+      3000.435287566596,
+      93.6282818557803
+    ],
+    "choice": [
+      0,
+      0,
+      0,
+      0,
+      0,
+      0,
+      0,
+      0
+    ],
+    "total_kw": 3163.17221313557,
+    "ac_status": 1,
+    "diagnostic": {
+      "converged": true,
+      "equation_residual": 2.731148640577885e-13,
+      "maximum_violation_pu": -1.5413663345675843e-08,
+      "undervoltage_pu": 0.0,
+      "minimum_voltage_pu": 0.9000000085631463
+    }
+  },
+  "grid": {
+    "fr_percent": null,
+    "mr_percent": null,
+    "region_error_percent": null,
+    "fr_interval": [
+      0.0,
+      0.0979431929480901
+    ],
+    "mr_interval": [
+      0.0,
+      0.7782101167315175
+    ],
+    "region_error_interval": [
+      0.0,
+      0.8746355685131195
+    ],
+    "unknown_cells": 9,
+    "points": 32768,
+    "ac_inside": 1028,
+    "inner_inside": 1020,
+    "definite_extra": 0,
+    "definite_missed": 0,
+    "ac_not_retained": 8,
+    "ac_retained_percent": 99.22178988326849,
+    "retained_inner_fr_percent": 0.0,
+    "ac_in_unknown": 8,
+    "method_unknown": 9,
+    "ac_unknown": 0
+  },
+  "volume_error": {
+    "fr_percent": 0.0,
+    "mr_percent": 0.7782101167315175,
+    "region_error_percent": 0.7782101167315175,
+    "computed_cells": 1020,
+    "ac_cells": 1028,
+    "extra_cells": 0,
+    "missed_cells": 8,
+    "fr_interval": [
+      0.0,
+      0.0
+    ],
+    "mr_interval": [
+      0.7782101167315175,
+      0.7782101167315175
+    ],
+    "region_error_interval": [
+      0.7782101167315175,
+      0.7782101167315175
+    ],
+    "unknown_cells": 0
+  },
+  "boundary_ac_seconds": 0.008028099895454943,
+  "comparison_seconds": 0.026646099984645844
+}

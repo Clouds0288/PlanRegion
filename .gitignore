@@ -11,3 +11,18 @@ env/
 .DS_Store
 Thumbs.db
 
+# Local tooling and credentials
+.gitnexus/
+.env
+.env.*
+!.env.example
+gurobi.lic
+*.tmp
+
+# Ad hoc runs are local; the reviewed Case33 dataset is versioned.
+results/**
+!results/case33bw/
+!results/case33bw/latest/
+!results/case33bw/latest/**
+tests/jiangkou_2d/results/attempt_*/
+

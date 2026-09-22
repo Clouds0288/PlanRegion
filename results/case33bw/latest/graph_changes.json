@@ -1,0 +1,846 @@
+{
+  "summary": {
+    "changed_count": 86,
+    "affected_count": 15,
+    "changed_files": 32,
+    "risk_level": "high"
+  },
+  "changed_symbols": [
+    {
+      "id": "Class:Network/case33bw.py:Case33",
+      "name": "Case33",
+      "type": "Class",
+      "filePath": "Network/case33bw.py",
+      "change_type": "touched"
+    },
+    {
+      "id": "Variable:Network/case33bw.py:projects",
+      "name": "projects",
+      "type": "Variable",
+      "filePath": "Network/case33bw.py",
+      "change_type": "touched"
+    },
+    {
+      "id": "Section:README.md:L1:配电网可规划域",
+      "name": "配电网可规划域",
+      "type": "Section",
+      "filePath": "README.md",
+      "change_type": "touched"
+    },
+    {
+      "id": "Section:README.md:L18:运行与回放",
+      "name": "运行与回放",
+      "type": "Section",
+      "filePath": "README.md",
+      "change_type": "touched"
+    },
+    {
+      "id": "Section:README.md:L50:连续构域",
+      "name": "连续构域",
+      "type": "Section",
+      "filePath": "README.md",
+      "change_type": "touched"
+    },
+    {
+      "id": "Section:README.md:L63:算例配置",
+      "name": "算例配置",
+      "type": "Section",
+      "filePath": "README.md",
+      "change_type": "touched"
+    },
+    {
+      "id": "Section:README.md:L69:结果文件与计时",
+      "name": "结果文件与计时",
+      "type": "Section",
+      "filePath": "README.md",
+      "change_type": "touched"
+    },
+    {
+      "id": "Section:docs/compact_planning.md:L1:case33 逐线路紧凑规划模型与联合割",
+      "name": "case33 逐线路紧凑规划模型与联合割",
+      "type": "Section",
+      "filePath": "docs/compact_planning.md",
+      "change_type": "touched"
+    },
+    {
+      "id": "Section:docs/compact_planning.md:L160:7. 核对与运行入口",
+      "name": "7. 核对与运行入口",
+      "type": "Section",
+      "filePath": "docs/compact_planning.md",
+      "change_type": "touched"
+    },
+    {
+      "id": "Section:docs/continuous_region.md:L1:MP1 / MP2 / SP 连续构域",
+      "name": "MP1 / MP2 / SP 连续构域",
+      "type": "Section",
+      "filePath": "docs/continuous_region.md",
+      "change_type": "touched"
+    },
+    {
+      "id": "Section:docs/continuous_region.md:L11:MP1、MP2 与 SP",
+      "name": "MP1、MP2 与 SP",
+      "type": "Section",
+      "filePath": "docs/continuous_region.md",
+      "change_type": "touched"
+    },
+    {
+      "id": "Section:docs/continuous_region.md:L23:全局覆盖证书",
+      "name": "全局覆盖证书",
+      "type": "Section",
+      "filePath": "docs/continuous_region.md",
+      "change_type": "touched"
+    },
+    {
+      "id": "Section:docs/continuous_region.md:L61:混合方法和 AC 校核",
+      "name": "混合方法和 AC 校核",
+      "type": "Section",
+      "filePath": "docs/continuous_region.md",
+      "change_type": "touched"
+    },
+    {
+      "id": "Section:docs/continuous_region.md:L71:回放与时间口径",
+      "name": "回放与时间口径",
+      "type": "Section",
+      "filePath": "docs/continuous_region.md",
+      "change_type": "touched"
+    },
+    {
+      "id": "Section:docs/continuous_region.md:L81:完整主问题与剩余域选项",
+      "name": "完整主问题与剩余域选项",
+      "type": "Section",
+      "filePath": "docs/continuous_region.md",
+      "change_type": "touched"
+    },
+    {
+      "id": "Variable:main.py:CANDIDATE_COUNT",
+      "name": "CANDIDATE_COUNT",
+      "type": "Variable",
+      "filePath": "main.py",
+      "change_type": "touched"
+    },
+    {
+      "id": "Variable:main.py:RESIDUAL_MODE",
+      "name": "RESIDUAL_MODE",
+      "type": "Variable",
+      "filePath": "main.py",
+      "change_type": "touched"
+    },
+    {
+      "id": "Variable:main.py:CASE_TIME_LIMIT",
+      "name": "CASE_TIME_LIMIT",
+      "type": "Variable",
+      "filePath": "main.py",
+      "change_type": "touched"
+    },
+    {
+      "id": "Class:main.py:RegionTimeout",
+      "name": "RegionTimeout",
+      "type": "Class",
+      "filePath": "main.py",
+      "change_type": "touched"
+    },
+    {
+      "id": "Function:main.py:resolve_residual_mode",
+      "name": "resolve_residual_mode",
+      "type": "Function",
+      "filePath": "main.py",
+      "change_type": "touched"
+    },
+    {
+      "id": "Function:main.py:planning_query",
+      "name": "planning_query",
+      "type": "Function",
+      "filePath": "main.py",
+      "change_type": "touched"
+    },
+    {
+      "id": "Class:main.py:ContinuousRegion",
+      "name": "ContinuousRegion",
+      "type": "Class",
+      "filePath": "main.py",
+      "change_type": "touched"
+    },
+    {
+      "id": "Method:main.py:ContinuousRegion.__init__#12",
+      "name": "__init__",
+      "type": "Method",
+      "filePath": "main.py",
+      "change_type": "touched"
+    },
+    {
+      "id": "Method:main.py:ContinuousRegion.observe",
+      "name": "observe",
+      "type": "Method",
+      "filePath": "main.py",
+      "change_type": "touched"
+    },
+    {
+      "id": "Method:main.py:ContinuousRegion.remaining_time#1",
+      "name": "remaining_time",
+      "type": "Method",
+      "filePath": "main.py",
+      "change_type": "touched"
+    },
+    {
+      "id": "Method:main.py:ContinuousRegion.call_query",
+      "name": "call_query",
+      "type": "Method",
+      "filePath": "main.py",
+      "change_type": "touched"
+    },
+    {
+      "id": "Method:main.py:ContinuousRegion.check#3",
+      "name": "check",
+      "type": "Method",
+      "filePath": "main.py",
+      "change_type": "touched"
+    },
+    {
+      "id": "Method:main.py:ContinuousRegion.refine#4",
+      "name": "refine",
+      "type": "Method",
+      "filePath": "main.py",
+      "change_type": "touched"
+    },
+    {
+      "id": "Method:main.py:ContinuousRegion.residual#0",
+      "name": "residual",
+      "type": "Method",
+      "filePath": "main.py",
+      "change_type": "touched"
+    },
+    {
+      "id": "Method:main.py:ContinuousRegion.finish#3",
+      "name": "finish",
+      "type": "Method",
+      "filePath": "main.py",
+      "change_type": "touched"
+    },
+    {
+      "id": "Method:main.py:ContinuousRegion.solve#0",
+      "name": "solve",
+      "type": "Method",
+      "filePath": "main.py",
+      "change_type": "touched"
+    },
+    {
+      "id": "Variable:main.py:ContinuousRegion.solve.maximum@411:12",
+      "name": "maximum",
+      "type": "Variable",
+      "filePath": "main.py",
+      "change_type": "touched"
+    },
+    {
+      "id": "Function:main.py:build_continuous_region",
+      "name": "build_continuous_region",
+      "type": "Function",
+      "filePath": "main.py",
+      "change_type": "touched"
+    },
+    {
+      "id": "Function:main.py:run",
+      "name": "run",
+      "type": "Function",
+      "filePath": "main.py",
+      "change_type": "touched"
+    },
+    {
+      "id": "Function:main.py:main",
+      "name": "main",
+      "type": "Function",
+      "filePath": "main.py",
+      "change_type": "touched"
+    },
+    {
+      "id": "Class:model.py:RemainingRegionModel",
+      "name": "RemainingRegionModel",
+      "type": "Class",
+      "filePath": "model.py",
+      "change_type": "touched"
+    },
+    {
+      "id": "Method:model.py:RemainingRegionModel.__init__#8",
+      "name": "__init__",
+      "type": "Method",
+      "filePath": "model.py",
+      "change_type": "touched"
+    },
+    {
+      "id": "Method:model.py:RemainingRegionModel.solve#2",
+      "name": "solve",
+      "type": "Method",
+      "filePath": "model.py",
+      "change_type": "touched"
+    },
+    {
+      "id": "Function:plot.py:save_benchmark_report",
+      "name": "save_benchmark_report",
+      "type": "Function",
+      "filePath": "plot.py",
+      "change_type": "touched"
+    },
+    {
+      "id": "Function:plot.py:save_benchmark_report.number@540:4",
+      "name": "number",
+      "type": "Function",
+      "filePath": "plot.py",
+      "change_type": "touched"
+    },
+    {
+      "id": "Variable:tests/benchmark_physical_search.py:VARIANTS",
+      "name": "VARIANTS",
+      "type": "Variable",
+      "filePath": "tests/benchmark_physical_search.py",
+      "change_type": "touched"
+    },
+    {
+      "id": "Variable:tests/benchmark_physical_search.py:LABELS",
+      "name": "LABELS",
+      "type": "Variable",
+      "filePath": "tests/benchmark_physical_search.py",
+      "change_type": "touched"
+    },
+    {
+      "id": "Function:tests/benchmark_physical_search.py:write_json",
+      "name": "write_json",
+      "type": "Function",
+      "filePath": "tests/benchmark_physical_search.py",
+      "change_type": "touched"
+    },
+    {
+      "id": "Function:tests/benchmark_physical_search.py:joint_benders",
+      "name": "joint_benders",
+      "type": "Function",
+      "filePath": "tests/benchmark_physical_search.py",
+      "change_type": "touched"
+    },
+    {
+      "id": "Function:tests/benchmark_physical_search.py:independent_boundary_certificate",
+      "name": "independent_boundary_certificate",
+      "type": "Function",
+      "filePath": "tests/benchmark_physical_search.py",
+      "change_type": "touched"
+    },
+    {
+      "id": "Function:tests/benchmark_physical_search.py:independent_boundary_certificate.retain@135:4",
+      "name": "retain",
+      "type": "Function",
+      "filePath": "tests/benchmark_physical_search.py",
+      "change_type": "touched"
+    },
+    {
+      "id": "Function:tests/benchmark_physical_search.py:audit_region",
+      "name": "audit_region",
+      "type": "Function",
+      "filePath": "tests/benchmark_physical_search.py",
+      "change_type": "touched"
+    },
+    {
+      "id": "Function:tests/benchmark_physical_search.py:worker",
+      "name": "worker",
+      "type": "Function",
+      "filePath": "tests/benchmark_physical_search.py",
+      "change_type": "touched"
+    },
+    {
+      "id": "Function:tests/benchmark_physical_search.py:report",
+      "name": "report",
+      "type": "Function",
+      "filePath": "tests/benchmark_physical_search.py",
+      "change_type": "touched"
+    },
+    {
+      "id": "Function:tests/benchmark_physical_search.py:supervisor",
+      "name": "supervisor",
+      "type": "Function",
+      "filePath": "tests/benchmark_physical_search.py",
+      "change_type": "touched"
+    },
+    {
+      "id": "Class:tests/test_case33.py:Case33Tests",
+      "name": "Case33Tests",
+      "type": "Class",
+      "filePath": "tests/test_case33.py",
+      "change_type": "touched"
+    },
+    {
+      "id": "Method:tests/test_case33.py:Case33Tests.test_investment_changes_only_selected_impedances#0",
+      "name": "test_investment_changes_only_selected_impedances",
+      "type": "Method",
+      "filePath": "tests/test_case33.py",
+      "change_type": "touched"
+    },
+    {
+      "id": "Method:tests/test_case33.py:Case33Tests.test_candidate_sets_are_nested_and_match_active_branches#0",
+      "name": "test_candidate_sets_are_nested_and_match_active_branches",
+      "type": "Method",
+      "filePath": "tests/test_case33.py",
+      "change_type": "touched"
+    },
+    {
+      "id": "Method:tests/test_case33.py:Case33Tests.test_full_network_costs_and_affordable_design_count#0",
+      "name": "test_full_network_costs_and_affordable_design_count",
+      "type": "Method",
+      "filePath": "tests/test_case33.py",
+      "change_type": "touched"
+    },
+    {
+      "id": "Class:tests/test_compact.py:CompactPlanningTests",
+      "name": "CompactPlanningTests",
+      "type": "Class",
+      "filePath": "tests/test_compact.py",
+      "change_type": "touched"
+    },
+    {
+      "id": "Method:tests/test_compact.py:CompactPlanningTests.test_joint_queries_match_direct_models_and_reuse_cuts#0",
+      "name": "test_joint_queries_match_direct_models_and_reuse_cuts",
+      "type": "Method",
+      "filePath": "tests/test_compact.py",
+      "change_type": "touched"
+    },
+    {
+      "id": "Class:tests/test_continuous.py:ContinuousTests",
+      "name": "ContinuousTests",
+      "type": "Class",
+      "filePath": "tests/test_continuous.py",
+      "change_type": "touched"
+    },
+    {
+      "id": "Method:tests/test_continuous.py:ContinuousTests.test_auto_policy_and_explicit_overrides#0",
+      "name": "test_auto_policy_and_explicit_overrides",
+      "type": "Method",
+      "filePath": "tests/test_continuous.py",
+      "change_type": "touched"
+    },
+    {
+      "id": "Method:tests/test_continuous.py:ContinuousTests.test_deadline_preserves_unknown_domain#0",
+      "name": "test_deadline_preserves_unknown_domain",
+      "type": "Method",
+      "filePath": "tests/test_continuous.py",
+      "change_type": "touched"
+    },
+    {
+      "id": "Method:tests/test_continuous.py:ContinuousTests.test_complete_query_reuses_verified_state_without_sp#0",
+      "name": "test_complete_query_reuses_verified_state_without_sp",
+      "type": "Method",
+      "filePath": "tests/test_continuous.py",
+      "change_type": "touched"
+    },
+    {
+      "id": "Method:tests/test_continuous.py:ContinuousTests.test_residual_modes_agree_on_small_certified_union#0",
+      "name": "test_residual_modes_agree_on_small_certified_union",
+      "type": "Method",
+      "filePath": "tests/test_continuous.py",
+      "change_type": "touched"
+    },
+    {
+      "id": "Method:tests/test_continuous.py:ContinuousTests.test_mp1_total_allows_load_redistribution#0",
+      "name": "test_mp1_total_allows_load_redistribution",
+      "type": "Method",
+      "filePath": "tests/test_continuous.py",
+      "change_type": "touched"
+    },
+    {
+      "id": "Method:tests/test_continuous.py:ContinuousTests.test_continuous_domain_covers_other_plans_and_ignores_grid#0",
+      "name": "test_continuous_domain_covers_other_plans_and_ignores_grid",
+      "type": "Method",
+      "filePath": "tests/test_continuous.py",
+      "change_type": "touched"
+    },
+    {
+      "id": "Method:tests/test_continuous.py:ContinuousTests.test_unfinished_global_search_does_not_certify_domain#0",
+      "name": "test_unfinished_global_search_does_not_certify_domain",
+      "type": "Method",
+      "filePath": "tests/test_continuous.py",
+      "change_type": "touched"
+    },
+    {
+      "id": "Class:tests/test_four_bus.py:FourBusTests",
+      "name": "FourBusTests",
+      "type": "Class",
+      "filePath": "tests/test_four_bus.py",
+      "change_type": "touched"
+    },
+    {
+      "id": "Method:tests/test_four_bus.py:FourBusTests.test_joint_queries_and_cuts_match_full_planning_model#0",
+      "name": "test_joint_queries_and_cuts_match_full_planning_model",
+      "type": "Method",
+      "filePath": "tests/test_four_bus.py",
+      "change_type": "touched"
+    },
+    {
+      "id": "Method:tests/test_four_bus.py:FourBusTests.test_same_region_flow_matches_independent_point_queries#1",
+      "name": "test_same_region_flow_matches_independent_point_queries",
+      "type": "Method",
+      "filePath": "tests/test_four_bus.py",
+      "change_type": "touched"
+    },
+    {
+      "id": "Class:tests/test_progress.py:ProgressTests",
+      "name": "ProgressTests",
+      "type": "Class",
+      "filePath": "tests/test_progress.py",
+      "change_type": "touched"
+    },
+    {
+      "id": "Method:tests/test_progress.py:ProgressTests.test_hybrid_phase_reset_is_visible#0",
+      "name": "test_hybrid_phase_reset_is_visible",
+      "type": "Method",
+      "filePath": "tests/test_progress.py",
+      "change_type": "touched"
+    },
+    {
+      "id": "Function:tests/test_progress.py:ProgressTests.test_hybrid_phase_reset_is_visible.query@72:12",
+      "name": "query",
+      "type": "Function",
+      "filePath": "tests/test_progress.py",
+      "change_type": "touched"
+    },
+    {
+      "id": "Class:tests/test_scale.py:ScaleTests",
+      "name": "ScaleTests",
+      "type": "Class",
+      "filePath": "tests/test_scale.py",
+      "change_type": "touched"
+    },
+    {
+      "id": "Method:tests/test_scale.py:ScaleTests.test_grid_matches_direct_point_queries#0",
+      "name": "test_grid_matches_direct_point_queries",
+      "type": "Method",
+      "filePath": "tests/test_scale.py",
+      "change_type": "touched"
+    },
+    {
+      "id": "Method:tests/test_scale.py:ScaleTests.test_hybrid_rechecks_linear_interior#0",
+      "name": "test_hybrid_rechecks_linear_interior",
+      "type": "Method",
+      "filePath": "tests/test_scale.py",
+      "change_type": "touched"
+    },
+    {
+      "id": "Method:tests/test_scale.py:ScaleTests.test_notebook_does_not_depend_on_test_orchestration#0",
+      "name": "test_notebook_does_not_depend_on_test_orchestration",
+      "type": "Method",
+      "filePath": "tests/test_scale.py",
+      "change_type": "touched"
+    },
+    {
+      "id": "Class:tests/test_startup.py:StartupTests",
+      "name": "StartupTests",
+      "type": "Class",
+      "filePath": "tests/test_startup.py",
+      "change_type": "touched"
+    },
+    {
+      "id": "Method:tests/test_startup.py:StartupTests.test_candidate_constant_switches_complete_entrypoint#0",
+      "name": "test_candidate_constant_switches_complete_entrypoint",
+      "type": "Method",
+      "filePath": "tests/test_startup.py",
+      "change_type": "touched"
+    },
+    {
+      "id": "Class:tests/test_union.py:UnionGeometryTests",
+      "name": "UnionGeometryTests",
+      "type": "Class",
+      "filePath": "tests/test_union.py",
+      "change_type": "touched"
+    },
+    {
+      "id": "Method:tests/test_union.py:UnionGeometryTests.test_other_owner_skips_sp_without_claiming_current_scheme#0",
+      "name": "test_other_owner_skips_sp_without_claiming_current_scheme",
+      "type": "Method",
+      "filePath": "tests/test_union.py",
+      "change_type": "touched"
+    },
+    {
+      "id": "Class:tests/test_union.py:UnionSolverTests",
+      "name": "UnionSolverTests",
+      "type": "Class",
+      "filePath": "tests/test_union.py",
+      "change_type": "touched"
+    },
+    {
+      "id": "Method:tests/test_union.py:UnionSolverTests.test_ordinary_vertex_queries_are_outside_existing_union#0",
+      "name": "test_ordinary_vertex_queries_are_outside_existing_union",
+      "type": "Method",
+      "filePath": "tests/test_union.py",
+      "change_type": "touched"
+    },
+    {
+      "id": "Method:tests/test_union.py:UnionSolverTests.test_budget_reuse_keeps_model_and_budget_provenance#0",
+      "name": "test_budget_reuse_keeps_model_and_budget_provenance",
+      "type": "Method",
+      "filePath": "tests/test_union.py",
+      "change_type": "touched"
+    },
+    {
+      "id": "Class:tests/test_vertify.py:RegionComparisonTests",
+      "name": "RegionComparisonTests",
+      "type": "Class",
+      "filePath": "tests/test_vertify.py",
+      "change_type": "touched"
+    },
+    {
+      "id": "Method:tests/test_vertify.py:RegionComparisonTests.test_unknown_rates_bound_every_label_completion#0",
+      "name": "test_unknown_rates_bound_every_label_completion",
+      "type": "Method",
+      "filePath": "tests/test_vertify.py",
+      "change_type": "touched"
+    },
+    {
+      "id": "Method:tests/test_vertify.py:RegionComparisonTests.test_retained_region_error_counts_unretained_shell#0",
+      "name": "test_retained_region_error_counts_unretained_shell",
+      "type": "Method",
+      "filePath": "tests/test_vertify.py",
+      "change_type": "touched"
+    },
+    {
+      "id": "Function:vertify.py:validation_summary",
+      "name": "validation_summary",
+      "type": "Function",
+      "filePath": "vertify.py",
+      "change_type": "touched"
+    },
+    {
+      "id": "Function:vertify.py:disagreement_interval",
+      "name": "disagreement_interval",
+      "type": "Function",
+      "filePath": "vertify.py",
+      "change_type": "touched"
+    }
+  ],
+  "affected_processes": [
+    {
+      "id": "proc_0_build_continuous_reg",
+      "name": "Build_continuous_region → _convex_hull",
+      "process_type": "cross_community",
+      "step_count": 8,
+      "changed_steps": [
+        {
+          "symbol": "build_continuous_region",
+          "step": 1
+        },
+        {
+          "symbol": "solve",
+          "step": 2
+        },
+        {
+          "symbol": "finish",
+          "step": 3
+        }
+      ]
+    },
+    {
+      "id": "proc_1_build_continuous_reg",
+      "name": "Build_continuous_region → Remaining_time",
+      "process_type": "cross_community",
+      "step_count": 4,
+      "changed_steps": [
+        {
+          "symbol": "build_continuous_region",
+          "step": 1
+        },
+        {
+          "symbol": "solve",
+          "step": 2
+        },
+        {
+          "symbol": "call_query",
+          "step": 3
+        },
+        {
+          "symbol": "remaining_time",
+          "step": 4
+        }
+      ]
+    },
+    {
+      "id": "proc_2_build_continuous_reg",
+      "name": "Build_continuous_region → Emit",
+      "process_type": "cross_community",
+      "step_count": 4,
+      "changed_steps": [
+        {
+          "symbol": "build_continuous_region",
+          "step": 1
+        },
+        {
+          "symbol": "solve",
+          "step": 2
+        }
+      ]
+    },
+    {
+      "id": "proc_3_main",
+      "name": "Main → Emit",
+      "process_type": "cross_community",
+      "step_count": 4,
+      "changed_steps": [
+        {
+          "symbol": "main",
+          "step": 1
+        },
+        {
+          "symbol": "run",
+          "step": 2
+        }
+      ]
+    },
+    {
+      "id": "proc_4_main",
+      "name": "Main → Solve",
+      "process_type": "cross_community",
+      "step_count": 4,
+      "changed_steps": [
+        {
+          "symbol": "main",
+          "step": 1
+        },
+        {
+          "symbol": "run",
+          "step": 2
+        }
+      ]
+    },
+    {
+      "id": "proc_6_summary",
+      "name": "Summary → Disagreement",
+      "process_type": "intra_community",
+      "step_count": 4,
+      "changed_steps": [
+        {
+          "symbol": "disagreement_interval",
+          "step": 3
+        },
+        {
+          "symbol": "validation_summary",
+          "step": 2
+        }
+      ]
+    },
+    {
+      "id": "proc_7_summary",
+      "name": "Summary → Ratio_bounds",
+      "process_type": "intra_community",
+      "step_count": 4,
+      "changed_steps": [
+        {
+          "symbol": "disagreement_interval",
+          "step": 3
+        },
+        {
+          "symbol": "validation_summary",
+          "step": 2
+        }
+      ]
+    },
+    {
+      "id": "proc_8_main",
+      "name": "Main → Resolve_residual_mode",
+      "process_type": "cross_community",
+      "step_count": 3,
+      "changed_steps": [
+        {
+          "symbol": "main",
+          "step": 1
+        },
+        {
+          "symbol": "run",
+          "step": 2
+        },
+        {
+          "symbol": "resolve_residual_mode",
+          "step": 3
+        }
+      ]
+    },
+    {
+      "id": "proc_9_main",
+      "name": "Main → Load",
+      "process_type": "intra_community",
+      "step_count": 3,
+      "changed_steps": [
+        {
+          "symbol": "main",
+          "step": 1
+        },
+        {
+          "symbol": "run",
+          "step": 2
+        }
+      ]
+    },
+    {
+      "id": "proc_14_refine",
+      "name": "Refine → Contains",
+      "process_type": "intra_community",
+      "step_count": 3,
+      "changed_steps": [
+        {
+          "symbol": "refine",
+          "step": 1
+        }
+      ]
+    },
+    {
+      "id": "proc_15_finish",
+      "name": "Finish → _convex_hull",
+      "process_type": "cross_community",
+      "step_count": 6,
+      "changed_steps": [
+        {
+          "symbol": "finish",
+          "step": 1
+        }
+      ]
+    },
+    {
+      "id": "proc_16_refine",
+      "name": "Refine → Emit",
+      "process_type": "cross_community",
+      "step_count": 3,
+      "changed_steps": [
+        {
+          "symbol": "refine",
+          "step": 1
+        }
+      ]
+    },
+    {
+      "id": "proc_17_planning_query",
+      "name": "Planning_query → Solve",
+      "process_type": "cross_community",
+      "step_count": 3,
+      "changed_steps": [
+        {
+          "symbol": "planning_query",
+          "step": 1
+        }
+      ]
+    },
+    {
+      "id": "proc_18_refine",
+      "name": "Refine → _convex_hull",
+      "process_type": "cross_community",
+      "step_count": 6,
+      "changed_steps": [
+        {
+          "symbol": "refine",
+          "step": 1
+        }
+      ]
+    },
+    {
+      "id": "proc_19_check",
+      "name": "Check → Solve",
+      "process_type": "cross_community",
+      "step_count": 3,
+      "changed_steps": [
+        {
+          "symbol": "check",
+          "step": 1
+        }
+      ]
+    }
+  ]
+}

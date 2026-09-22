@@ -1,0 +1,5 @@
+Set parameter WLSAccessID
+Set parameter WLSSecret
+Set parameter LicenseID to value 2685996
+Academic license 2685996 - for non-commercial use only - registered to 20___@mail.scut.edu.cn
+{"case": "n16_b0_auto", "status": "certified", "seconds": 0.7188688999740407, "phases": {"MP2": 0.012178700068034232, "MP1": 0.008504700032062829, "residual": 0.03630819998215884}, "sp": 80, "max_total": 3163.172213224544, "audit": true}
