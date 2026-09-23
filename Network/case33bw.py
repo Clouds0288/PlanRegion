@@ -1,12 +1,12 @@
 """MATPOWER case33bw 原始径向网架；三个实际节点的负荷独立变化。"""
 from pathlib import Path  # 根据当前网架文件定位原始算例数据。
-from copy import copy  # 实例化单个方案时复制母网，避免修改原始工况。
+from dataclasses import replace
 from functools import cached_property  # 不随查询变化的逐线路型号表只生成一次。
 import re  # 从 MATPOWER 文本中提取数据表。
 
 import numpy as np  # 保存节点、支路和型号参数数组。
 
-from . import LineOptions, Project, RadialNetwork  # 复用统一的改造项目、型号表及径向网架结构。
+from . import Project, RadialNetwork, TypeParameters
 
 
 class Case33(RadialNetwork):  # 在原始 33 节点径向网中加入逐线路改造选项。
@@ -76,27 +76,26 @@ class Case33(RadialNetwork):  # 在原始 33 节点径向网中加入逐线路�
             source_qmax=gen[0, 3]/base_mva,  # Qmax 从 Mvar 转标幺，保留原始电源运行限制。
             sources=("Network/__init__.py", "Network/case33bw.py", "Network/data/case33bw.m"))  # 实验记录使用这些源文件的指纹追踪数据版本。
 
-    @cached_property  # 逐线路型号表由母网配置派生一次。
-    def line_options(self):  # 向紧凑模型提供逐支路选型输入。
-        """紧凑模型只读取逐线路选项，不生成完整建设组合。"""
-        options = []  # 收集候选支路各自的型号表。
-        for project in self.projects:  # 投资项目的支路与费用只在 projects 中定义。
-            e = self.nodes.index(project.branch[1])  # 入边以受端节点索引标识，拓扑保持不变。
-            options.append(LineOptions(e, (self.r[e], self.r[e]/2),  # 两种电阻分别对应保持原状与并联一回。
-                                       (self.reactance[e], self.reactance[e]/2),  # 同样按两回相同线路并联的规则计算电抗。
-                                       (0., project.cost)))  # 同走廊并联一回，R/X 减半；费用仍由 projects 唯一定义。
-        return tuple(options)  # 返回可复用的逐线路型号配置。
+    @cached_property
+    def corridors(self):
+        """32 条走廊统一表示；只有候选升级走廊增加第二个型号。"""
+        projects = {p.branch: p for p in self.projects}
+        result = []
+        for corridor in self.operating_corridors:
+            project = projects.get(corridor.endpoints)
+            if project is not None:
+                original = corridor.types[0]
+                upgraded = TypeParameters('parallel', original.r/2, original.reactance/2,
+                                          original.capacity, project.cost)
+                corridor = replace(corridor, types=(original, upgraded))
+            result.append(corridor)
+        return tuple(result)
 
-    def design(self, choice):  # 仅按给定选型创建一个物理网架实例。
-        """按一次求解给出的线路型号实例化网架；不遍历其他组合。"""
-        design = copy(self)  # 固定拓扑与背景数据可以共享，只复制实例外壳。
-        design.r, design.reactance = self.r.copy(), self.reactance.copy()  # 阻抗单独复制，因为当前建设方案会改变这些值。
-        for k, options in zip(choice, self.line_options):  # 按每条候选线路选中的型号更新物理参数。
-            design.r[options.branch] = options.r[k]  # 替换该支路的标幺电阻。
-            design.reactance[options.branch] = options.reactance[k]  # 替换该支路的标幺电抗。
-        design.x = np.asarray(choice, dtype=int)  # 每条候选线路的型号编号，长度随候选数量变化。
-        design.cost = sum(o.cost[k] for o, k in zip(self.line_options, choice))  # 按选中的逐线路型号累加实际增量投资。
-        return design  # 返回该次选型对应的固定网架。
+    @property
+    def planning_corridors(self):
+        # 保留历史 A/B/... 项目顺序，内部矩阵仍按物理走廊顺序展开。
+        by_endpoints = {c.endpoints: c for c in self.corridors}
+        return tuple(by_endpoints[p.branch] for p in self.projects)
 
 
 network = Case33()  # 导出 Notebook 可直接加载的算例配置。

@@ -5,17 +5,19 @@ import unittest  # 标准回归框架。
 import numpy as np  # 复相量、表面几何和标签数组。
 import gurobipy as gp  # 独立非凸 AC 求解环境。
 from Network.case33bw import Case33  # 当前正式网架。
-from plot import voxel_surface  # 核对颜色区域的真实体素表面。
+from plot import BenchmarkResult, METHODS, validation_summary, voxel_surface
 from vertify import ACPowerFlow
-from main import BenchmarkResult
-from vertify import disagreement, disagreement_interval, METHODS
+from plot import disagreement, disagreement_interval
 
 
 class ACReferenceTests(unittest.TestCase):  # 以代表网架核对独立 AC 的数值证书。
     @classmethod
     def setUpClass(cls):  # 不生成完整建设组合表。
         network = Case33(candidate_count=8)  # 当前八候选线路。
-        cls.models = [ACPowerFlow(network.design(x)) for x in (np.zeros(8,dtype=int),np.arange(8)%2,np.ones(8,dtype=int))]  # 基础、交错、全升级网架。
+        plans = [network.initial_plan | {c.id: c.types[k].id
+                 for c, k in zip(network.planning_corridors, x)}
+                 for x in (np.zeros(8,dtype=int),np.arange(8)%2,np.ones(8,dtype=int))]
+        cls.models = [ACPowerFlow(network.design(plan), threads=1) for plan in plans]
         cls.environment = gp.Env(empty=True)  # 静默的共享全局求解环境。
         cls.environment.setParam('OutputFlag',0)  # 不输出逐点求解日志。
         cls.environment.start()  # 在测试计时之外启动环境。
@@ -97,7 +99,6 @@ class RegionComparisonTests(unittest.TestCase):  # 三态标签与物理误差�
                     self.assertGreaterEqual(interval[key+'_interval'][1],value)  # 上界不得偏低。
 
     def test_retained_region_error_counts_unretained_shell(self):
-        from vertify import validation_summary
         states = np.array([[[1, 0, -1]], [[1, 0, -1]], [[1, 1, -1]], [[1, 0, -1]]])
         rows = validation_summary(states, dict(budgets=[0.], seconds={m:0. for m in METHODS}))
         self.assertEqual(rows[0]['region_error_percent'], 50.)

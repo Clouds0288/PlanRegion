@@ -13,13 +13,14 @@ import json
 import numpy as np
 
 from Network.case33bw import Case33
-from main import numerical_threads
+from threadpoolctl import threadpool_limits
 from model import PlanningEquations
-from plot import RunMonitor, save_benchmark_report
-from io import StringIO
-from region import sample_region, classify_orthant, split_grid_box
-from vertify import (ACPowerFlow, AC_TOL, FIXED_POINT_TOL, ac_planning_query,
-                     disagreement_interval, validate_power_flow)
+from plot import save_benchmark_report, region_view
+from plot import sample_region
+from vertify import classify_orthant, split_grid_box
+from vertify import ACPowerFlow, AC_TOL, FIXED_POINT_TOL, ac_planning_query
+from plot import disagreement_interval
+from tests.reference import validate_power_flow
 from tests.benchmark_physical_search import (ROOT, VARIANTS, LABELS, fingerprints,
                                              write_json, case_name)
 
@@ -32,17 +33,19 @@ def affordable_designs(network, budget):
         raise ValueError('Unlimited budgets require global search, not enumeration')
     result = []
     def visit(index, cost, chosen):
-        if index == len(network.line_options):
-            choice = tuple(chosen)
-            result.append((cost, choice, ACPowerFlow(network.design(choice))))
+        if index == len(network.planning_corridors):
+            choice = chosen
+            result.append((cost, choice, ACPowerFlow(network.design(choice), threads=1)))
             return
-        for option, price in enumerate(network.line_options[index].cost):
+        corridor = network.planning_corridors[index]
+        for line_type in corridor.types:
+            price = line_type.investment_cost
             if price < 0.:
                 raise ValueError('Budget pruning requires nonnegative investment costs')
             if cost+price <= budget:
-                visit(index+1, cost+price, chosen+[option])
-    visit(0, 0., [])
-    return sorted(result, key=lambda row: (row[0], row[1]))
+                visit(index+1, cost+price, chosen | {corridor.id: line_type.id})
+    visit(0, 0., network.initial_plan)
+    return sorted(result, key=lambda row: (row[0], tuple(row[1].items())))
 
 
 def union_labels(designs, points):
@@ -79,17 +82,12 @@ def fixed_rays(oracle, rays, steps=24):
 
 def certify_infinite_grid(network, points, divisions, folder):
     started = perf_counter()
-    seed = ACPowerFlow(network.design([1]*len(network.projects))).classify(points)
+    seed = ACPowerFlow(network.design({c.id: c.types[-1].id for c in network.corridors}), threads=1).classify(points)
     # Only positive AC certificates are reusable across the union.
     states = np.where(seed == 1, 1, 0).astype(np.int8).reshape((divisions,)*3)
     equation = PlanningEquations(network, 'socp')
-    visited, queries, exclusions = set(), [], 0
+    visited, queries = set(), []
     pending = [(np.zeros(3, dtype=int), np.full(3, divisions-1, dtype=int))]
-
-    def observer(event, **data):
-        nonlocal exclusions
-        if event == 'ac_exclude':
-            exclusions += 1
 
     while pending:
         lower, upper = pending.pop()
@@ -104,7 +102,7 @@ def certify_infinite_grid(network, points, divisions, folder):
             flat_index = np.ravel_multi_index(key, states.shape)
             point = points[flat_index]
             tick = perf_counter()
-            answer = ac_planning_query(equation, point, observer=observer)
+            answer = ac_planning_query(equation, point, threads=1)
             status = -1 if answer is None else (1 if answer['feasible'] else 0)
             classify_orthant(states, index, status)
             queries.append(dict(index=key, point=point, status=status,
@@ -123,7 +121,7 @@ def certify_infinite_grid(network, points, divisions, folder):
         if np.any(states[block] == 0) and np.any(upper > lower):
             pending.extend(split_grid_box(lower, upper))
     return states.ravel(), dict(seconds=perf_counter()-started, queries=queries,
-        all_upgraded_ac_witnesses=int((seed == 1).sum()), ac_design_exclusions=exclusions,
+        all_upgraded_ac_witnesses=int((seed == 1).sum()),
         unknown=int((states == 0).sum()),
         rule='Seed positive AC witnesses only; all negative labels require all-design global search.')
 
@@ -189,11 +187,11 @@ def audit_ac_case(network, record, reference, ac_labels, designs, points):
     budget, result = record['budget'], record['region']
     bounds = np.asarray(record['bounds'])
     boundary, failures, total, accepted, unknown = [], [], 0, 0, 0
-    for row in result['certificates']:
-        powers = np.asarray(row['inner']).reshape(-1, 3)*bounds
+    for row in region_view(result, bounds)['geometry']:
+        powers = np.asarray(row['inner']['vertices']).reshape(-1, 3)
         if not len(powers):
             continue
-        oracle = ACPowerFlow(network.design(row['choice']))
+        oracle = ACPowerFlow(network.design(row['choice']), threads=1)
         labels = oracle.classify(powers)
         total += len(powers)
         accepted += int((labels == 1).sum())
@@ -213,16 +211,16 @@ def audit_ac_case(network, record, reference, ac_labels, designs, points):
         if budget is not None:
             union, _ = union_labels([d for d in designs if d[0] <= budget], fail_points)
         else:
-            union = ACPowerFlow(network.design([1]*len(network.projects))).classify(fail_points)
+            union = ACPowerFlow(network.design({c.id: c.types[-1].id for c in network.corridors}), threads=1).classify(fail_points)
             equation = PlanningEquations(network, 'socp')
             for i in np.flatnonzero(union != 1):
-                answer = ac_planning_query(equation, fail_points[i])
+                answer = ac_planning_query(equation, fail_points[i], threads=1)
                 union[i] = -1 if answer is None else (1 if answer['feasible'] else 0)
         for failure, status in zip(failures, union):
             failure['union_status'] = int(status)
     maximum = None
     if result['max_point'] is not None:
-        oracle = ACPowerFlow(network.design(result['max_choice']))
+        oracle = ACPowerFlow(network.design(result['max_choice']), threads=1)
         maximum = dict(point=result['max_point'], choice=result['max_choice'],
             total_kw=result['max_total'], ac_status=int(oracle.classify(result['max_point'])[0]),
             diagnostic=converged_diagnostics(oracle, result['max_point'])[0])
@@ -264,19 +262,12 @@ def render_ac_report(output, summary):
     save_benchmark_report(output, originals, LABELS, ac=summary)
 
 
-def attach_ac_to_replay(folder, original, check, divisions, ac_labels):
-    """补充最终校验指标；原构域事件、时间和历史帧原样保留。"""
+def attach_ac_validation(folder, original, check, divisions):
+    """补充最终校验指标，保留原构域时间。"""
     original['region']['validation'] = dict(check['volume_error'], divisions=divisions,
         strict_vertices=check['strict_vertices'], maximum=check['maximum'], metric_scope='retained_inner_union')
     original['ac_audit'] = check
     write_json(folder/'result.json', original)
-    with RunMonitor(record=False, output=folder, stream=StringIO()) as monitor:
-        monitor.load_recording(folder/'replay.json')
-        monitor.state['results'] = [original['region']]
-        monitor.state['states'] = [ac_labels.tolist()]
-        monitor.state['divisions'] = divisions
-        monitor.state['ac_validation'] = dict(divisions=divisions, **check['volume_error'])
-        monitor.save_snapshot()
 
 
 def run_ac_benchmark(args):
@@ -296,9 +287,7 @@ def run_ac_benchmark(args):
         purpose='AC checks of saved domains only; sampling does not replace continuous-domain certification')
     write_json(destination/'protocol.json', protocol)
     records, references, bounds = [], [], {}
-    with numerical_threads() as threads:
-        if not threads['applied']:
-            raise RuntimeError('Single-thread timing required')
+    with threadpool_limits(limits=1):
         for count in args.counts:
             folder = destination/f'n{count}'
             folder.mkdir(exist_ok=True)
@@ -325,7 +314,7 @@ def run_ac_benchmark(args):
                 records.append(record)
                 name = case_name(count, np.inf if original['budget'] is None else original['budget'], original['variant'])
                 write_json(folder/f'{name}.json', record)
-                attach_ac_to_replay(args.output/name, original, record, args.divisions, grid[original['budget']])
+                attach_ac_validation(args.output/name, original, record, args.divisions)
                 comparison[f'{original["variant"]}_b{"inf" if original["budget"] is None else int(original["budget"])}'] = labels
                 print('AUDITED', name, 'vertices', record['strict_vertices']['feasible'], '/', record['strict_vertices']['total'],
                       'AC coverage', None if record['grid']['ac_retained_percent'] is None else
@@ -333,7 +322,7 @@ def run_ac_benchmark(args):
             np.savez_compressed(folder/'comparison_grid.npz', **comparison)
             # Check a second independent AC implementation on base and upgraded networks.
             cross = []
-            for choice in ([0]*count, [1]*count):
+            for choice in (network.initial_plan, {c.id: c.types[-1].id for c in network.corridors}):
                 cross.append(dict(choice=choice, **validate_power_flow(network.design(choice))))
             write_json(folder/'nodal_cross_checks.json', cross)
     records.sort(key=lambda r: (r['candidate_count'], np.inf if r['budget'] is None else r['budget'], VARIANTS.index(r['variant'])))

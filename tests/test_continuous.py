@@ -13,12 +13,14 @@ import unittest
 import numpy as np
 from threadpoolctl import threadpool_limits
 
-from main import Case33, evaluation_bounds, planning_query
+from main import Case33, solve_region
+from model import evaluation_bounds, planning_query
 from model import PlanningEquations, PlanningModel
-from main import ContinuousRegion
-from region import sample_region
-from plot import RunMonitor
-from region import halfspaces, contains, union_volume
+from region import ContinuousRegion
+from plot import sample_region
+from plot import RunMonitor, json_value, region_metrics
+from region import halfspaces, contains
+from plot import union_volume
 from region import polytope_volume, clip_polytope
 from tests.reference import dispatch_support
 
@@ -28,44 +30,34 @@ class ContinuousTests(unittest.TestCase):
     def setUpClass(cls):
         cls.threads = threadpool_limits(limits=1)
         cls.network = Case33(candidate_count=4)
-        cls.bounds = evaluation_bounds(cls.network)
+        cls.bounds = evaluation_bounds(cls.network, threads=1)
 
-    def test_auto_policy_and_explicit_overrides(self):
-        from main import resolve_residual_mode
-        for budget, expected in [(0., 'light'), (2., 'light'), (np.inf, 'physical')]:
-            self.assertEqual(resolve_residual_mode('auto', budget), expected)
-            for mode in ('light', 'physical'):
-                self.assertEqual(resolve_residual_mode(mode, budget), mode)
-        with self.assertRaises(ValueError):
-            resolve_residual_mode('invalid', 0.)
 
     def test_deadline_preserves_unknown_domain(self):
-        solver = ContinuousRegion(self.network, 'socp', 0., self.bounds, time_limit=0.)
-        result = solver.solve()
+        solver = ContinuousRegion(self.network, 'socp', 0., self.bounds, time_limit=0., threads=1)
+        result = solve_region(solver)
         self.assertEqual(result['status'], 'time_limit')
         self.assertEqual(result['inner'], [])
-        self.assertGreater(result['outer_volume'], 0.)
-        self.assertEqual(result['counts']['mp2'], 0)
+        self.assertGreater(region_metrics(result, self.bounds)['outer_volume'], 0.)
+        self.assertEqual(result['counts']['sp'], 0)
 
     def test_complete_query_reuses_verified_state_without_sp(self):
         e = PlanningEquations(self.network, 'socp')
-        with patch('main.PlanningSP.solve', side_effect=AssertionError('Redundant SP')):
-            answer, cuts = planning_query(e, budget=0.)
+        with patch('model.PlanningSP.solve', side_effect=AssertionError('Redundant SP')):
+            answer = planning_query(e, budget=0., threads=1)
         self.assertTrue(answer['feasible'])
         self.assertGreaterEqual(e.margin(answer['x'], answer['p'], answer['state']), -1e-8)
-        self.assertEqual(cuts, [])
 
     def test_residual_modes_agree_on_small_certified_union(self):
         points = (np.indices((5,)*3).reshape(3, -1).T+.5)*self.bounds/5
-        results = [ContinuousRegion(self.network, 'socp', 0., self.bounds,
-                                   residual_mode=mode).solve() for mode in ('light', 'physical')]
+        results = [solve_region(ContinuousRegion(self.network, 'socp', 0., self.bounds,
+                                   residual_mode=mode, threads=1)) for mode in ('light', 'physical')]
         for result in results:
             self.assertEqual(result['status'], 'certified')
-            self.assertEqual(len(result['queries']), 2)
-            self.assertGreater(result['phases']['residual'], 0.)
+            self.assertGreater(result['timing']['total_seconds'], 0.)
         a, b = [sample_region(r, points, self.bounds) for r in results]
         self.assertFalse(np.any(a*b == -1))
-        self.assertLess(abs(results[0]['inner_volume']-results[1]['inner_volume'])/results[0]['inner_volume'], .01)
+        self.assertLess(abs(region_metrics(results[0], self.bounds)['inner_volume']-region_metrics(results[1], self.bounds)['inner_volume'])/region_metrics(results[0], self.bounds)['inner_volume'], .01)
 
     @classmethod
     def tearDownClass(cls):
@@ -107,38 +99,40 @@ class ContinuousTests(unittest.TestCase):
 
     def test_mp1_total_allows_load_redistribution(self):
         equations = PlanningEquations(self.network, 'linear')
-        answer, _ = planning_query(equations, min_total=3800.)
+        answer = planning_query(equations, min_total=3800., threads=1)
         self.assertTrue(answer['feasible'])
         self.assertEqual(answer['objective'], 1.)
         self.assertGreaterEqual(sum(answer['p']), 3800.-1e-6)
-        direct = PlanningModel(equations, min_total=3800.)
+        direct = PlanningModel(equations, min_total=3800., threads=1)
         with direct.model:
             reference = direct.solve()
         self.assertEqual(answer['objective'], reference['objective'])
 
     def test_continuous_domain_covers_other_plans_and_ignores_grid(self):
-        result = ContinuousRegion(self.network, 'linear', 1., self.bounds, planning_query).solve()
+        result = solve_region(ContinuousRegion(self.network, 'linear', 1., self.bounds, planning_query, threads=1))
         self.assertEqual(result['status'], 'certified')
-        self.assertGreater(result['schemes'], 1)
+        self.assertGreater(len(result['inner']), 1)
         self.assertLessEqual(result['coverage_bound'], 1e-8)
-        before = json.dumps(result['inner'], sort_keys=True)
+        before = json.dumps(json_value(result['inner']), sort_keys=True)
         for n in (3, 11):
             grid = (np.indices((n,)*3).reshape(3, -1).T+.5)*self.bounds/n
             sample_region(result, grid, self.bounds)
-        self.assertEqual(before, json.dumps(result['inner'], sort_keys=True))
+        self.assertEqual(before, json.dumps(json_value(result['inner']), sort_keys=True))
         points = []
         for choice in product((0, 1), repeat=4):
-            net = self.network.design(choice)
+            plan = self.network.initial_plan | {c.id: c.types[k].id
+                for c, k in zip(self.network.planning_corridors, choice)}
+            net = self.network.design(plan)
             if net.cost <= 1:
-                for direction in (np.eye(3).tolist()+[[1., 1., 1.]]):
-                    points.append(dispatch_support(net, 'linear', direction)['p'])
+                for normal in (np.eye(3).tolist()+[[1., 1., 1.]]):
+                    points.append(dispatch_support(net, 'linear', normal)['p'])
         self.assertTrue(np.all(sample_region(result, points, self.bounds) != -1))
 
     def test_unfinished_global_search_does_not_certify_domain(self):
         with patch.object(ContinuousRegion, 'residual', return_value=dict(complete=False, bound=1., x=None, p=None)):
-            result = ContinuousRegion(self.network, 'linear', 0., self.bounds, planning_query).solve()
+            result = solve_region(ContinuousRegion(self.network, 'linear', 0., self.bounds, planning_query, threads=1))
         self.assertEqual(result['status'], 'unknown')
-        self.assertGreater(result['outer_volume'], result['inner_volume'])
+        self.assertGreater(region_metrics(result, self.bounds)['outer_volume'], region_metrics(result, self.bounds)['inner_volume'])
 
     def test_complete_replay_round_trip_beyond_old_limit(self):
         with TemporaryDirectory() as directory:

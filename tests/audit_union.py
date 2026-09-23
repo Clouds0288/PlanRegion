@@ -5,10 +5,9 @@ import json
 
 import numpy as np
 
-from main import BenchmarkResult
+from plot import BenchmarkResult, METHODS, region_metrics
 from plot import RunMonitor
 from region import contains, halfspaces, GEOMETRY_TOL
-from vertify import METHODS
 
 
 def audit_events(folder):
@@ -59,7 +58,8 @@ def compare(baseline, independent, incremental):
     results = {key: BenchmarkResult.load(folder) for key, folder in folders.items()}
     event_audits = {key: audit_events(folders[key]) for key in ('independent', 'incremental')}
     old = results['baseline']
-    rows_by_key = {name: {(r['method'], r['budget']): r for r in result.metadata['continuous']}
+    rows_by_key = {name: {(r['method'], r['budget']): dict(r, **region_metrics(r, result.bounds))
+                          for r in result.metadata['continuous']}
                    for name, result in results.items()}
     totals, rows = {}, []
     for name, result in results.items():

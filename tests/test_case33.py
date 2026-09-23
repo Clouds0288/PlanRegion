@@ -4,7 +4,7 @@ import numpy as np  # 物理数组和可复现查询。
 from Network.case33bw import Case33, network  # 唯一物理数据输入。
 from model import PlanningEquations, PlanningSP
 from vertify import ACPowerFlow
-from vertify import validate_power_flow  # 节点导纳矩阵潮流交叉核验。
+from tests.reference import validate_power_flow
 
 
 class Case33Tests(unittest.TestCase):  # 检查模型共享的数据和物理证书。
@@ -32,7 +32,9 @@ class Case33Tests(unittest.TestCase):  # 检查模型共享的数据和物理证
         for count in (4,8,16,32):  # 覆盖三档嵌套候选集。
             network = Case33(candidate_count=count)  # 同一网架读取不同候选集。
             choice = np.arange(count)%2  # 交错选型可暴露项目顺序和支路顺序的混淆。
-            design = network.design(choice)  # 只实例化这一套网架。
+            plan = network.initial_plan | {c.id: c.types[k].id
+                for c, k in zip(network.planning_corridors, choice)}
+            design = network.design(plan)
             factor = np.ones(network.n)  # 其余支路保持原阻抗。
             for selected,project in zip(choice,network.projects):  # 按 Network 项目顺序解释选型。
                 if selected:  # 增设一回相同线路。
@@ -50,7 +52,8 @@ class Case33Tests(unittest.TestCase):  # 检查模型共享的数据和物理证
         for count in (4,8,16,32):  # 小规模候选必须是同一项目表的前缀。
             case = Case33(candidate_count=count)  # 不另维护基准项目副本。
             self.assertEqual(case.projects,full.projects[:count])  # 原候选的顺序和费用保持一致。
-            self.assertEqual(len(case.line_options),count)  # 逐线路型号组数必须与请求一致。
+            self.assertEqual(len(case.planning_corridors),count)
+            self.assertEqual(len(case.corridors),32)
 
     def test_full_network_costs_and_affordable_design_count(self):
         from tests.benchmark_ac_search import affordable_designs
@@ -60,15 +63,16 @@ class Case33Tests(unittest.TestCase):  # 检查模型共享的数据和物理证
         designs = affordable_designs(case, 2.)
         self.assertEqual(len(designs), 498)
         self.assertEqual(sum(c <= 1. for c, _, _ in designs), 32)
-        upgraded = case.design([1]*32)
+        upgraded = case.design({c.id: c.types[-1].id for c in case.corridors})
         np.testing.assert_array_equal(upgraded.r, case.r/2)
         np.testing.assert_array_equal(upgraded.reactance, case.reactance/2)
         np.testing.assert_array_equal(upgraded.fixed_p, case.fixed_p)
 
     def test_socp_certificates_against_independent_ac(self):  # 固定基础网架时仍使用同一套 PlanningSP。
-        reference = ACPowerFlow(network)  # 独立支路 AC 递推。
-        equations = PlanningEquations(network,'socp',planning=False)  # 固定网架没有离散变量。
-        oracle = PlanningSP(equations)  # 所有查询共享方程。
+        reference = ACPowerFlow(network, threads=1)  # 独立支路 AC 递推。
+        fixed_network = network.design(network.initial_plan)
+        equations = PlanningEquations(fixed_network,'socp')  # 固定网架没有离散变量。
+        oracle = PlanningSP(equations, threads=1)  # 所有查询共享方程。
         samples = np.random.default_rng(20260922).random((120,3))*[350.,1500.,600.]  # 固定背景下的不同负荷。
         valid = samples[reference.classify(samples)==1]  # 用独立 AC 选出已知可行样本。
         cuts = 0  # 保证实际覆盖分离割。

@@ -37,7 +37,7 @@ class ProgressTests(unittest.TestCase):
         self.assertIs(decoded['history'][0]['patch']['geometry'], decoded['history'][-1]['patch']['geometry'])
 
     def test_import_and_help_do_not_start_computation(self):
-        for args in (['-c', 'import main; print("imported")'], ['main.py', '--help']):
+        for args in (['-c', 'import main; print("imported")'],):
             process = subprocess.run([sys.executable, '-X', 'utf8', *args], cwd=main.ROOT,
                                      capture_output=True, text=True, encoding='utf-8', timeout=10)
             self.assertEqual(process.returncode, 0, process.stderr)
@@ -54,54 +54,13 @@ class ProgressTests(unittest.TestCase):
             np.testing.assert_allclose(vertices@cut[1:4]+sliced['constant'], 0., atol=1e-10)
         self.assertEqual(cut_slice([1., 0., 0., 0., -2.], [1], [5.]*3)['vertices'], [])
 
-    def test_real_observer_does_not_change_regions(self):
-        network = main.Case33(candidate_count=4)
-        bounds = [400., 4670., 630.]
-        with threadpool_limits(limits=1), RunMonitor(stream=StringIO()) as monitor:
-            for method in ('linear', 'socp', 'hybrid'):
-                args = (network, method, 0., bounds)
-                baseline = main.build_continuous_region(*args)
-                observed = main.build_continuous_region(*args, observer=monitor)
-                self.assertEqual(observed['status'], 'certified')
-                self.assertEqual(observed['inner'], baseline['inner'])
-                self.assertEqual(observed['outer'], baseline['outer'])
-                self.assertEqual(observed['counts'], baseline['counts'])
-            args = (network, network.budgets, 2, bounds)
-            np.testing.assert_array_equal(validate_ac_region(*args), validate_ac_region(*args, observer=monitor))
-            self.assertIsNone(monitor.server)
-            self.assertEqual(len(monitor.events), 0)
-            self.assertNotIn('states', monitor.state)
 
     def test_unknown_phase_never_reports_full_classification(self):
         answer = dict(bound=None, feasible=False, status='unknown')
         with patch('vertify.ac_planning_query', return_value=answer):
-            with RunMonitor(stream=StringIO()) as monitor:
-                states = validate_ac_region(main.FourBus(), [0., np.inf], 2, [150.]*3, observer=monitor)
-                self.assertTrue(np.all(states == 0))
-                self.assertEqual(monitor.state['event'], 'phase_end')
-                self.assertTrue(all(c['unknown'] == c['total'] for c in monitor.state['counts']))
+            states = validate_ac_region(main.FourBus(), [0., np.inf], 2, [150.]*3, threads=1)
+            self.assertTrue(np.all(states == 0))
 
-    def test_hybrid_phase_reset_is_visible(self):
-        phases = []
-        original = main.planning_query
-        with threadpool_limits(limits=1), RunMonitor(stream=StringIO()) as monitor:
-            def query(equations, **kwargs):
-                if equations.method == 'socp':
-                    self.assertGreater(len(kwargs['cuts']), 0)
-                    return dict(bound=None, feasible=False, status='unknown', objective=None), []
-                return original(equations, **kwargs)
-            def observe(event, **data):
-                monitor(event, **data)
-                if event == 'phase_start':
-                    phases.append((data['phase'], monitor.state['geometry']))
-            with patch('main.planning_query', side_effect=query):
-                result = main.build_continuous_region(main.Case33(candidate_count=4), 'hybrid', 0.,
-                                                       [400., 4670., 630.], observer=observe)
-        self.assertEqual([p[0] for p in phases], ['linear', 'socp'])
-        self.assertEqual(phases[1][1], [])
-        self.assertEqual(result['linear_status'], 'certified')
-        self.assertEqual(result['status'], 'unknown')
-        self.assertEqual(result['inner'], [])
 
     def test_http_snapshot_history_and_cleanup(self):
         opener = build_opener(ProxyHandler({}))
@@ -112,7 +71,7 @@ class ProgressTests(unittest.TestCase):
                 monitor('phase_start', states=states, bounds=[5., 6., 7.], budgets=[0., np.inf], phase='linear')
                 states[:] = 1  # 验证快照是独立副本，不泄露可变计算数组。
                 monitor('point', point=[4., 2., 3.], query=1)
-                monitor('sp_start', choice=[1])
+                monitor('sp_start', choice={'line': 'parallel'})
                 monitor('cut', cut=[-3., 1., 0., 0., 2.], selection=[1], point=[4., 2., 3.], pool_size=1)
                 with opener.open(monitor.url+'state', timeout=3) as response:
                     state = json.load(response)
@@ -149,21 +108,31 @@ class ProgressTests(unittest.TestCase):
         self.assertEqual(monitor.state['status'], 'failed')
         self.assertFalse(monitor.heartbeat_thread.is_alive())
 
-    def test_full_ui_run_and_load_from_another_working_directory(self):
-        # 全流程在独立目录保存；读取路径不应再次触发优化器。
-        with TemporaryDirectory() as folder, redirect_stdout(StringIO()):
-            result = main.run(main.Case33(candidate_count=4), budgets=[0.], divisions=2, show_ui=True,
-                              open_browser=False, output=folder, plots=False)
+
+    def test_final_result_round_trip_has_only_core_records(self):
+        with TemporaryDirectory() as folder, redirect_stdout(StringIO()), patch('plot.webbrowser.open') as browser:
+            result = main.run(main.Case33(candidate_count=4), budgets=[0.], divisions=2,
+                              show_ui=True, output=folder, threads=1)
             self.assertEqual(result.states.shape, (4, 1, 2, 2, 2))
-            self.assertIn('main.py', result.metadata['hashes'])
-            self.assertTrue((Path(folder)/'result.npz').exists())
-            self.assertTrue((Path(folder)/'live_view.html').exists())
-            with patch('main.PlanningModel', side_effect=AssertionError('unexpected solve')):
-                loaded = main.run(main.FourBus(), recompute=False, output=folder, plots=False)
+            self.assertTrue((Path(folder)/'region_comparison.html').exists())
+            browser.assert_called_once()
+            self.assertFalse((Path(folder)/'events.jsonl').exists())
+            self.assertFalse((Path(folder)/'replay.json').exists())
+            for region in result.metadata['continuous']:
+                self.assertEqual(set(region['counts']), {'sp', 'cuts'})
+                self.assertEqual(set(region['timing']), {'total_seconds'})
+                self.assertNotIn('certificates', region)
+                self.assertNotIn('queries', region)
+                self.assertNotIn('cuts', region)
+                for derived in ('inner_volume', 'outer_volume', 'volume_gap', 'validation', 'tau', 'residual_mode'):
+                    self.assertNotIn(derived, region)
+                self.assertTrue(all('choice' in p and 'cost' in p for p in region['inner']))
+            with patch('main.evaluation_bounds', side_effect=AssertionError('unexpected solve')):
+                loaded = main.run(main.FourBus(), recompute=False, output=folder, show_ui=False)
             np.testing.assert_array_equal(loaded.states, result.states)
-            process = subprocess.run([sys.executable, str(main.ROOT/'main.py'), '--load', '--no-plots',
-                                      '--no-ui', '--output', folder], cwd=folder, capture_output=True,
-                                     text=True, encoding='utf-8', timeout=10)
+            code = 'import sys; sys.path.insert(0, '+repr(str(main.ROOT))+'); import main; main.run(main.FourBus(), recompute=False, show_ui=False, output='+repr(folder)+')'
+            process = subprocess.run([sys.executable, '-X', 'utf8', '-c', code], cwd=folder,
+                                     capture_output=True, text=True, encoding='utf-8', timeout=10)
             self.assertEqual(process.returncode, 0, process.stderr)
 
 

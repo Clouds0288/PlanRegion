@@ -3,14 +3,13 @@
 full 中非负荷中间节点允许不投入，供后续拓扑模型适配；本模块不运行求解器。
 可用 Jiangkou(load_nodes=('B000025', 'B000078', 'B000083')) 指定独立负荷建筑。
 """
-from copy import copy
 from functools import cached_property
 import json
 from pathlib import Path
 
 import numpy as np
 
-from . import LineOptions, RadialNetwork
+from . import Corridor, TypeParameters, RadialNetwork
 
 
 def load_jiangkou(mode="existing"):
@@ -33,7 +32,8 @@ def load_jiangkou(mode="existing"):
     capacity_factor = np.sqrt(3)*voltage*1000*data["power_factor"]*data["line_loading_limit"]/base
     for edge in data["corridors"]:
         original = edge["line_type"]
-        edge["existing"], edge["optional"] = original is not None, mode == "full"
+        edge["initial_active"] = original is not None and not edge["normally_open"]
+        edge["must_use"] = mode == "existing"
         types = ([original] if original else []) + [t for t in data["planning_line_types"]
                 if original is None or lines[t]["max_i_ka"] > lines[original]["max_i_ka"]]
         factor = 1. if original else data["new_corridor_cost_factor"]
@@ -70,33 +70,17 @@ class Jiangkou(RadialNetwork):
             capacity=[o["capacity"] for o in baseline], source_smax=1.,
             sources=("Network/__init__.py", "Network/jiangkou.py", "Network/data/jiangkou.json"))
         by_endpoints = {frozenset((e["start"], e["end"])): e for e in corridors}
-        self.corridors = tuple(by_endpoints[frozenset((self.root if a < 0 else self.nodes[a], n))]
-                               for n, a in zip(self.nodes, self.parent))  # 与基类按受端重排后的支路顺序一致。
+        self.corridor_data = tuple(by_endpoints[frozenset((self.root if a < 0 else self.nodes[a], n))]
+                                  for n, a in zip(self.nodes, self.parent))
 
     @cached_property
-    def line_options(self):
-        return tuple(LineOptions(i,
-            tuple(o["r"] for o in e["options"]),
-            tuple(o["reactance"] for o in e["options"]),
-            tuple(o["cost"] for o in e["options"]),
-            tuple(o["capacity"] for o in e["options"]))
-            for i, e in enumerate(self.corridors))
-
-    def design(self, choice):
-        """按一次选型更新阻抗、容量和增量费用，保持既有拓扑及背景负荷。"""
-        design = copy(self)
-        design.r, design.reactance, design.capacity = self.r.copy(), self.reactance.copy(), self.capacity.copy()
-        design.x = np.asarray(choice)
-        if design.x.shape != (len(self.line_options),) or not np.issubdtype(design.x.dtype, np.integer):
-            raise ValueError("choice 必须为每条既有支路提供一个整数型号索引")
-        design.cost = 0.
-        for k, options in zip(design.x, self.line_options):
-            if not 0 <= k < len(options.cost):
-                raise ValueError("既有支路必须保持或升级，型号索引超出范围")
-            design.r[options.branch], design.reactance[options.branch] = options.r[k], options.reactance[k]
-            design.capacity[options.branch] = options.capacity[k]
-            design.cost += options.cost[k]
-        return design
+    def corridors(self):
+        return tuple(Corridor(e['id'],
+            (self.root if a < 0 else self.nodes[a], n), e['line_type'],
+            e['initial_active'], e['must_use'],
+            tuple(TypeParameters(o['line_type'], o['r'], o['reactance'], o['capacity'], o['cost'])
+                  for o in e['options']))
+            for e, n, a in zip(self.corridor_data, self.nodes, self.parent))
 
 
 network = Jiangkou()

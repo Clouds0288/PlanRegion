@@ -2,11 +2,10 @@
 
 Run: python -m tests.benchmark_physical_search --counts 8 16
 Each variant runs sequentially in a fresh process, with the same tolerances,
-geometry, event recording and per-solve limits. Audits are outside solver timing.
+geometry and per-solve limits. Audits are outside solver timing.
 """
 from argparse import ArgumentParser
 from hashlib import sha256
-from io import StringIO
 from pathlib import Path
 from time import perf_counter, sleep
 import json
@@ -15,15 +14,18 @@ import sys
 import traceback
 
 import numpy as np
+from gurobipy import GRB
 
 import main as production
-from main import emit
+from threadpoolctl import threadpool_limits
+from model import evaluation_bounds
+from region import ContinuousRegion
 from model import PlanningEquations, PlanningModel, PlanningSP, PLANNING_TOL
-from plot import RunMonitor, json_value, save_benchmark_report
-from region import GEOMETRY_TOL, sample_region
+from plot import json_value, save_benchmark_report, region_view
+from region import GEOMETRY_TOL
+from plot import sample_region
 from tests.audit_continuous import independent_feasible
-from tests.reference import _dispatch_equations
-import tests.reference as independent_reference
+from tests.reference import _dispatch_equations, dispatch_state
 
 ROOT = Path(__file__).resolve().parents[1]
 SOURCE_FILES = ('main.py', 'model.py', 'region.py', 'vertify.py', 'plot.py',
@@ -54,74 +56,53 @@ def write_json(path, value):
             sleep(.025)
 
 
-def joint_benders(equations, *, power=None, budget=np.inf, direction=None,
-                  cuts=(), start=None, radial_gap_kw=1e-3, observer=None,
-                  min_total=None, fixed_x=None, incumbent=None, deadline=np.inf):
-    """MP1/MP2 与 SP 的联合割迭代；observer 只接收阶段信息。"""
-    emit(observer, 'query_model', message='建立联合割主问题与连续子问题', reused_cuts=len(cuts))
+def joint_benders(equations, *, power=None, budget=np.inf,
+                  cuts=(), start=None, radial_gap_kw=1e-3,
+                  min_total=None, fixed_plan=None, incumbent=None, deadline=np.inf, threads=1, oracle=None):
+    """供独立对照使用的 MP1/MP2 与 SP 联合割迭代。"""
     problem = PlanningModel(equations, power=power, budget=budget,
-                            direction=direction, cuts_only=True, min_total=min_total, fixed_x=fixed_x)
-    oracle, generated = PlanningSP(equations), []
+                            cuts_only=True, min_total=min_total, fixed_plan=fixed_plan, threads=threads)
+    oracle, generated = oracle or PlanningSP(equations, threads=threads), []
     minimizing = power is not None or min_total is not None
-    mode = 'MP1' if minimizing else 'MP2'
     bound = -np.inf if minimizing else np.inf
     with problem.model:
         for cut in cuts:
             problem.add_cut(cut)
         if start is not None:
-            problem.x.Start = start
+            problem.x_vector.Start = start
         if incumbent is not None:
-            incumbent_cost = problem.use_incumbent(incumbent, budget=budget, power=power,
-                                                    min_total=min_total)
-        iteration = 0
+            incumbent_cost = problem.use_incumbent(incumbent)
         while True:
             if perf_counter() >= deadline:
                 return dict(feasible=False, x=None, p=None, state=None, objective=None,
                             bound=bound, status='unknown', termination='case_time_limit'), generated
-            iteration += 1
-            emit(observer, 'mp_start', iteration=iteration, mode=mode, message=f'求解主问题 {mode}')
             answer = problem.solve(time_limit=min(20., max(0., deadline-perf_counter())))
             if answer is None:
-                emit(observer, 'query_end', status='infeasible', message='主问题已证不可行')
                 return None, generated
             bound = max(bound, answer['bound']) if minimizing else min(bound, answer['bound'])
             answer['bound'] = bound
             if incumbent is not None and bound >= incumbent_cost-1e-7:
                 answer = dict(incumbent, objective=incumbent_cost, bound=bound, status='optimal')
-                emit(observer, 'query_end', status='optimal', objective=incumbent_cost, bound=bound,
-                     message='MP1 全局费用下界达到已有可行方案费用，最优性已认证')
                 return answer, generated
             if answer['x'] is None:
-                emit(observer, 'query_end', status='unknown', bound=bound,
-                     message=f"无整数候选，保持未确定：{answer['termination']}")
                 return answer, generated
             point = answer['p']
             if not minimizing and point.sum() > 0.:
                 point = point * max(0., 1. - radial_gap_kw / point.sum())
-            emit(observer, 'sp_start', point=point, choice=equations.choice(answer['x']),
-                 bound=bound, objective=answer['objective'], message='验证当前选型的运行约束 SP')
             checked = oracle.solve(answer['x'], point, time_limit=min(
                 5. if equations.method == 'linear' else 10., max(0., deadline-perf_counter())))
-            emit(observer, 'sp_end', feasible=checked['feasible'], eta=checked['eta'],
-                 message=f"SP {'通过' if checked['feasible'] else '未获证'}：{checked['termination']}")
             if checked['feasible']:
                 value = answer['objective'] if minimizing else point.sum()
                 gap = value-bound if minimizing else bound-value
                 tolerance = 1e-7 if minimizing else radial_gap_kw+1e-5
                 answer.update(p=point, state=checked['state'], feasible=True, objective=value,
                               status='optimal' if gap <= tolerance else 'feasible')
-                emit(observer, 'query_end', status=answer['status'], objective=value, bound=bound,
-                     message='获得运行可行证书')
                 return answer, generated
             if checked['cut'] is None:
-                answer.update(status='unknown', termination=checked['termination'],
-                              feasible=False, objective=None)
-                emit(observer, 'query_end', status='unknown', message='没有可靠新割，保持未确定')
+                answer.update(status='unknown', feasible=False, objective=None)
                 return answer, generated
             generated.append(checked['cut'])
             problem.add_cut(checked['cut'])
-            emit(observer, 'cut', cut=checked['cut'], selection=answer['x'], point=point,
-                 pool_size=len(cuts)+len(generated), message='加入全局有效联合割，继续求解 MP')
 
 
 
@@ -132,22 +113,12 @@ def independent_boundary_certificate(network, equations, point):
     objective can find a better state; its objective alone NEVER certifies the
     tested point. Recheck all original linear/conic residuals at that point.
     """
-    capture = {}
-    original = independent_reference._solve
-
-    def retain(*args, **kwargs):
-        answer = original(*args, **kwargs)
-        capture['current'] = np.asarray(answer.x)[1:]
-        return answer
-
     if np.sum(point) <= 0:
         return dict(passed=False, point=np.asarray(point).tolist())
     try:
-        with patch.object(independent_reference, '_solve', retain):
-            independent_reference.dispatch_support(network, 'socp', np.ones(3), direction=point)
+        current = dispatch_state(network, point)
     except RuntimeError as error:
         return dict(passed=False, point=np.asarray(point).tolist(), error=str(error))
-    current = capture['current']
     residual = equations.c+equations.F@point+equations.G@current
     margins = [float(residual[:equations.linear_count].min())]
     offset = equations.linear_count
@@ -163,8 +134,8 @@ def audit_region(network, budget, bounds, result):
     """Independent fixed-scheme equations for every retained inner vertex."""
     started = perf_counter()
     checked, failures, numerical_rechecks = 0, [], []
-    for certificate in result['certificates']:
-        points = np.asarray(certificate['inner']).reshape(-1, 3)*bounds
+    for certificate in region_view(result, bounds)['geometry']:
+        points = np.asarray(certificate['inner']['vertices']).reshape(-1, 3)
         if not len(points):
             continue
         design = network.design(certificate['choice'])
@@ -179,21 +150,22 @@ def audit_region(network, budget, bounds, result):
             failures.append(dict(choice=certificate['choice'], cost=design.cost,
                                  failed_points=points[~valid].tolist()))
     equation = PlanningEquations(network, 'socp')
-    probe = PlanningModel(equation, budget=budget)
+    probe = PlanningModel(equation, budget=budget, threads=1)
     with probe.model:
         reference = probe.solve(time_limit=20.)
     maximum_error = None if reference is None or result['max_total'] is None else abs(reference['objective']-result['max_total'])
     maximum_passed = bool(reference and reference['feasible'] and
                           (maximum_error is None or maximum_error <= .003))
-    # A small deterministic set of global radial queries tests the returned
+    # A small deterministic set of global support queries tests the returned
     # envelopes; it is not used as a substitute for the global coverage bound.
-    boundary_checks, boundary_failures, radial_unknown = 0, [], 0
-    for direction in np.vstack([np.eye(3), np.ones(3), [[1, 6, 1], [3, 1, 4], [1, 1, 5]]]):
-        query = PlanningModel(equation, budget=budget, direction=direction)
+    boundary_checks, boundary_failures, support_unknown = 0, [], 0
+    for normal in np.vstack([np.eye(3), np.ones(3), [[1, 6, 1], [3, 1, 4], [1, 1, 5]]]):
+        query = PlanningModel(equation, budget=budget, threads=1)
         with query.model:
+            query.model.setObjective(normal@query.power/network.base, GRB.MAXIMIZE)
             answer = query.solve(time_limit=20.)
         if answer is None or not answer['feasible']:
-            radial_unknown += 1
+            support_unknown += 1
             continue
         label = int(sample_region(result, [answer['p']], bounds)[0])
         boundary_checks += 1
@@ -206,13 +178,20 @@ def audit_region(network, budget, bounds, result):
                 numerical_rechecks=numerical_rechecks,
                 reference_maximum=reference, maximum_error_kw=maximum_error,
                 boundary_checks=boundary_checks, boundary_failures=boundary_failures,
-                radial_queries_unknown=radial_unknown, coverage_passed=coverage_passed,
+                support_queries_unknown=support_unknown, coverage_passed=coverage_passed,
                 seconds=perf_counter()-started,
-                scope='Independent SOCP inner-vertex checks and seven global rays; AC not tested.')
+                scope='Independent SOCP inner-vertex checks and seven global support points; AC not tested.')
 
 
 def case_name(count, budget, variant):
     return f'n{count}_b{"inf" if np.isinf(budget) else f"{budget:g}"}_{variant}'
+
+
+def baseline_query(equations, *, cuts, **kwargs):
+    """旧联合割接口仅在基准测试中适配。"""
+    answer, generated = joint_benders(equations, cuts=cuts, **kwargs)
+    cuts.extend(generated)
+    return answer
 
 
 def worker(args):
@@ -220,51 +199,31 @@ def worker(args):
     output = args.output/case_name(count, budget, variant)
     output.mkdir(parents=True, exist_ok=True)
     before_hashes = fingerprints()
-    with production.numerical_threads() as threads:
-        if not threads['applied']:
-            raise RuntimeError('Single-thread timing unavailable; benchmark refused')
+    with threadpool_limits(limits=1):
         network = production.Case33(candidate_count=count)
         prepare = perf_counter()
-        bounds = production.evaluation_bounds(network)
+        bounds = evaluation_bounds(network, threads=1)
         preparation_seconds = perf_counter()-prepare
-        with RunMonitor(record=True, output=output, open_browser=False, stream=StringIO()) as monitor:
-            monitor('start', network=network.name, cost_unit=network.cost_unit,
-                    candidate_count=count, message=LABELS[variant])
-            monitor('method_start', method='socp', method_number=1, method_count=1)
-            monitor('phase_start', method='socp', phase='socp', phase_number=1, phase_count=1,
-                    budget_index=0, budget=budget, budgets=[budget], bounds=bounds,
-                    load_nodes=network.load_nodes, representation='continuous', message=LABELS[variant])
-            mode = dict(baseline='light', direct_mp='light', direct_all='physical', auto='auto')[variant]
-            monitor('strategy', residual_requested=mode,
-                    residual_mode=production.resolve_residual_mode(mode, budget))
-            solver = production.ContinuousRegion(network, 'socp', budget, bounds,
-                query=joint_benders if variant == 'baseline' else None,
-                residual_mode=mode, time_limit=args.limit, observer=monitor)
-            region = solver.solve()
-            solve_seconds = perf_counter()-solver.started
-            termination = 'case_time_limit' if region['status'] == 'time_limit' else 'returned'
-            region['budget_index'] = 0
-            monitor('method_end', seconds=solve_seconds)
-            monitor('completed', message=f'{LABELS[variant]}：{region["status"]}', region=region,
-                    results=[region])
-            monitor.save_snapshot()
-            record = dict(candidate_count=count, budget=budget, variant=variant,
-                          status=region['status'], termination=termination,
-                          solve_seconds=solve_seconds, preparation_seconds=preparation_seconds,
-                          case_time_limit=args.limit, thread_control=threads, bounds=bounds,
-                          phases=solver.phase_seconds, queries=solver.query_results,
-                          certificates_reused=solver.counts['reused_certificates'],
-                          numerical_repairs=solver.counts['physical_repairs'],
-                          last_residual=solver.last_residual, region=region,
-                          source_hashes=before_hashes, source_unchanged=before_hashes == fingerprints(),
-                          viewer_results_present=True,
-                          test_sha256=sha256(Path(__file__).read_bytes()).hexdigest())
-            write_json(output/'result.json', record)
+        mode = dict(baseline='light', direct_mp='light', direct_all='physical', auto='auto')[variant]
+        solver = ContinuousRegion(network, 'socp', budget, bounds,
+            query=baseline_query if variant == 'baseline' else None,
+            residual_mode=mode, time_limit=args.limit, threads=1)
+        region = production.solve_region(solver)
+        solve_seconds = region['timing']['total_seconds']
+        region['budget_index'] = 0
+        record = dict(candidate_count=count, budget=budget, variant=variant,
+                      status=region['status'], solve_seconds=solve_seconds,
+                      termination='case_time_limit' if region['status']=='time_limit' else 'returned',
+                      preparation_seconds=preparation_seconds, case_time_limit=args.limit,
+                      threads=1, bounds=bounds, region=region,
+                      source_hashes=before_hashes, source_unchanged=before_hashes == fingerprints(),
+                      test_sha256=sha256(Path(__file__).read_bytes()).hexdigest())
+        write_json(output/'result.json', record)
         record['audit'] = audit_region(network, budget, bounds, region)
         record['source_unchanged'] &= before_hashes == fingerprints()
         write_json(output/'result.json', record)
     print(json.dumps(json_value(dict(case=output.name, status=record['status'],
-              seconds=solve_seconds, phases=record['phases'], sp=region['counts']['sp'],
+              seconds=solve_seconds, sp=region['counts']['sp'],
               max_total=region['max_total'], audit=record['audit']['passed'])), ensure_ascii=False), flush=True)
 
 

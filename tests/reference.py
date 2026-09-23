@@ -66,25 +66,66 @@ def _solve(objective,matrix,rhs,cones):  # 参考优化器只封装共同的数�
 
 
 
-def dispatch_support(network,method,normal,*,direction=None):  # 独立求固定方案连续域的支撑值或射线边界。
+def dispatch_support(network,method,normal):  # 独立求固定方案连续域的支撑值。
     e = _dispatch_equations(network)  # 不读取正式 PlanningEquations 的矩阵。
-    basis = np.eye(len(network.load_nodes)) if direction is None else (  # 自由三维查询或单一非负射线。
-        np.asarray(direction)/np.sum(direction))[:,None]  # 射线半径等于三个负荷之和。
-    n = basis.shape[1]  # 自由查询有三个负荷变量，射线查询只有一个。
+    n = len(network.load_nodes)  # 每个独立负荷对应一个自由变量。
     if method == 'linear':  # 无损模型已经消去全部运行变量。
-        c,matrix = e.linear_c,e.linear_F@basis  # 仅保留负荷变量的线性约束。
+        c,matrix = e.linear_c,e.linear_F  # 仅保留负荷变量的线性约束。
         cones = [clarabel.NonnegativeConeT(len(c))]  # 全部约束都是非负余量。
     else:  # SOCP 同时优化负荷和各支路电流平方。
-        c,matrix = e.c,np.c_[e.F@basis,e.G]  # 变量按负荷、电流排列。
+        c,matrix = e.c,np.c_[e.F,e.G]  # 变量按负荷、电流排列。
         cones = [clarabel.NonnegativeConeT(e.linear_count)]  # 先放线性约束。
         cones += [clarabel.SecondOrderConeT(size) for size in e.sizes]  # 再放原始电流锥。
     m = matrix.shape[1]  # 参考问题总变量数。
     limits = np.zeros((n+1,m))  # 单独加入负荷非负和总量外界。
-    limits[:n,:n] = np.eye(n)  # 各负荷或射线半径非负。
-    limits[-1,:n] = -basis.sum(axis=0)/network.base  # 总负荷不超过共同外界。
+    limits[:n,:n] = np.eye(n)  # 各负荷非负。
+    limits[-1,:n] = -1./network.base  # 总负荷不超过共同外界。
     matrix = -np.vstack([matrix,limits])  # 将余量形式转换为 Clarabel 的 A*z+s=b。
     rhs = np.r_[c,np.zeros(n),network.power_limit/network.base]  # 总量约束使用标幺余量。
     cones += [clarabel.NonnegativeConeT(n+1)]  # 负荷边界均为线性约束。
-    objective = np.r_[-np.asarray(normal)@basis,np.zeros(m-n)]  # 最小化负支撑值，电流不进入目标。
+    objective = np.r_[-np.asarray(normal),np.zeros(m-n)]  # 最小化负支撑值，电流不进入目标。
     result = _solve(objective,matrix,rhs,cones)  # 获得连续凸域的原始最优值及对偶界。
-    return dict(p=basis@np.asarray(result.x[:n]),value=-result.obj_val,bound=-result.obj_val_dual)  # 恢复最大化方向。
+    return dict(p=np.asarray(result.x[:n]),value=-result.obj_val,bound=-result.obj_val_dual)  # 恢复最大化方向。
+
+
+def dispatch_state(network,power):  # 独立求固定负荷点的 SOCP 电流状态。
+    e = _dispatch_equations(network)
+    n = e.G.shape[1]
+    cones = [clarabel.NonnegativeConeT(e.linear_count)]
+    cones += [clarabel.SecondOrderConeT(size) for size in e.sizes]
+    return np.asarray(_solve(np.ones(n),-e.G,e.c+e.F@np.asarray(power),cones).x)
+
+
+def validate_power_flow(network):  # 用另一套节点导纳矩阵算法交叉核验支路 AC 实现。
+    """用六个工况，将独立支路递推与节点导纳矩阵 Newton–Raphson 潮流核对。"""
+    from vertify import ACPowerFlow
+    import warnings  # 仅在转换原始数据时屏蔽已知的接口弃用提示。
+    import pandapower as pp  # 采用独立实现的 Newton–Raphson 潮流。
+    from pandapower.converter.pypower.from_ppc import from_ppc  # 将标准 MATPOWER 数据转换为 pandapower 网架。
+
+    reference = ACPowerFlow(network, threads=1)  # 被核验的是独立 AC 递推，不是 SOCP 方程。
+    maximum_difference = 0.  # 记录所有工况、所有节点的最大电压幅值差。
+    for scale in (1., 0., .5, 1.2, 1.5, 2.):  # 覆盖原始、零独立负荷及多个放大工况。
+        power = scale*network.original_p[network.selected]  # 只缩放三个独立节点，其他背景负荷固定。
+        with warnings.catch_warnings():  # 警告过滤仅在本次格式转换的作用域内有效。
+            warnings.filterwarnings('ignore', category=FutureWarning,  # 只过滤接口的未来弃用警告。
+                                    module='pandapower.converter.pypower.from_ppc')  # 限定来源模块，不屏蔽潮流求解异常。
+            net = from_ppc(network.ppc(power), f_hz=50)  # 同一物理网架转换成节点导纳矩阵模型。
+        pp.runpp(net, algorithm='nr', tolerance_mva=1e-10, numba=False)  # 另一实现的完整 AC 潮流作为交叉核验。
+        # 此处只比较潮流方程；即使电压越限也继续收敛，不能复用 classify 的提前不可行判定。
+        ell = np.zeros((1, network.n))  # 支路递推从零电流平方开始。
+        for _ in range(160):  # 逐次满足完整 AC 电流等式。
+            P, Q, v, u = reference.state(power, ell)  # 当前电流下的送端功率及两端电压平方。
+            new = (P*P+Q*Q)/u  # 强制完整 AC 电流等式。
+            if np.max(np.abs(new-ell)) < 1e-13:  # 电流平方增量达到比运行限值判定更严格的精度。
+                break  # 电流更新已经收敛，停止迭代。
+            ell = new  # 更新电流，进行下一次完整功率平衡与压降计算。
+        difference = float(np.max(np.abs(np.sqrt(v[0])-net.res_bus.loc[list(network.nodes), 'vm_pu'])))  # v 是平方，NR 输出是幅值。
+        assert difference < 1e-8, 'Branch AC and nodal AC disagree'  # 不让方程实现不一致的参考模型进入正式评价。
+        maximum_difference = max(maximum_difference, difference)  # 保留全部工况中的最大电压幅值误差。
+        if scale == 1:  # 保存原始基础工况的物理校验值。
+            baseline = dict(minimum_voltage_pu=float(np.sqrt(v.min())),  # 全网最低电压幅值。
+                            minimum_voltage_bus=int(network.nodes[np.argmin(v)]),  # 对应真实节点号。
+                            active_loss_kw=float((ell*network.r).sum()*network.base))  # Σr*ell，从标幺还原为 kW。
+    return dict(baseline=baseline, nodal_cross_checks=6,  # 返回原始工况和交叉核验次数。
+                maximum_voltage_difference_pu=maximum_difference, pandapower=pp.__version__)

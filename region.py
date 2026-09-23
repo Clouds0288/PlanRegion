@@ -1,11 +1,17 @@
 """连续域状态、候选点筛选、裁剪与并集；不跨建设方案取凸包。"""
-import numpy as np  # 网格索引和成块分类使用同一坐标顺序。
 from itertools import combinations, product
+from time import perf_counter
 from types import SimpleNamespace
+
+import numpy as np
 from scipy.spatial import ConvexHull, QhullError
+
+from model import (DEFAULT_SOLVER_THREADS, RESIDUAL_TIME_LIMIT, SP_TIME_LIMIT,
+                   PlanningEquations, PlanningSP, RemainingRegionModel, planning_query)
 
 # 连续几何在公共评价箱归一化后的坐标中计算；与采样网格无关。
 GEOMETRY_TOL = 1e-8
+REFINEMENT_CHECKS = 96
 
 
 def _convex_hull(points):
@@ -87,7 +93,7 @@ def clip_polytope(vertices, constant, coefficient):
     if values.max() < -1e-11:
         return np.empty((0, 3))
     points = list(vertices[values >= -1e-11])
-    if polytope_volume(vertices) > 0:
+    if len(vertices) >= 4 and np.linalg.matrix_rank(vertices-vertices[0], tol=1e-10) == 3:
         edges = {tuple(sorted(edge)) for face in _convex_hull(vertices).simplices
                  for edge in combinations(face, 2)}
     else:
@@ -109,81 +115,15 @@ def polytope_volume(poly):
     return float(_convex_hull(poly).volume)
 
 
-def subtract_polytope(poly, equations):
-    """返回 poly 减去一个凸域的互不重叠内部的凸分块。"""
-    if not len(poly):
-        return []
-    values = poly@equations[:, :3].T+equations[:, 3]
-    if np.all(values <= 1e-10):
-        return []
-    if np.any(values.min(axis=0) >= -1e-10):
-        return [poly]
-    pieces = []
-    for eq in equations:
-        values = poly@eq[:3]+eq[3]
-        if values.max() <= 1e-10:
-            continue
-        outside = clip_polytope(poly, eq[3], eq[:3])
-        if polytope_volume(outside) > 1e-15:
-            pieces.append(outside)
-        poly = clip_polytope(poly, -eq[3], -eq[:3])
-        if polytope_volume(poly) <= 1e-15:
-            break
-    return pieces
-
-
-def union_volume(polytopes):
-    """逐域扣除已经计入的部分，避免把重叠方案体积相加。"""
-    previous, volume = [], 0.
-    for poly in sorted(polytopes, key=polytope_volume, reverse=True):
-        if polytope_volume(poly) <= 1e-15:
-            continue
-        pieces = [poly]
-        for eq in previous:
-            pieces = [part for p in pieces for part in subtract_polytope(p, eq)]
-            if not pieces:
-                break
-        volume += sum(polytope_volume(p) for p in pieces)
-        previous.append(halfspaces(poly))
-    return volume
-
-
-def surface(poly, bounds):
-    """用于 HTML 的真实凸多面体表面，退化集也保留坐标。"""
-    poly = np.asarray(poly).reshape(-1, 3)
-    faces = _convex_hull(poly).simplices.tolist() if polytope_volume(poly) > 0 else []
-    return dict(vertices=(poly*np.asarray(bounds)).tolist(), faces=faces)
-
-
-def classify_orthant(states, index, status):  # 纯负荷单调域中，用一个已证点分类一块网格中心。
-    """调用者须验证非负负荷、正阻抗和 vmax≥根电压；不跨方案构造凸包。"""
-    if status == 1:  # 同一建设方案在更低负荷下仍可行。
-        states[tuple(slice(0,int(i)+1) for i in index)] = 1  # 只覆盖坐标逐项不大于认证点的网格中心。
-    elif status == -1:  # 若所有预算内方案在该点不可行，更高负荷也不可能可行。
-        states[tuple(slice(int(i),None) for i in index)] = -1
-
-
-def split_grid_box(lower, upper):  # 把含网格中心的闭索引盒沿最长轴分成两块。
-    axis = int(np.argmax(upper-lower))  # 索引尺度对应相同的每轴网格分辨率。
-    middle = (lower[axis]+upper[axis])//2  # 整数二分不会丢失或重复中心点。
-    left, right = upper.copy(), lower.copy()  # 保留其他两个坐标的完整索引范围。
-    left[axis], right[axis] = middle, middle+1  # 左右子盒不重叠，且并集等于父盒。
-    return ((lower,left),(right,upper))
-
-
-
 class RegionState:
     """固定方案内外多面体、候选点筛选与连续并集；坐标归一化到评价箱。"""
 
     def __init__(self, bounds, total_bound, tau, cuts=()):
         self.bounds = np.asarray(bounds, dtype=float)
         self.total_bound, self.tau = float(total_bound), float(tau)
-        if not np.isfinite(self.tau) or not 0 <= self.tau < 1:
-            raise ValueError('tau must be in [0, 1)')
         self.cuts = [np.asarray(c) for c in cuts]
         self.records = {}
         self.revision = 0
-        self._surfaces = {}
 
     def add_scheme(self, x, choice, cost):
         key = tuple(x)
@@ -192,7 +132,7 @@ class RegionState:
         outer = initial_polytope(self.bounds, self.total_bound)
         for cut in self.cuts:
             outer = clip_polytope(outer, cut[0]+cut[4:]@x, cut[1:4]*self.bounds)
-        self.records[key] = dict(x=np.asarray(x, dtype=int), choice=list(choice),
+        self.records[key] = dict(x=np.asarray(x, dtype=int), choice=dict(choice),
                                  cost=float(cost), inner=np.empty((0, 3)), outer=outer,
                                  inner_equations=None, inner_box=None)
         return True
@@ -208,7 +148,6 @@ class RegionState:
             return False
         row['inner'] = updated
         row['inner_equations'] = row['inner_box'] = None
-        self._surfaces.pop(key, None)
         self.revision += 1
         return True
 
@@ -245,14 +184,10 @@ class RegionState:
                 owners[i] = key
         return owners
 
-    def next_point(self, x, skipped=None):
+    def next_point(self, x):
         row = self.records[tuple(x)]
         targets = (1-self.tau)*row['outer']
         owners = self.covering_schemes(targets, preferred=x)
-        if skipped is not None:
-            for point, owner in zip(targets, owners):
-                if owner is not None and owner != tuple(x):
-                    skipped(point, owner)
         indices = [i for i, owner in enumerate(owners) if owner is None]
         if not len(indices):
             return None
@@ -283,16 +218,14 @@ class RegionState:
             if weights.min() >= -1e-9 and weights.sum() <= 1+1e-9:
                 weights = np.r_[1-weights.sum(), weights]
                 points = np.vstack([center, poly[face]])
-                return points[np.argsort(-weights)[weights[np.argsort(-weights)] > 1e-12]]
+                order = np.argsort(-weights)
+                return points[order[weights[order] > 1e-12]]
         return []
 
     def apply_cut(self, cut):
         self.cuts.append(np.asarray(cut))
-        for key, row in self.records.items():
-            updated = clip_polytope(row['outer'], cut[0]+cut[4:]@row['x'], cut[1:4]*self.bounds)
-            if not np.array_equal(updated, row['outer']):
-                row['outer'] = updated
-                self._surfaces.pop(key, None)
+        for row in self.records.values():
+            row['outer'] = clip_polytope(row['outer'], cut[0]+cut[4:]@row['x'], cut[1:4]*self.bounds)
 
     def inner_halfspaces(self):
         return [self.inner_equations(key) for key, r in self.records.items() if len(r['inner'])]
@@ -301,14 +234,6 @@ class RegionState:
     def progress(self):
         # 新证书可能替换旧顶点而不改变顶点数；用版本判断实际进展。
         return len(self.cuts), self.revision
-
-    def geometry(self):
-        for key, row in self.records.items():
-            if key not in self._surfaces:
-                self._surfaces[key] = dict(choice=row['choice'], cost=row['cost'],
-                                          inner=surface(row['inner'], self.bounds),
-                                          outer=surface(row['outer'], self.bounds))
-        return [self._surfaces[key] for key in self.records]
 
     def finish(self, certified):
         """由全局覆盖结论构造外包络；未知时保留整个评价箱内的候选域。"""
@@ -334,22 +259,109 @@ class RegionState:
                 outer.append(envelope)
         else:
             outer = [initial_polytope(self.bounds, self.total_bound)]
-        scale = np.prod(self.bounds)
-        inner_volume, outer_volume = union_volume(inner)*scale, union_volume(outer)*scale
-        return dict(schemes=len(records), inner_volume=inner_volume, outer_volume=outer_volume,
-                    volume_gap=(outer_volume-inner_volume)/outer_volume if outer_volume else 0.,
-                    geometry=self.geometry(), inner=[surface(p, self.bounds) for p in inner],
-                    outer=[surface(p, self.bounds) for p in outer], cuts=[c.tolist() for c in self.cuts],
-                    certificates=[dict(x=r['x'].tolist(), choice=r['choice'], cost=r['cost'],
-                                       inner=r['inner'].tolist(), outer=r['outer'].tolist()) for r in records])
+        return dict(inner=[dict(choice=r['choice'].copy(), cost=r['cost'],
+                                vertices=r['inner']*self.bounds) for r in records if len(r['inner'])],
+                    outer=[dict(vertices=p*self.bounds) for p in outer])
 
 
-def sample_region(result, points, bounds):
-    """连续域求出后才作采样；薄层保留为未知，采样不影响几何。"""
-    points = np.atleast_2d(points)/np.asarray(bounds)
-    inside, possible = np.zeros(len(points), bool), np.zeros(len(points), bool)
-    for poly in result['inner']:
-        inside |= contains(points, halfspaces(np.asarray(poly['vertices'])/bounds))
-    for poly in result['outer']:
-        possible |= contains(points, halfspaces(np.asarray(poly['vertices'])/bounds))
-    return np.where(inside, 1, np.where(possible, 0, -1)).astype(np.int8)
+class RegionTimeout(RuntimeError):
+    """构域到时；已获得的内域证书仍保留。"""
+
+
+class ContinuousRegion:
+    """单预算构域操作；主问题与覆盖循环由 main.solve_region 组织。"""
+
+    def __init__(self, network, method, budget, bounds, query=None, *, tau=.002,
+                  cuts=(), residual_mode='auto', time_limit=300., threads=DEFAULT_SOLVER_THREADS):
+        self.started = perf_counter()
+        self.deadline = self.started+time_limit
+        self.method, self.budget, self.threads = method, float(budget), threads
+        self.bounds = np.asarray(bounds, dtype=float)
+        self.query = query or planning_query
+        self.residual_mode = ('physical' if np.isinf(budget) else 'light') if residual_mode == 'auto' else residual_mode
+        self.tau = 0. if method == 'linear' else float(tau)
+        self.equations = PlanningEquations(network, method)
+        self.region = RegionState(self.bounds, network.power_limit, self.tau, cuts)
+        self.initial_cuts = len(self.region.cuts)
+        self.oracle = PlanningSP(self.equations, threads=threads)
+        self.maximum = None
+
+    def remaining_time(self, limit):
+        remaining = self.deadline-perf_counter()
+        if remaining <= 0.:
+            raise RegionTimeout()
+        return min(limit, remaining)
+
+    def call_query(self, **kwargs):
+        self.remaining_time(np.inf)
+        return self.query(self.equations, budget=self.budget, cuts=self.region.cuts,
+                          deadline=self.deadline, threads=self.threads, oracle=self.oracle, **kwargs)
+
+    def check(self, x, point):
+        return self.oracle.solve(x, point*self.bounds,
+                                  time_limit=self.remaining_time(SP_TIME_LIMIT[self.method]))
+
+    def refine(self, x, seed=None, *, witness=None, max_checks=REFINEMENT_CHECKS):
+        """认证并集外的候选；内部空隙须使用同一方案的支撑点。"""
+        x = np.asarray(x, dtype=int)
+        self.region.add_scheme(x, self.equations.choice(x), self.equations.investment(x))
+        row = self.region.records[tuple(x)]
+        if seed is not None:
+            self.region.add_point(x, np.asarray(seed)/self.bounds)
+        pending = None if witness is None else (1-self.tau)*np.asarray(witness)/self.bounds
+        for _ in range(max_checks):
+            self.remaining_time(np.inf)
+            if not len(row['outer']):
+                break
+            point = None
+            if pending is not None:
+                if self.region.covering_schemes([pending], preferred=x)[0] is not None:
+                    pending = None
+                else:
+                    for candidate in self.region.witness_support(x, pending):
+                        if len(row['inner']) and contains([candidate], self.region.inner_equations(x))[0]:
+                            continue
+                        point = candidate
+                        break
+                    if point is None:
+                        point, pending = pending, None
+            if point is None:
+                point = self.region.next_point(x)
+            if point is None:
+                return True
+            checked = self.check(x, point)
+            if checked['feasible']:
+                self.region.add_point(x, point)
+            elif checked['cut'] is not None:
+                old = row['outer'].copy()
+                cut = checked['cut']
+                self.region.apply_cut(cut)
+                if pending is not None and cut[0]+cut[1:4]@(pending*self.bounds/(1-self.tau))+cut[4:]@x < -1e-12:
+                    pending = None  # 新割已排除原见证，不再认证其过期支撑点。
+                if np.array_equal(old, row['outer']):
+                    return False
+            else:
+                return False
+        return True
+
+    def residual(self):
+        state = self.region
+        problem = RemainingRegionModel(self.equations, self.budget, self.bounds, state.total_bound,
+                                       state.cuts, state.inner_halfspaces(), self.tau,
+                                       mode=self.residual_mode, threads=self.threads)
+        with problem.model:
+            return problem.solve(GEOMETRY_TOL, time_limit=self.remaining_time(RESIDUAL_TIME_LIMIT))
+
+    def finish(self, status, coverage, maximum):
+        if status == 'unknown' and perf_counter() >= self.deadline:
+            status = 'time_limit'
+        domain = self.region.finish(status == 'certified')
+        answer = self.maximum
+        return dict(method=self.method, budget=self.budget,
+                    residual_mode=self.residual_mode, status=status, tau=self.tau,
+                    coverage_bound=coverage, max_total=maximum, max_total_bound=self.region.total_bound,
+                    max_point=None if answer is None else answer['p'].copy(),
+                    max_choice=None if answer is None else self.equations.choice(answer['x']),
+                    max_cost=None if answer is None else float(self.equations.investment(answer['x'])),
+                    counts=dict(sp=self.oracle.calls, cuts=len(self.region.cuts)-self.initial_cuts),
+                    timing=dict(total_seconds=perf_counter()-self.started), **domain)

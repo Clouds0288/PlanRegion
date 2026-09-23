@@ -12,18 +12,25 @@ class Project:  # 固定拓扑下的单条支路改造项目。
     cost: float  # 项目的增量投资，单位由母网定义。
 
 
-@dataclass(frozen=True)  # 每条候选支路的型号表不可变。
-class LineOptions:  # 紧凑模型直接读取的逐线路型号配置。
-    """一条走廊的可选型号；branch 是 planning_branches 中的索引。
+@dataclass(frozen=True)
+class TypeParameters:
+    """某条走廊的一个型号配置；阻抗/容量为 p.u.，费用为增量投资。"""
+    id: str
+    r: float
+    reactance: float
+    capacity: float
+    investment_cost: float
 
-    r/reactance 为标幺阻抗，cost 为各型号的增量投资；第 0 型保持原状。
-    """
-    branch: int  # 支路受端在非根节点数组中的索引。
-    r: tuple  # 各型号的标幺电阻。
-    reactance: tuple  # 各型号的标幺电抗。
-    cost: tuple  # 各型号相对基础网架的新增费用。
-    capacity: tuple = ()  # 可选的逐型号送端有功上限；为空时沿用基础支路限值。
-    optional: bool = False  # True 允许这条走廊不投入，由主问题决定径向连接。
+
+@dataclass(frozen=True)
+class Corridor:
+    """统一电力走廊；原始设备、原始开合状态和规划使用要求相互独立。"""
+    id: str
+    endpoints: tuple
+    existing_type: str | None
+    initial_active: bool
+    must_use: bool
+    types: tuple[TypeParameters, ...]
 
 
 @dataclass  # 由字段声明生成固定径向网架的初始化函数。
@@ -58,12 +65,44 @@ class RadialNetwork:  # 所有运行模型读取的统一径向网架数据。
     sources: tuple = ()  # 决定物理输入的源码文件列表。
 
     cost_unit = "相对投资单位"  # 规划费用的单位由具体网架设置。
-    line_options = ()  # 普通固定网架没有规划选项；Case33 在母网中提供逐线路型号。
     budgets = (0., 1., 2., np.inf)  # 网架的默认测试预算，可在 Notebook 中覆盖。
 
-    @property  # 固定拓扑以根向支路作为规划输入。
-    def planning_branches(self):  # 返回内部节点索引，−1 表示根节点。
-        return tuple((int(parent),i) for i,parent in enumerate(self.parent))  # 可重构算例覆写为包含新建走廊的端点表。
+    @property
+    def operating_corridors(self):
+        """从当前固定树生成统一记录；不创建任何选型自由度。"""
+        result = []
+        for i, parent in enumerate(self.parent):
+            a, b = self.root if parent < 0 else self.nodes[parent], self.nodes[i]
+            line = TypeParameters('existing', float(self.r[i]), float(self.reactance[i]),
+                                  float(self.capacity[i]), 0.)
+            result.append(Corridor(f'{a}-{b}', (a, b), line.id, True, True, (line,)))
+        return tuple(result)
+
+    @cached_property
+    def corridors(self):
+        return self.operating_corridors
+
+    @property
+    def planning_corridors(self):
+        """有投入或型号选择的走廊；固定单型号走廊不增加二进制变量。"""
+        return tuple(c for c in self.corridors if not c.must_use or len(c.types) > 1)
+
+    @property
+    def initial_plan(self):
+        return {c.id: c.existing_type if c.initial_active else None for c in self.corridors}
+
+    def design(self, plan):
+        """从具名方案生成固定径向网；未投入走廊不进入潮流计算。"""
+        selected = [(c, next(t for t in c.types if t.id == plan[c.id]))
+                    for c in self.corridors if plan[c.id] is not None]
+        return RadialNetwork(self.name, self.root, self.nodes,
+            [c.endpoints for c, t in selected], [t.r for c, t in selected],
+            [t.reactance for c, t in selected], self.base, self.voltage_kv,
+            self.original_p, self.original_q, self.load_nodes, self.q_ratio,
+            self.vmin, self.vmax, self.power_limit,
+            capacity=[t.capacity for c, t in selected], source_pmax=self.source_pmax,
+            source_qmax=self.source_qmax, source_smax=self.source_smax, x=dict(plan),
+            cost=sum(t.investment_cost for c, t in selected), sources=self.sources)
 
     def __post_init__(self):  # 根据无向支路建立径向顺序并统一所有数组的索引。
         adjacency = {i: [] for i in (self.root, *self.nodes)}  # 先构造无向邻接表，再确定根向拓扑。

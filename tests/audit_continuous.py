@@ -11,13 +11,13 @@ from scipy import sparse
 from threadpoolctl import threadpool_limits
 
 from Network.case33bw import Case33
-from region import sample_region
+from plot import sample_region, region_metrics
+from region import GEOMETRY_TOL
 from model import PlanningEquations, PlanningModel
 from vertify import ACPowerFlow
-from plot import RunMonitor
+from plot import region_view, save_method_comparison
 from tests.reference import _dispatch_equations, dispatch_support
-from main import BenchmarkResult
-from vertify import METHODS
+from plot import BenchmarkResult, METHODS
 
 
 def independent_feasible(e, method, points):
@@ -64,19 +64,23 @@ def audit(folder):
     if result.metadata['candidate_count'] != 4:
         raise ValueError('This exhaustive audit is scoped to four candidate lines')
     network, bounds = Case33(candidate_count=4), result.bounds
-    designs = [network.design(c) for c in product((0, 1), repeat=4)]
-    equations = {tuple(d.x): _dispatch_equations(d) for d in designs}
+    plans = [network.initial_plan | {corridor.id: corridor.types[k].id
+             for corridor, k in zip(network.planning_corridors, choice)}
+             for choice in product((0, 1), repeat=4)]
+    designs = [network.design(plan) for plan in plans]
+    equations = {tuple(sorted(d.x.items())): _dispatch_equations(d) for d in designs}
     directions = np.vstack([np.ones(3), np.eye(3), np.array([[1, 6, 1], [3, 1, 4], [1, 1, 5]])])
     references = {method: [[dispatch_support(d, method, normal) for normal in directions] for d in designs]
                   for method in ('linear', 'socp')}
     report = dict(passed=True, designs=16, support_queries=16*2*len(directions), regions=[],
-                  inner_vertices_checked=0, cuts_globally_checked=0, ac_grid_points=0)
+                  inner_vertices_checked=0, ac_grid_points=0)
     for row in result.metadata['continuous']:
         method = 'linear' if row['method'] == 'linear' else 'socp'
         budget = np.inf if row['budget'] is None else row['budget']
         assert row['status'] == 'certified', (row['method'], budget, row['status'])
-        assert row['coverage_bound'] is None or row['coverage_bound'] <= row['geometry_tolerance']
-        assert -.000001 <= row['volume_gap'] <= (.00001 if method == 'linear' else .00601), row['volume_gap']
+        assert row['coverage_bound'] is None or row['coverage_bound'] <= GEOMETRY_TOL
+        gap = region_metrics(row, bounds)['volume_gap']
+        assert -.000001 <= gap <= (.00001 if method == 'linear' else .00601), gap
         indices = [i for i, d in enumerate(designs) if d.cost <= budget]
         support = [references[method][i] for i in indices]
         maximum = max(values[0]['value'] for values in support)
@@ -84,21 +88,10 @@ def audit(folder):
         boundary = np.asarray([value['p'] for values in support for value in values])
         assert np.all(sample_region(row, boundary, bounds) != -1), (row['method'], budget, 'boundary outside outer')
         count = 0
-        for certificate in row['certificates']:
-            points = np.asarray(certificate['inner']).reshape(-1, 3)*bounds
-            assert independent_feasible(equations[tuple(certificate['choice'])], method, points).all(), (row['method'], budget, certificate['choice'])
+        for certificate in region_view(row, bounds)['geometry']:
+            points = np.asarray(certificate['inner']['vertices']).reshape(-1, 3)
+            assert independent_feasible(equations[tuple(sorted(certificate['choice'].items()))], method, points).all(), (row['method'], budget, certificate['choice'])
             count += len(points)
-        # 代表性新割在包含全部整数方案的完整原模型上最小化；不在审核模型中加入被检查割。
-        e = PlanningEquations(network, method)
-        cuts = np.asarray(row['cuts'])
-        for cut in cuts[np.unique(np.linspace(0, len(cuts)-1, min(4, len(cuts)), dtype=int))]:
-            problem = PlanningModel(e)
-            with problem.model as model:
-                model.setObjective(cut[0]+cut[1:4]@problem.power+cut[4:]@problem.x, 1)
-                model.Params.TimeLimit = 60.
-                model.optimize()
-                assert model.ObjBound >= -1e-7, (row['method'], budget, model.ObjBound)
-            report['cuts_globally_checked'] += 1
         report['inner_vertices_checked'] += count
         report['regions'].append(dict(method=row['method'], budget=row['budget'], passed=True,
                                       reference_max_total=maximum, maximum_error_kw=abs(maximum-row['max_total']),
@@ -109,7 +102,7 @@ def audit(folder):
     points = (np.indices((n,)*3).reshape(3, -1).T+.5)*bounds/n
     labels = []
     for design in designs:
-        oracle = ACPowerFlow(design)
+        oracle = ACPowerFlow(design, threads=1)
         try:
             states = oracle.classify(points)
             for i in np.flatnonzero(states == 0):
@@ -125,15 +118,10 @@ def audit(folder):
     report['ac_grid_points'] = len(points)
     report['ac_design_point_checks'] = int(labels.size)
     report['seconds'] = perf_counter()-started
-    report['source_hashes'] = result.metadata['hashes']
     Path(folder, 'validation.json').write_text(json.dumps(report, ensure_ascii=False, indent=2), encoding='utf-8')
-    # 审核另计时；保留原始求解事件和时间，将核验结果附到同一回放页面。
     result.metadata['audit'] = report
     result.save(folder)
-    with RunMonitor(record=False, output=folder, open_browser=False) as monitor:
-        monitor.load_recording(Path(folder, 'replay.json'))
-        monitor.state['metadata'] = result.metadata
-        monitor.save_snapshot()
+    save_method_comparison(result, folder)
     return report
 
 
