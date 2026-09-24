@@ -13,7 +13,7 @@ from tests.case33_3d import PlanningOracle3D, PAD_KW
 from tests.audit_case33_3d import infeasibility_mask
 from tests.case33_two_stage import save, fingerprints
 from Network.case33bw import Case33
-from model import evaluation_bounds
+from tests.planning_checks import evaluation_bounds
 
 
 def recheck(directory, index, threads=2, time_limit=1200.):

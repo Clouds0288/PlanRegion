@@ -78,6 +78,7 @@ def report(directory):
         '- [从立方体到两阶段结果](figures/two_stage_3d_cuts.png)',
         '- [九张独立截面](figures/independent_sections.png)',
         '- [认证收敛与预算体积区间](figures/certification_and_budget.png)',
+        '- [图形与回放验证记录](figures/qa_notes.md)',
         '- 全部切面系数：[预算 0](figures/budget_0_cuts.csv)、[预算 2](figures/budget_2_cuts.csv)、[预算 4](figures/budget_4_cuts.csv)。', '',
         '同名 PDF/SVG 提供矢量版本。budget_*_cuts.csv 每面一行；同一第二阶段 index 的各面以 OR 连接。交互回放保存每次有效切割，压缩仅去除重复图形数据。浏览器安全策略阻止工具打开本地 HTML，因此实际旋转和按钮交互未能在浏览器中验收；已检查 JavaScript 语法、几何回放数据和静态图。', '',
         '## 计时与复现', '',
@@ -98,7 +99,7 @@ def report(directory):
         'python -m tests.case33_3d --mode run --budget 2 --threads 8 --time-limit 90 --oblique --output results/new_3d/budget_2',
         'python -m tests.case33_3d --mode scan --budget 2 --fixed-value 500 --spacing-kw 10 --threads 4 --time-limit 120 --output results/new_3d/budget_2/slice_500',
         'python -m tests.audit_case33_3d results/new_3d/budget_2',
-        'python -m unittest tests.test_notation tests.test_case33_3d tests.test_two_stage tests.test_boundary_search -v',
+        'python -m unittest tests.test_notation tests.test_case33_3d tests.test_two_stage tests.test_mainline -v',
         '```', '',
         '分别运行预算 0、2、4 和固定 p33=0、500、1000 后，再执行 plot_case33_3d 和 report_case33_3d。独立重新运行可以全部从零扫描，无需复用历史截面。']
     (directory/'report.md').write_text('\n'.join(lines)+'\n',encoding='utf-8')

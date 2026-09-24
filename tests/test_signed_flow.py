@@ -7,7 +7,7 @@ from gurobipy import GRB
 from threadpoolctl import threadpool_limits
 
 from Network.four_bus_five_corridor import FourBus
-from model import PlanningEquations, PlanningModel, PlanningSP
+from model import PlanningEquations, PlanningModel
 from tests.reference import dispatch_support
 from tests.test_corridors import modified
 
@@ -85,23 +85,6 @@ def test_connected_cycle_is_rejected_even_at_zero_load():
     equations = PlanningEquations(FourBus(), 'linear')
     plan = {'01': 'L', '12': 'L', '13': 'L', '02': 'L', '23': None}
     problem = PlanningModel(equations, fixed_plan=plan, power=np.zeros(3),
-                            cuts_only=True, threads=1)
+                            threads=1)
     with problem.model:
         assert problem.solve() is None
-
-
-@pytest.mark.parametrize('method', ['linear', 'socp'])
-def test_reverse_plan_cut_is_valid_for_every_topology(method):
-    equations = PlanningEquations(FourBus(), method)
-    x = equations.network.encode_plan(REVERSE_PLAN)
-    power = np.full(3, 40.)
-    cut = PlanningSP(equations, threads=1).solve(x, power)['cut']
-    assert cut is not None
-    assert cut[0]+cut[1:4]@power+cut[4:]@x < -1e-9
-    problem = PlanningModel(equations, threads=1)
-    with problem.model:
-        problem.model.setObjective(cut[0]+cut[1:4]@problem.power+cut[4:]@problem.x, GRB.MINIMIZE)
-        problem.model.Params.TimeLimit = 60.
-        problem.model.optimize()
-        assert problem.model.Status == GRB.OPTIMAL
-        assert problem.model.ObjBound >= -1e-7

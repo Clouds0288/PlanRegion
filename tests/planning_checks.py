@@ -1,5 +1,6 @@
 """生产运行状态的离线审核；不参与 MP/SP 的可行性分支。"""
 import numpy as np
+from model import DEFAULT_SOLVER_THREADS, PlanningEquations, PlanningModel
 
 
 def margin(equations, x, power, state):
@@ -60,3 +61,23 @@ def margin(equations, x, power, state):
     if equations.method == 'socp':
         residual.append(net.source_smax-np.hypot(ps, qs))  # 电源视在功率上限：sqrt(P_source²+Q_source²) <= source_smax。
     return float(min(residual))
+
+
+
+def evaluation_bounds(network, *, threads=DEFAULT_SOLVER_THREADS):
+    """三个无预算 LP 轴向全局上界确定公共评价箱。"""
+    equations, bounds = PlanningEquations(network, 'linear'), []
+    for axis in np.eye(len(network.load_nodes)):
+        problem = PlanningModel(equations, threads=threads)
+        for e in network.corridors:
+            for k in e.types:
+                if any(t.r <= k.r and t.reactance <= k.reactance and t.capacity >= k.capacity
+                       and (t.r < k.r or t.reactance < k.reactance or t.capacity > k.capacity) for t in e.types):
+                    problem.choices[e.id, k.id].UB = 0.
+        problem.power.UB = axis*network.power_limit
+        with problem.model:
+            answer = problem.solve()
+        if answer is None or answer['bound'] is None or not np.isfinite(answer['bound']):
+            raise RuntimeError('No finite planning bound for the common evaluation box')
+        bounds.append(min(network.power_limit, answer['bound']))
+    return np.ceil(np.asarray(bounds)/10.)*10.

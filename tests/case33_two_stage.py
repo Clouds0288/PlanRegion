@@ -18,8 +18,8 @@ from scipy.spatial import ConvexHull
 from threadpoolctl import threadpool_limits
 
 from Network.case33bw import Case33
-from model import PlanningEquations, PlanningModel, PLANNING_TOL, evaluation_bounds
-from tests.planning_checks import margin
+from model import PlanningEquations, PlanningModel, PLANNING_TOL
+from tests.planning_checks import margin, evaluation_bounds
 from vertify import ACPowerFlow
 
 ROOT = Path(__file__).resolve().parents[1]

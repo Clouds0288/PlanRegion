@@ -1,7 +1,8 @@
 """Independent LP and geometry regressions for the three-dimensional experiment."""
 import unittest
 import numpy as np
-from scipy.optimize import linprog
+import gurobipy as gp
+from gurobipy import GRB
 
 from tests.case33_3d import (MASKS, downward_facets, hull_distance, cell_gap,
                             subtract_orthant, apply_orthant, select_cell, Cell, PlanningOracle3D,
@@ -25,10 +26,15 @@ class Geometry3DTests(unittest.TestCase):
         for q in queries:
             constraints = np.r_[np.c_[facets[:, :3], np.zeros(len(facets))], np.c_[-np.eye(3), -np.ones(3)]]
             rhs = np.r_[-facets[:, 3], -q]
-            answer = linprog([0, 0, 0, 1], A_ub=constraints, b_ub=rhs, bounds=[(0, None)]*4,
-                             method='highs')
-            self.assertTrue(answer.success)
-            expected.append(answer.fun)
+            with gp.Model() as model:
+                model.Params.OutputFlag = 0
+                model.Params.Threads = 1
+                variables = model.addMVar(4)
+                model.addConstr(constraints @ variables <= rhs)
+                model.setObjective(variables[3])
+                model.optimize()
+                self.assertEqual(model.Status, GRB.OPTIMAL)
+                expected.append(model.ObjVal)
         np.testing.assert_allclose(hull_distance(queries, facets), expected, atol=1e-7)
 
     def test_different_schemes_do_not_cover_middle(self):
@@ -137,6 +143,27 @@ class Geometry3DTests(unittest.TestCase):
             complete = archive.encode(mesh)
             self.assertEqual(state['t'],set(complete['t']))
             self.assertEqual(state['l'],set(complete['l']))
+
+    def test_surface_snaps_microscopic_shared_face_seams(self):
+        from tests.plot_case33_3d import surface
+        left = MASKS*np.array([5.,10.,10.])
+        right = left+np.array([5.,1e-6,0.])
+        mesh = surface([left,right])
+        triangles = np.asarray(mesh['vertices'])[np.asarray(mesh['triangles'])]
+        self.assertFalse(np.any(np.all(np.abs(triangles[:,:,0]-5.) < 1e-8,axis=1)))
+
+    def test_zero_width_mesh_exports_pdf(self):
+        import io
+        from tests.plot_case33_3d import plt,surface,mesh_on_axes
+        fig = plt.figure(figsize=(3,3))
+        try:
+            ax = fig.add_subplot(projection='3d')
+            mesh_on_axes(ax,surface([MASKS]),'red',opacity=.1,width=0.)
+            output = io.BytesIO()
+            fig.savefig(output,format='pdf')
+            self.assertTrue(output.getvalue().startswith(b'%PDF'))
+        finally:
+            plt.close(fig)
 
     def test_scan_rejections_require_global_evidence(self):
         from tests.audit_case33_3d import infeasibility_mask

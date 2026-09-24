@@ -20,7 +20,7 @@ from matplotlib.lines import Line2D
 from mpl_toolkits.mplot3d.art3d import Poly3DCollection, Line3DCollection
 import numpy as np
 from scipy.spatial import ConvexHull
-from shapely import constrained_delaunay_triangles
+from shapely import constrained_delaunay_triangles, set_precision, union_all, symmetric_difference
 from shapely.geometry import Polygon, LineString, MultiPoint, box
 from shapely.ops import unary_union
 from plotly.offline import get_plotlyjs
@@ -105,9 +105,10 @@ def surface(cells, hatching=False, cache=None):
         cache.update(retained)
     vertices, triangles, lines, hatches = [], [], [], []
     for group in groups.values():
-        positive = unary_union(group['positive'])
-        negative = unary_union(group['negative'])
-        exposed = positive.symmetric_difference(negative)
+        # Fixed-precision overlays prevent microscopic gaps and invalid slivers.
+        positive = union_all(group['positive'], grid_size=1e-5)
+        negative = union_all(group['negative'], grid_size=1e-5)
+        exposed = symmetric_difference(positive, negative, grid_size=1e-5)
         axis, keep, equation = group['axis'], group['keep'], group['equation']
 
         def lift(points):
@@ -308,6 +309,10 @@ def plot_sections(results, directory, output):
             final = unary_union([section(v, fixed_value) for v in cells])
             grid = np.load(directory/f'budget_{result["budget"]:g}'/f'slice_{fixed_value:g}/scan_grid.npz')
             actual = actual_region(grid)
+            source.append(dict(budget=result['budget'], fixed_value=fixed_value,
+                               stage1_area=stage1.area, stage2_area=final.area, actual_area=actual.area))
+            # Display geometry only; the audit and exported areas retain raw data.
+            stage1, final = (set_precision(g,1e-5) for g in (stage1,final))
             visible = box(0, 0, *limits)
             fill(ax, visible.difference(stage1), facecolor='#F4C7C9', edgecolor='none', zorder=0)
             diagonal_fill(ax, stage1.difference(final), limits)
@@ -319,23 +324,21 @@ def plot_sections(results, directory, output):
             boundary(ax, stage1, color=BLUE, lw=1.1, ls=(0,(6,2.8)), zorder=3)
             boundary(ax, final, color=GREEN, lw=1.3, ls=(2,(4.5,2.5)), zorder=4)
             boundary(ax, actual, color=RED, lw=1.15, ls=(0,(2.2,2.)), zorder=5)
-            if actual.is_empty:
-                ax.text(.5,.48,'No feasible grid points',transform=ax.transAxes,
-                        ha='center',va='center',fontsize=9,color='#7F3039')
             ax.set_xlim(0, limits[0])
             ax.set_ylim(0, limits[1])
             ax.set_xticks([0,500,1000,1500])
             ax.set_yticks([0,2000,4000,6000])
             ax.tick_params(direction='out', length=3, width=.6)
-            ax.set_title(f'Budget {result["budget"]:g} | p33 = {fixed_value:g} kW', fontsize=9, pad=7)
-            ax.annotate(chr(97+row*3+column), (.015,.965), xycoords='axes fraction',
-                        ha='left', va='top', fontsize=10, fontweight='bold')
+            title = f'Budget {result["budget"]:g} | p33 = {fixed_value:g} kW'
+            if actual.is_empty:
+                title += '\nNo feasible grid points'
+            ax.set_title(title, fontsize=9, pad=7)
+            ax.annotate(chr(97+row*3+column), (0.,1.04), xycoords='axes fraction',
+                        ha='left', va='bottom', fontsize=10, fontweight='bold')
             if column == 0:
                 ax.set_ylabel('Node 25 load (kW)')
             if row == 2:
                 ax.set_xlabel('Node 18 load (kW)')
-            source.append(dict(budget=result['budget'], fixed_value=fixed_value,
-                               stage1_area=stage1.area, stage2_area=final.area, actual_area=actual.area))
     fig.legend(handles=handles(10), loc='lower center', bbox_to_anchor=(.52,.015),
                ncol=3, columnspacing=2., handlelength=3., frameon=False)
     fig.suptitle('Case33bw | Independent sections of the three-dimensional planning region', fontsize=12, y=.98)
@@ -353,6 +356,7 @@ def plot_summary(results, directory, output):
                      color=color, lw=1.2, label=f'Budget {result["budget"]:g}')
     axes[0].axhline(20, color='#B8323D', ls='--', lw=1)
     axes[0].set_yscale('log')
+    axes[0].set_yticks([20,100,1000],['20','100','1000'])
     axes[0].set_xlabel('Objective-space branch / refinement step')
     axes[0].set_ylabel('Largest certified gap (kW)')
     axes[0].legend(fontsize=8, frameon=False)
@@ -372,6 +376,8 @@ def plot_summary(results, directory, output):
     axes[1].set_ylabel('Certified SOCP volume interval (10⁹ kW³)')
     for letter, ax in zip('ab', axes):
         ax.annotate(letter, (0,1.06), xycoords='axes fraction', fontsize=11, fontweight='bold')
+    fig.text(.5,.035,'Recorded incremental runs include checkpoint resumes and algorithm revisions.',
+             ha='center',fontsize=8,color='#5f6b7a')
     export(fig, output, 'certification_and_budget')
 
 
@@ -392,7 +398,7 @@ def mesh_on_axes(ax, geometry, color, *, opacity=0., dash='--', width=.65, hatch
             piece.append(point)
     if len(piece) >= 2:
         pieces.append(piece)
-    if pieces:
+    if pieces and width > 0:
         ax.add_collection3d(Line3DCollection(pieces, colors=color, linewidths=width,
                                             linestyles=dash, alpha=.9))
 

@@ -5,9 +5,7 @@ import unittest  # 标准回归框架。
 import numpy as np  # 复相量、表面几何和标签数组。
 import gurobipy as gp  # 独立非凸 AC 求解环境。
 from Network.case33bw import Case33  # 当前正式网架。
-from plot import BenchmarkResult, METHODS, validation_summary, voxel_surface
 from vertify import ACPowerFlow
-from plot import disagreement, disagreement_interval
 from tests.reference import upgrade_plan
 
 
@@ -58,68 +56,6 @@ class ACReferenceTests(unittest.TestCase):  # 以代表网架核对独立 AC 的
             np.testing.assert_allclose(abs(voltage)**2,v[0],atol=1e-9,rtol=0)  # 相量幅值平方与模型电压一致。
 
 
-class RegionComparisonTests(unittest.TestCase):  # 三态标签与物理误差分开处理。
-    def test_symmetric_difference_counts_both_sides(self):  # 误差定义必须同时计入多余和遗漏。
-        labels = np.array([0, 0, 1, 2, 2, 3, 3, 3])  # 构造已知计数的四类标签。
-        row = disagreement((labels & 1)>0, (labels & 2)>0)  # 从两种区域成员位生成统计结果。
-        self.assertAlmostEqual(row['region_error_percent'], 50.)  # 对称差为 3、并集为 6，不一致率应为 50%。
-        self.assertAlmostEqual(row['fr_percent'], 25.)  # 多余 1、计算域 4，FR 应为 25%。
-        self.assertAlmostEqual(row['mr_percent'], 40.)
 
-    def test_empty_region_has_undefined_conditional_rate(self):  # 空域的条件比例不能伪造为零。
-        for label, fr, mr in [(0, None, None), (1, 100., None), (2, None, 100.)]:  # 分别覆盖两域皆空、仅计算域非空和仅 AC 域非空。
-            labels = np.full(8, label)  # 生成当前情形的统一标签。
-            row = disagreement((labels & 1)>0, (labels & 2)>0)  # 按正式误差函数计算结果。
-            self.assertEqual(row['fr_percent'], fr)  # FR 分母为空时必须保持无定义。
-            self.assertEqual(row['mr_percent'], mr)
-
-    def test_surface_preserves_cavity_and_volume(self):  # 体素表面应保留内部空腔并给出正确有向体积。
-        mask = np.ones((3, 3, 3), dtype=bool)  # 先构造一个实心 3×3×3 体素块。
-        mask[1, 1, 1] = False  # 挖去中心体素，形成内部空腔。
-        h = np.array([.75, 1.5, 2.])  # 三个坐标使用不同步长，检验物理尺度换算。
-        mesh = voxel_surface(mask, h)  # 使用正式绘图表面算法生成三角网格。
-        points = np.asarray(mesh['vertices'])  # 读取实际表面顶点坐标。
-        triangles = points[np.asarray(mesh['triangles'])]  # 按索引恢复每个三角形的三个顶点。
-        volume = np.einsum('ij,ij->i', triangles[:, 0],  # 由有向三角面计算封闭表面围成的体积。
-                           np.cross(triangles[:, 1], triangles[:, 2])).sum()/6  # 标量三重积之和除以 6 得到带符号体积。
-        self.assertAlmostEqual(volume, mask.sum()*h.prod())
-
-    def test_unknown_rates_bound_every_label_completion(self):  # 未确定不允许被默认算作不可行。
-        left,right = np.array([1,0,-1,0]),np.array([0,-1,1,0])  # 含已知和未知的两个区域。
-        interval = disagreement_interval(left,right)  # 正式 FR/MR 保守区间。
-        for bits in itertools.product((-1,1),repeat=int((left==0).sum()+(right==0).sum())):  # 逐一检查少量未知标签的可能真值。
-            a,b = left.copy(),right.copy()  # 各次赋值相互独立。
-            count = int((a==0).sum())  # 前半部分对应计算域。
-            a[a==0],b[b==0] = bits[:count],bits[count:]  # 后半部分对应 AC 域。
-            rates = disagreement(a==1,b==1)  # 该确定情形的真实比例。
-            for key in ('fr','mr','region_error'):  # 两个指标都须被区间覆盖。
-                value = rates[key+'_percent']  # 分母为空时比例无定义。
-                if value is not None:  # 只检查有定义的可能比例。
-                    self.assertLessEqual(interval[key+'_interval'][0],value)  # 下界不得偏高。
-                    self.assertGreaterEqual(interval[key+'_interval'][1],value)  # 上界不得偏低。
-
-    def test_retained_region_error_counts_unretained_shell(self):
-        states = np.array([[[1, 0, -1]], [[1, 0, -1]], [[1, 1, -1]], [[1, 0, -1]]])
-        rows = validation_summary(states, dict(budgets=[0.], seconds={m:0. for m in METHODS}))
-        self.assertEqual(rows[0]['region_error_percent'], 50.)
-        self.assertEqual(rows[0]['method_unknown_cells'], 1)
-        self.assertEqual(rows[0]['unknown_cells'], 0)
-
-    def test_result_stores_only_states_and_metadata(self):  # 不保存方案表、重复掩码或派生指标。
-        states = np.random.default_rng(5).choice([-1,0,1],(4,2,3,3,3)).astype(np.int8)  # 包含未知的四方法、两预算网格。
-        metadata = dict(divisions=3,budgets=[0.,None],bounds=[1.,2.,3.],load_nodes=[18,25,33],seconds={m:float(i+1) for i,m in enumerate(METHODS)})  # 配置和总计时各一份。
-        result = BenchmarkResult(states,metadata)  # 简化后的唯一结果容器。
-        with tempfile.TemporaryDirectory(prefix='planregion-test-') as folder:  # 不污染正式结果。
-            result.save(folder)  # 写入唯一文件。
-            restored = BenchmarkResult.load(folder)  # 从相同格式恢复。
-            with np.load(f'{folder}/result.npz',allow_pickle=False) as data:  # 检查实际文件字段。
-                self.assertEqual(set(data.files),{'states','metadata'})  # 文件中只有两种基础数据。
-        np.testing.assert_array_equal(restored.states,states)  # 未知与域内外均原样保存。
-        self.assertEqual(restored.metadata,metadata)  # 配置及方法总耗时一致。
-        np.testing.assert_array_equal(restored.labels,result.labels)  # 差集颜色按需推导且一致。
-        self.assertEqual(len(restored.summary),8)  # 四方法和两预算各生成一行。
-        self.assertTrue(np.any(restored.labels==4))  # 未确定区域使用灰色。
-
-
-if __name__=='__main__':  # 支持单独运行指标与 AC 检查。
-    unittest.main()  # 不执行主 Notebook 的完整实验。
+if __name__ == '__main__':
+    unittest.main()

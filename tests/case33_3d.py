@@ -13,10 +13,10 @@ from scipy.spatial import ConvexHull
 from threadpoolctl import threadpool_limits
 
 from Network.case33bw import Case33
-from model import PlanningEquations, PlanningModel, PLANNING_TOL, evaluation_bounds
+from model import PlanningEquations, PlanningModel, PLANNING_TOL
 from region import clip_polytope, polytope_vertices, polytope_volume
 from vertify import ACPowerFlow
-from tests.planning_checks import margin
+from tests.planning_checks import margin, evaluation_bounds
 from tests.case33_two_stage import add_tree_relaxation, save, serial, fingerprints
 
 PAD_KW = 1e-4

@@ -9,7 +9,7 @@ from Network import Corridor, Network, TypeParameters
 from Network.case33bw import Case33
 from Network.four_bus_five_corridor import FourBus
 from Network.jiangkou import Jiangkou
-from model import PlanningEquations, PlanningModel, PlanningSP
+from model import PlanningEquations, PlanningModel
 
 
 def modified(network, **changes):
@@ -94,12 +94,11 @@ def test_optional_nodes_follow_selected_paths(method):
             answer = problem.solve()
             np.testing.assert_array_equal(problem.active_nodes.X > .5, np.isin(net.nodes, tree.nodes))
         assert answer['feasible']
-        assert PlanningSP(e, threads=1).solve(x, np.array([10., 10.]))['feasible']
     missing = net.initial_plan | {'1': None}
     with pytest.raises(ValueError, match='required'):
         net.tree(net.encode_plan(missing))
     problem = PlanningModel(PlanningEquations(net, method), fixed_plan=missing,
-                            power=np.zeros(2), cuts_only=True, threads=1)
+                            power=np.zeros(2), threads=1)
     with problem.model:
         assert problem.solve() is None
 
@@ -122,28 +121,12 @@ def test_jiangkou_full_graph_stays_sparse_and_initial_tree_is_a_view():
 
 
 @pytest.mark.parametrize('method', ['linear', 'socp'])
-def test_joint_cut_is_valid_with_optional_nodes(method):
-    net = optional_network()
-    e = PlanningEquations(net, method)
-    x, power = net.encode_plan(net.initial_plan), np.array([80., 80.])
-    cut = PlanningSP(e, threads=1).solve(x, power)['cut']
-    assert cut is not None and cut[0]+cut[1:3]@power+cut[3:]@x < -1e-9
-    problem = PlanningModel(e, threads=1)
-    with problem.model:
-        problem.model.setObjective(cut[0]+cut[1:3]@problem.power+cut[3:]@problem.x, GRB.MINIMIZE)
-        problem.model.optimize()
-        assert problem.model.Status == GRB.OPTIMAL
-        assert problem.model.ObjBound >= -1e-7
-
-
-@pytest.mark.parametrize('method', ['linear', 'socp'])
 def test_jiangkou_full_graph_accepts_upgraded_initial_tree(method):
     from vertify import ACPowerFlow
     net = Jiangkou()
     plan = {c.id: c.types[-1].id if c.initial_active else None for c in net.corridors}
     x, power = net.encode_plan(plan), np.zeros(3)
     e = PlanningEquations(net, method)
-    assert PlanningSP(e, threads=1).solve(x, power)['feasible']
     problem = PlanningModel(e, fixed_plan=plan, power=power, threads=1)
     with problem.model:
         answer = problem.solve()

@@ -214,7 +214,7 @@ python -m tests.case33_two_stage --mode scan --threads 4 --time-limit 120 --spac
 python -m tests.check_case33_reference results/case33_two_stage/20260924/reference
 python -m tests.audit_case33_two_stage results/case33_two_stage/20260924
 python -m tests.plot_case33_two_stage results/case33_two_stage/20260924
-python -m unittest tests.test_notation tests.test_two_stage tests.test_boundary_search -v
+python -m unittest tests.test_notation tests.test_two_stage tests.test_mainline -v
 ```
 
 以上是顺序复现命令，应选择新输出目录，已有结果不会被静默覆盖。本次运行环境为 Intel Core Ultra 9 285K（24 核）、Gurobi 13.0.2、Python 3.13。两阶段构域使用 20 线程；与之重叠的独立扫描使用 4 线程。后续独立扫描可用 `python -m tests.parallel_case33_scan <reference目录>` 将剩余列分为 6 个 4 线程进程，前提是原扫描已停止；各进程只继承扫描自身的已完成证据。原模型未决点核查使用 20 线程，另列求解时间。BLAS 均限制为 1 线程。扫描表中的耗时为已记录串行耗时加并行阶段墙钟耗时，不是各进程 CPU 时间之和。
