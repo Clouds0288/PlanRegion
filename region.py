@@ -1,13 +1,9 @@
 """连续域状态、候选点筛选、裁剪与并集；不跨建设方案取凸包。"""
 from itertools import combinations, product
-from time import perf_counter
 from types import SimpleNamespace
 
 import numpy as np
 from scipy.spatial import ConvexHull, QhullError
-
-from model import (DEFAULT_SOLVER_THREADS, RESIDUAL_TIME_LIMIT, SP_TIME_LIMIT,
-                   PlanningEquations, PlanningSP, RemainingRegionModel, planning_query)
 
 # 连续几何在公共评价箱归一化后的坐标中计算；与采样网格无关。
 GEOMETRY_TOL = 1e-8
@@ -51,7 +47,7 @@ def polytope_vertices(points):
 
 
 def halfspaces(points):
-    """返回 A z + b <= 0；低维集用成对不等式表示仿射等式。"""
+    """返回 [F,g]，内侧 F@xi+g<=0；低维集以成对不等式表示仿射等式。"""
     points = np.asarray(points)
     if not len(points):
         return np.array([[0., 0., 0., 1.]])
@@ -79,7 +75,7 @@ def contains(points, equations, tolerance=GEOMETRY_TOL):
 
 
 def clip_polytope(vertices, constant, coefficient):
-    """用 constant + coefficient*z >= 0 裁剪连续凸域。"""
+    """用 constant + coefficient@xi >= 0 裁剪；与输入顶点使用同一坐标系。"""
     vertices = np.asarray(vertices).reshape(-1, 3)
     if not len(vertices):
         return vertices
@@ -262,106 +258,3 @@ class RegionState:
         return dict(inner=[dict(choice=r['choice'].copy(), cost=r['cost'],
                                 vertices=r['inner']*self.bounds) for r in records if len(r['inner'])],
                     outer=[dict(vertices=p*self.bounds) for p in outer])
-
-
-class RegionTimeout(RuntimeError):
-    """构域到时；已获得的内域证书仍保留。"""
-
-
-class ContinuousRegion:
-    """单预算构域操作；主问题与覆盖循环由 main.solve_region 组织。"""
-
-    def __init__(self, network, method, budget, bounds, query=None, *, tau=.002,
-                  cuts=(), residual_mode='auto', time_limit=300., threads=DEFAULT_SOLVER_THREADS):
-        self.started = perf_counter()
-        self.deadline = self.started+time_limit
-        self.method, self.budget, self.threads = method, float(budget), threads
-        self.bounds = np.asarray(bounds, dtype=float)
-        self.query = query or planning_query
-        self.residual_mode = ('physical' if np.isinf(budget) else 'light') if residual_mode == 'auto' else residual_mode
-        self.tau = 0. if method == 'linear' else float(tau)
-        self.equations = PlanningEquations(network, method)
-        self.region = RegionState(self.bounds, network.power_limit, self.tau, cuts)
-        self.initial_cuts = len(self.region.cuts)
-        self.oracle = PlanningSP(self.equations, threads=threads)
-        self.maximum = None
-
-    def remaining_time(self, limit):
-        remaining = self.deadline-perf_counter()
-        if remaining <= 0.:
-            raise RegionTimeout()
-        return min(limit, remaining)
-
-    def call_query(self, **kwargs):
-        self.remaining_time(np.inf)
-        return self.query(self.equations, budget=self.budget, cuts=self.region.cuts,
-                          deadline=self.deadline, threads=self.threads, oracle=self.oracle, **kwargs)
-
-    def check(self, x, point):
-        return self.oracle.solve(x, point*self.bounds,
-                                  time_limit=self.remaining_time(SP_TIME_LIMIT[self.method]))
-
-    def refine(self, x, seed=None, *, witness=None, max_checks=REFINEMENT_CHECKS):
-        """认证并集外的候选；内部空隙须使用同一方案的支撑点。"""
-        x = np.asarray(x, dtype=int)
-        self.region.add_scheme(x, self.equations.choice(x), self.equations.investment(x))
-        row = self.region.records[tuple(x)]
-        if seed is not None:
-            self.region.add_point(x, np.asarray(seed)/self.bounds)
-        pending = None if witness is None else (1-self.tau)*np.asarray(witness)/self.bounds
-        for _ in range(max_checks):
-            self.remaining_time(np.inf)
-            if not len(row['outer']):
-                break
-            point = None
-            if pending is not None:
-                if self.region.covering_schemes([pending], preferred=x)[0] is not None:
-                    pending = None
-                else:
-                    for candidate in self.region.witness_support(x, pending):
-                        if len(row['inner']) and contains([candidate], self.region.inner_equations(x))[0]:
-                            continue
-                        point = candidate
-                        break
-                    if point is None:
-                        point, pending = pending, None
-            if point is None:
-                point = self.region.next_point(x)
-            if point is None:
-                return True
-            checked = self.check(x, point)
-            if checked['feasible']:
-                self.region.add_point(x, point)
-            elif checked['cut'] is not None:
-                old = row['outer'].copy()
-                cut = checked['cut']
-                self.region.apply_cut(cut)
-                if pending is not None and cut[0]+cut[1:4]@(pending*self.bounds/(1-self.tau))+cut[4:]@x < -1e-12:
-                    pending = None  # 新割已排除原见证，不再认证其过期支撑点。
-                if np.array_equal(old, row['outer']):
-                    return False
-            else:
-                return False
-        return True
-
-    def residual(self):
-        state = self.region
-        problem = RemainingRegionModel(self.equations, self.budget, self.bounds, state.total_bound,
-                                       state.cuts, state.inner_halfspaces(), self.tau,
-                                       mode=self.residual_mode, threads=self.threads)
-        with problem.model:
-            return problem.solve(GEOMETRY_TOL, time_limit=self.remaining_time(RESIDUAL_TIME_LIMIT))
-
-    def finish(self, status, coverage, maximum):
-        if status == 'unknown' and perf_counter() >= self.deadline:
-            status = 'time_limit'
-        domain = self.region.finish(status == 'certified')
-        answer = self.maximum
-        return dict(method=self.method, budget=self.budget,
-                    residual_mode=self.residual_mode, status=status, tau=self.tau,
-                    coverage_bound=coverage, max_total=maximum, max_total_bound=self.region.total_bound,
-                    max_point=None if answer is None else answer['p'].copy(),
-                    max_choice=None if answer is None else self.equations.choice(answer['x']),
-                    max_cost=None if answer is None else float(self.equations.investment(answer['x'])),
-                    counts=dict(sp=self.oracle.calls, cuts=len(self.region.cuts)-self.initial_cuts),
-                    timing=dict(total_seconds=perf_counter()-self.started), **domain)

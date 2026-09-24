@@ -1,13 +1,16 @@
-"""Production mainline benchmark with a frozen joint-cut baseline.
+"""Initial-tree upgrade benchmark with a joint-cut baseline.
 
 Run: python -m tests.benchmark_physical_search --counts 8 16
 Each variant runs sequentially in a fresh process, with the same tolerances,
 geometry and per-solve limits. Audits are outside solver timing.
 """
 from argparse import ArgumentParser
+from contextlib import ExitStack, nullcontext
+from functools import partial
 from hashlib import sha256
 from pathlib import Path
 from time import perf_counter, sleep
+from unittest.mock import patch
 import json
 import subprocess
 import sys
@@ -19,13 +22,12 @@ from gurobipy import GRB
 import main as production
 from threadpoolctl import threadpool_limits
 from model import evaluation_bounds
-from region import ContinuousRegion
 from model import PlanningEquations, PlanningModel, PlanningSP, PLANNING_TOL
 from plot import json_value, save_benchmark_report, region_view
 from region import GEOMETRY_TOL
 from plot import sample_region
 from tests.audit_continuous import independent_feasible
-from tests.reference import _dispatch_equations, dispatch_state
+from tests.reference import _dispatch_equations, dispatch_state, fixed_topology
 
 ROOT = Path(__file__).resolve().parents[1]
 SOURCE_FILES = ('main.py', 'model.py', 'region.py', 'vertify.py', 'plot.py',
@@ -69,7 +71,7 @@ def joint_benders(equations, *, power=None, budget=np.inf,
         for cut in cuts:
             problem.add_cut(cut)
         if start is not None:
-            problem.x_vector.Start = start
+            problem.x.Start = start
         if incumbent is not None:
             incumbent_cost = problem.use_incumbent(incumbent)
         while True:
@@ -91,6 +93,12 @@ def joint_benders(equations, *, power=None, budget=np.inf,
                 point = point * max(0., 1. - radial_gap_kw / point.sum())
             checked = oracle.solve(answer['x'], point, time_limit=min(
                 5. if equations.method == 'linear' else 10., max(0., deadline-perf_counter())))
+            if not checked['feasible'] and checked['cut'] is None and not minimizing:
+                # 缩入点数值未决时，在 MP 原点分离；只复用全局有效割，不把未知点判为可行。
+                separated = oracle.solve(answer['x'], answer['p'], time_limit=min(
+                    5. if equations.method == 'linear' else 10., max(0., deadline-perf_counter())))
+                if separated['cut'] is not None:
+                    checked = separated
             if checked['feasible']:
                 value = answer['objective'] if minimizing else point.sum()
                 gap = value-bound if minimizing else bound-value
@@ -138,12 +146,12 @@ def audit_region(network, budget, bounds, result):
         points = np.asarray(certificate['inner']['vertices']).reshape(-1, 3)
         if not len(points):
             continue
-        design = network.design(certificate['choice'])
+        design = network.tree(network.encode_plan(certificate['choice']))
         equations = _dispatch_equations(design)
         valid = independent_feasible(equations, 'socp', points)
         for index in np.flatnonzero(~valid):
             recheck = independent_boundary_certificate(design, equations, points[index])
-            numerical_rechecks.append(dict(choice=design.x.tolist(), **recheck))
+            numerical_rechecks.append(dict(choice=certificate['choice'], **recheck))
             valid[index] = recheck['passed']
         checked += len(points)
         if design.cost > budget+1e-8 or not valid.all():
@@ -187,11 +195,19 @@ def case_name(count, budget, variant):
     return f'n{count}_b{"inf" if np.isinf(budget) else f"{budget:g}"}_{variant}'
 
 
-def baseline_query(equations, *, cuts, **kwargs):
-    """旧联合割接口仅在基准测试中适配。"""
-    answer, generated = joint_benders(equations, cuts=cuts, **kwargs)
-    cuts.extend(generated)
-    return answer
+class JointCutModel:
+    """测试侧把旧联合割算法接到直接模型接口；正式流程不注入查询函数。"""
+
+    def __init__(self, equations, *, cuts, oracle, deadline, **kwargs):
+        self.equations, self.cuts, self.oracle = equations, cuts, oracle
+        self.deadline, self.options = deadline, kwargs
+        self.model = nullcontext()
+
+    def solve(self, time_limit, *, incumbent=None):
+        answer, generated = joint_benders(self.equations, cuts=self.cuts, oracle=self.oracle,
+                                          deadline=self.deadline, incumbent=incumbent, **self.options)
+        self.cuts.extend(generated)
+        return answer
 
 
 def worker(args):
@@ -200,18 +216,23 @@ def worker(args):
     output.mkdir(parents=True, exist_ok=True)
     before_hashes = fingerprints()
     with threadpool_limits(limits=1):
-        network = production.Case33(candidate_count=count)
+        network = fixed_topology(production.Case33(upgrade_count=count))
         prepare = perf_counter()
         bounds = evaluation_bounds(network, threads=1)
         preparation_seconds = perf_counter()-prepare
         mode = dict(baseline='light', direct_mp='light', direct_all='physical', auto='auto')[variant]
-        solver = ContinuousRegion(network, 'socp', budget, bounds,
-            query=baseline_query if variant == 'baseline' else None,
-            residual_mode=mode, time_limit=args.limit, threads=1)
-        region = production.solve_region(solver)
+        with ExitStack() as adapters:
+            if variant == 'baseline':
+                oracle = PlanningSP(PlanningEquations(network, 'socp'), threads=1)
+                factory = partial(JointCutModel, oracle=oracle, deadline=perf_counter()+args.limit)
+                adapters.enter_context(patch.object(production, 'PlanningModel', factory))
+                adapters.enter_context(patch.object(production, 'PlanningSP', return_value=oracle))
+            region = production.build_continuous_region(network, 'socp', budget, bounds,
+                                                        residual_mode=mode, time_limit=args.limit, threads=1)
         solve_seconds = region['timing']['total_seconds']
         region['budget_index'] = 0
-        record = dict(candidate_count=count, budget=budget, variant=variant,
+        record = dict(candidate_count=count, budget=budget, variant=variant, topology_scope='initial_tree',
+                      network_fingerprint=network.fingerprint,
                       status=region['status'], solve_seconds=solve_seconds,
                       termination='case_time_limit' if region['status']=='time_limit' else 'returned',
                       preparation_seconds=preparation_seconds, case_time_limit=args.limit,
@@ -244,7 +265,7 @@ def supervisor(args):
         record = json.loads(saved.read_text(encoding='utf-8'))
         if record['source_hashes'] != fingerprints():
             raise ValueError('Saved results use different production sources; choose a new --output directory')
-    write_json(args.output/'protocol.json', dict(counts=args.counts, budgets=args.budgets,
+    write_json(args.output/'protocol.json', dict(topology_scope='initial_tree', counts=args.counts, budgets=args.budgets,
         variants=args.variants, time_limit=args.limit, source_hashes=fingerprints(),
         tau=production.REGION_TAU, physical_tolerance=PLANNING_TOL, geometry_tolerance=GEOMETRY_TOL,
         repeats=1, order='Variant order rotates by case; cases run sequentially.'))
@@ -288,7 +309,7 @@ if __name__ == '__main__':
     parser.add_argument('--budgets', nargs='+', type=float, default=[0., 1., 2., np.inf])
     parser.add_argument('--variants', nargs='+', choices=VARIANTS, default=['auto'])
     parser.add_argument('--limit', type=float, default=300.)
-    parser.add_argument('--output', type=Path, default=ROOT/'results/case33bw/latest')
+    parser.add_argument('--output', type=Path, default=ROOT/'results/case33bw/initial_tree_v3')
     parser.add_argument('--worker', action='store_true')
     parser.add_argument('--report-only', action='store_true')
     arguments = parser.parse_args()

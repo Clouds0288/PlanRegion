@@ -4,6 +4,7 @@ from importlib.util import module_from_spec, spec_from_file_location
 from itertools import combinations, product
 import json
 from pathlib import Path
+import sys
 from time import perf_counter
 
 import numpy as np
@@ -12,7 +13,7 @@ from threadpoolctl import threadpool_limits
 from Network.case33bw import Case33
 from Network.four_bus_five_corridor import FourBus
 import model
-from tests.reference import dispatch_support
+from tests.reference import dispatch_support, fixed_topology
 
 
 def query_options(name, network):
@@ -57,7 +58,7 @@ def all_fourbus_trees():
                 problem = model.PlanningModel(e, fixed_plan=plan, threads=1)
                 with problem.model:
                     answer = problem.solve(time_limit=60.)
-                reference = dispatch_support(network.design(plan), method, np.ones(3))
+                reference = dispatch_support(network.tree(network.encode_plan(plan)), method, np.ones(3))
                 delta = abs(answer['objective']-reference['value'])
                 assert answer['status'] == 'optimal' and answer['feasible']
                 assert delta < .002, (method, plan, delta)
@@ -104,12 +105,13 @@ def region_checks(before, after, networks):
     return dict(independent_point_queries=queries, regions=rows)
 
 
-def paired_timings(old_model, networks, repeats):
+def paired_timings(old_model, old_networks, networks, repeats):
     rows = []
     for name, network in networks:
         for method in ('linear', 'socp'):
             modules = dict(before=old_model, after=model)
-            equations = {key: module.PlanningEquations(network, method) for key, module in modules.items()}
+            equations = {key: module.PlanningEquations(old_networks[name] if key == 'before' else network, method)
+                         for key, module in modules.items()}
             samples = {key: [] for key in modules}
             sizes = {}
             for iteration in range(repeats+1):
@@ -126,7 +128,7 @@ def paired_timings(old_model, networks, repeats):
                             sizes[key] = dict(binary=problem.model.NumBinVars, variables=problem.model.NumVars,
                                               constraints=problem.model.NumConstrs, cones=problem.model.NumQConstrs,
                                               physics_variables=problem.state.shape[0],
-                                              connectivity=sum(v.VarName.startswith('connectivity')
+                                              connectivity=sum(v.VarName.startswith(('connectivity', 'f['))
                                                                for v in problem.model.getVars()))
                             started = perf_counter()
                             answer = problem.solve(time_limit=60.)
@@ -147,29 +149,32 @@ def paired_timings(old_model, networks, repeats):
 def run(directory, repeats):
     before = json.loads((directory/'before.json').read_text(encoding='utf-8'))
     after = json.loads((directory/'after.json').read_text(encoding='utf-8'))
+    if after.get('case33_topology_scope') != 'initial_tree':
+        raise ValueError('Paired comparisons require initial-tree Case33 results')
+    source = directory/'source_before'
+    for name, path in (('network_before', source/'Network/__init__.py'),
+                       ('network_before.case33bw', source/'Network/case33bw.py'),
+                       ('network_before.four_bus_five_corridor', source/'Network/four_bus_five_corridor.py')):
+        specification = spec_from_file_location(name, path)
+        module = module_from_spec(specification)
+        sys.modules[name] = module
+        specification.loader.exec_module(module)
+    old_case = sys.modules['network_before.case33bw'].Case33
+    old_networks = {'fourbus': sys.modules['network_before.four_bus_five_corridor'].FourBus(),
+                    'case33_8': old_case(candidate_count=8), 'case33_16': old_case(candidate_count=16)}
     spec = spec_from_file_location('model_before_signed_flow', directory/'source_before/model.py')
     old_model = module_from_spec(spec)
     spec.loader.exec_module(old_model)
-    networks = [('fourbus', FourBus()), ('case33_8', Case33(candidate_count=8)),
-                ('case33_16', Case33(candidate_count=16))]
+    networks = [('fourbus', FourBus()), ('case33_8', fixed_topology(Case33(upgrade_count=8))),
+                ('case33_16', fixed_topology(Case33(upgrade_count=16)))]
     report = dict(threads=1, direct=direct_checks(before, after))
     with threadpool_limits(limits=1):
-        for _, network in networks[1:]:
-            for method in ('linear', 'socp'):
-                old, new = (module.PlanningEquations(network, method) for module in (old_model, model))
-                # 历史快照保留余量形式；当前模型使用 Ax+By+Cp≼_K b。
-                for old_field, new_field, sign in (('c', 'b', 1), ('F', 'C', -1), ('G', 'B', -1),
-                                                   ('upper', 'y_ub_global', 1),
-                                                   ('box_constant', 'ub_const', 1),
-                                                   ('box_selection', 'ub_x', 1), ('cost', 'cost', 1)):
-                    np.testing.assert_array_equal(sign*getattr(old, old_field), getattr(new, new_field))
-                assert not new.A.any() and not new.y_lb_global.any()
-        report['case33_unchanged_matrix_comparisons'] = 28
+        report['case33_topology_scope'] = 'initial_tree'
         report['fourbus_physics'] = all_fourbus_trees()
         print(json.dumps(report), flush=True)
         report['region_audit'] = region_checks(before, after, networks)
         print(json.dumps(report['region_audit']), flush=True)
-        report['paired_timings'] = paired_timings(old_model, networks, repeats)
+        report['paired_timings'] = paired_timings(old_model, old_networks, networks, repeats)
     (directory/'audit.json').write_text(json.dumps(report, indent=2), encoding='utf-8')
     print(json.dumps(report['paired_timings']), flush=True)
 

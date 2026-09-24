@@ -16,7 +16,7 @@ import numpy as np
 from threadpoolctl import threadpool_limits
 
 import main
-from plot import RunMonitor, cut_slice, pack_replay
+from plot import RunMonitor, cut_slice, json_value, pack_replay
 from vertify import validate_ac_region
 
 
@@ -53,6 +53,36 @@ class ProgressTests(unittest.TestCase):
             np.testing.assert_allclose(vertices[:, 0], expected)
             np.testing.assert_allclose(vertices@cut[1:4]+sliced['constant'], 0., atol=1e-10)
         self.assertEqual(cut_slice([1., 0., 0., 0., -2.], [1], [5.]*3)['vertices'], [])
+
+    def test_live_cuts_preserve_solver_result_and_show_clipped_geometry(self):
+        net, bounds = main.FourBus(), [150., 150., 150.]
+        with threadpool_limits(limits=1), RunMonitor(record=True, stream=StringIO()) as monitor:
+            shown = main.build_continuous_region(net, 'linear', 0., bounds, threads=1, progress=monitor)
+            plain = main.build_continuous_region(net, 'linear', 0., bounds, threads=1)
+        self.assertEqual(json_value({k: v for k, v in shown.items() if k != 'timing'}),
+                         json_value({k: v for k, v in plain.items() if k != 'timing'}))
+        state, cuts = {}, 0
+        for frame in monitor.history:
+            previous = state.copy()
+            state.update(frame['patch'])
+            if state['event'] == 'point' and previous.get('latest_cut') is not None:
+                self.assertEqual(state['latest_cut'], previous['latest_cut'])
+            if state['event'] != 'cut':
+                continue
+            cuts += 1
+            cut = np.asarray(state['latest_cut']['joint_coefficients'])
+            choice = state['latest_cut']['choice']
+            before = next(g for g in previous['geometry'] if g['choice'] == choice)
+            before_values = cut[0]+np.asarray(before['outer']['vertices'])@cut[1:4]+cut[4:]@net.encode_plan(choice)
+            self.assertLess(before_values.min(), -1e-8)
+            for geometry in state['geometry']:
+                vertices = np.asarray(geometry['outer']['vertices']).reshape(-1, 3)
+                values = cut[0]+vertices@cut[1:4]+cut[4:]@net.encode_plan(geometry['choice'])
+                self.assertTrue(np.all(values >= -1e-8))
+            plane = state['latest_cut']
+            np.testing.assert_allclose(np.asarray(plane['vertices'])@plane['normal']+plane['constant'], 0., atol=1e-8)
+        self.assertGreater(cuts, 0)
+        self.assertEqual(cuts, shown['counts']['cuts'])
 
 
     def test_unknown_phase_never_reports_full_classification(self):
@@ -111,13 +141,18 @@ class ProgressTests(unittest.TestCase):
 
     def test_final_result_round_trip_has_only_core_records(self):
         with TemporaryDirectory() as folder, redirect_stdout(StringIO()), patch('plot.webbrowser.open') as browser:
-            result = main.run(main.Case33(candidate_count=4), budgets=[0.], divisions=2,
+            result = main.run(main.FourBus(), budgets=[0.], divisions=2,
                               show_ui=True, output=folder, threads=1)
             self.assertEqual(result.states.shape, (4, 1, 2, 2, 2))
             self.assertTrue((Path(folder)/'region_comparison.html').exists())
             browser.assert_called_once()
-            self.assertFalse((Path(folder)/'events.jsonl').exists())
-            self.assertFalse((Path(folder)/'replay.json').exists())
+            saved = json.loads((Path(folder)/'replay.json').read_text(encoding='utf-8'))
+            self.assertEqual(saved['status'], 'completed')
+            events = [frame['patch'].get('event') for frame in saved['history']]
+            self.assertIn('mp_start', events)
+            self.assertIn('point', events)
+            self.assertTrue((Path(folder)/'events.jsonl').exists())
+            self.assertTrue((Path(folder)/'live_view.html').exists())
             for region in result.metadata['continuous']:
                 self.assertEqual(set(region['counts']), {'sp', 'cuts'})
                 self.assertEqual(set(region['timing']), {'total_seconds'})

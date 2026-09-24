@@ -31,9 +31,9 @@ class FourBusTests(unittest.TestCase):  # 不生成建设组合表，审核代�
 
     def test_original_corridors_types_and_costs(self):  # 防止基础算例再次被删减为固定三线路树。
         c = FourBus()  # 新建网架不应预先求解或生成方案表。
-        self.assertEqual([(e.endpoints, e.existing_type, e.initial_active, e.must_use) for e in c.corridors],
-                         [((0,1),'L',True,False),((1,2),'L',True,False),((1,3),'L',True,False),
-                          ((0,2),None,False,False),((2,3),None,False,False)])
+        self.assertEqual([(e.endpoints, e.existing_type, e.initial_active) for e in c.corridors],
+                         [((0,1),'L',True),((1,2),'L',True),((1,3),'L',True),
+                          ((0,2),None,False),((2,3),None,False)])
         self.assertEqual([(t.name,t.r_ohm_km,t.x_ohm_km,t.capacity_kw,t.cable_cny_m) for t in c.lines],  # 原三种设备。
                          [('L',1.15,.08,35.,28.),('M',.62,.08,65.,43.),('H',.32,.08,100.,65.)])
         self.assertEqual(c.budgets,(20000.,40000.,60000.,np.inf))  # 默认预算保持元单位。
@@ -45,14 +45,14 @@ class FourBusTests(unittest.TestCase):  # 不生成建设组合表，审核代�
     def test_selected_trees_match_independent_physics(self):  # 覆盖原树、12 反向和 23 反向三种代表结构。
         c = FourBus()
         for choice in PLANS:
-            tree = c.design(choice)  # 仅创建这一棵树。
+            tree = c.tree(c.encode_plan(choice))  # 仅创建这一棵树。
             for method in ('linear','socp'):  # 两套规划物理假设分别核对。
                 e = PlanningEquations(c,method)  # 所有候选走廊都进入紧凑模型。
-                x = e.selection(choice)  # 只编码型号，潮流方向由功率符号决定。
-                self.assertEqual(e.choice(x),choice)
+                x = e.network.encode_plan(choice)  # 只编码型号，潮流方向由功率符号决定。
+                self.assertEqual(e.network.decode_plan(x),choice)
                 direct = PlanningModel(e, threads=1)  # 保留同一套原始方程。
                 with direct.model:  # 每次查询及时释放求解器。
-                    direct.x_vector.LB = direct.x_vector.UB = x  # 固定指定拓扑和设备。
+                    direct.x.LB = direct.x.UB = x  # 固定指定拓扑和设备。
                     answer = direct.solve()  # 求最大总负荷。
                 reference = dispatch_support(tree,method,np.ones(3))  # 独立消元计算。
                 self.assertEqual(answer['status'],'optimal')  # 未确定不视为通过。
@@ -60,10 +60,10 @@ class FourBusTests(unittest.TestCase):  # 不生成建设组合表，审核代�
 
     def test_topology_rejects_island_cycle_at_zero_load(self):  # 零负荷也不能让孤岛环通过径向约束。
         e = PlanningEquations(FourBus(),'linear')  # 规划中必须供到全部非根节点。
-        x = e.selection({'01': None, '12': 'L', '13': 'L', '02': None, '23': 'L'})
+        x = e.network.encode_plan({'01': None, '12': 'L', '13': 'L', '02': None, '23': 'L'})
         problem = PlanningModel(e,power=np.zeros(3),cuts_only=True, threads=1)  # 只用 MP 拓扑约束，不借助物理负荷排除环。
         with problem.model:  # 测试后释放模型。
-            problem.x_vector.LB = problem.x_vector.UB = x  # 强制孤岛环作为候选。
+            problem.x.LB = problem.x.UB = x  # 强制孤岛环作为候选。
             self.assertIsNone(problem.solve())  # 连通流必须给出明确不可行证明。
 
     def test_joint_queries_and_cuts_match_full_planning_model(self):  # 联合割必须适用于所有合法树和型号。
@@ -78,12 +78,12 @@ class FourBusTests(unittest.TestCase):  # 不生成建设组合表，审核代�
                 self.assertEqual(answer['status'],'optimal')  # 两种查询必须真正闭合间隙。
                 self.assertEqual(reference['status'],'optimal')  # 参考也不能使用未完成结果。
                 self.assertAlmostEqual(answer['objective'],reference['objective'],delta=1e-5)  # 比较元单位最低投资。
-            x = e.selection(e.network.initial_plan)
+            x = e.network.encode_plan(e.network.initial_plan)
             cut = PlanningSP(e, threads=1).solve(x,np.array([40.,40.,40.]))['cut']  # 含型号及拓扑变量的分离割。
             self.assertIsNotNone(cut)  # 必须实际形成分离证书。
             direct = PlanningModel(e, threads=1)  # 遍历由求解器隐式搜索的全部合法拓扑。
             with direct.model:  # 测试该割在整个紧凑可行域上的最小余量。
-                direct.model.setObjective(cut[0]+cut[1:4]@direct.power+cut[4:]@direct.x_vector,GRB.MINIMIZE)  # 不加入被审核割。
+                direct.model.setObjective(cut[0]+cut[1:4]@direct.power+cut[4:]@direct.x,GRB.MINIMIZE)  # 不加入被审核割。
                 direct.model.Params.TimeLimit = 20.  # 仅限制测试的审核时间。
                 direct.model.optimize()  # 全局下界检查，未靠抽样宣称有效。
                 self.assertGreaterEqual(direct.model.ObjBound,-1e-7)  # 不能误切任何合法树上的可行点。
@@ -91,7 +91,7 @@ class FourBusTests(unittest.TestCase):  # 不生成建设组合表，审核代�
     def test_independent_ac_on_reconfigured_trees(self):  # 独立 AC 必须读取选中树，而非一直使用原始拓扑。
         c = FourBus()  # 仅共享物理配置。
         for choice in PLANS:
-            oracle = ACPowerFlow(c.design(choice), threads=1)  # 直接把当前树交给独立模型。
+            oracle = ACPowerFlow(c.tree(c.encode_plan(choice)), threads=1)  # 直接把当前树交给独立模型。
             try:  # 非凸求解器按需创建并及时释放。
                 for power in ([3.,4.,5.],[50.,50.,50.]):  # 确保可行与不可行均被核验。
                     self.assertEqual(int(oracle.classify(power)[0]),oracle.global_status(power,None))  # 不动点与显式 AC 等式一致。

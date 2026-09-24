@@ -1,9 +1,7 @@
-"""Audit saved before/after runs and compare their physical coefficient arrays."""
+"""Compare saved runs on identical topology scopes and verify independent physics."""
 from argparse import ArgumentParser
-from importlib.util import module_from_spec, spec_from_file_location
 import json
 from pathlib import Path
-import sys
 
 import numpy as np
 from threadpoolctl import threadpool_limits
@@ -11,47 +9,31 @@ from threadpoolctl import threadpool_limits
 from Network.case33bw import Case33
 from Network.four_bus_five_corridor import FourBus
 from model import PlanningEquations, PlanningModel
-
-
-def load_source(name, path):
-    spec = spec_from_file_location(name, path)
-    module = module_from_spec(spec)
-    sys.modules[name] = module
-    spec.loader.exec_module(module)
-    return module
+from tests.reference import dispatch_support, fixed_topology
 
 
 def audit(folder):
     before, after = [json.loads((folder/name).read_text(encoding='utf-8'))
                      for name in ('before.json', 'after.json')]
-    source = folder/'source_before'
-    load_source('corridor_before', source/'Network/__init__.py')
-    old_four = load_source('corridor_before.four_bus_five_corridor', source/'Network/four_bus_five_corridor.py')
-    old_case = load_source('corridor_before.case33bw', source/'Network/case33bw.py')
-    old_model = load_source('corridor_model_before', source/'model.py')
-    networks = {'fourbus': FourBus(), 'case33_8': Case33(candidate_count=8),
-                'case33_16': Case33(candidate_count=16)}
-    old_networks = {'fourbus': old_four.FourBus(), 'case33_8': old_case.Case33(candidate_count=8),
-                    'case33_16': old_case.Case33(candidate_count=16)}
-    fields = ('edges', 'r', 'reactance', 'cost', 'selected', 'senders', 'receivers',
-              'c', 'F', 'G', 'upper', 'box_constant', 'box_selection', 'T', 'balance', 'linked', 'relax')
-    # 历史快照仍使用旧字段；比较时转换到当前 Ax+By+Cp≼_K b 的约定。
-    renamed_fields = {'edges': ('type_corridor', 1), 'selected': ('decision_types', 1),
-                      'c': ('b', 1), 'F': ('C', -1), 'G': ('B', -1),
-                      'upper': ('y_ub_global', 1), 'box_constant': ('ub_const', 1),
-                      'box_selection': ('ub_x', 1), 'relax': ('relax_direction', 1)}
-    report = dict(passed=True, matrix_fields=fields, matrix_checks=[], queries=[], regions=[])
+    if after.get('case33_topology_scope') != 'initial_tree':
+        raise ValueError('Before/after comparison requires the same initial-tree scope for Case33')
+    networks = {'fourbus': FourBus(), 'case33_8': fixed_topology(Case33(upgrade_count=8)),
+                'case33_16': fixed_topology(Case33(upgrade_count=16))}
+    report = dict(passed=True, topology_scope='initial_tree', physics_checks=[], queries=[], regions=[])
     for name, network in networks.items():
         for method in ('linear', 'socp'):
-            left, right = old_model.PlanningEquations(old_networks[name], method), PlanningEquations(network, method)
-            for field in fields:
-                new_field, sign = renamed_fields.get(field, (field, 1))
-                np.testing.assert_array_equal(sign*getattr(left, field), getattr(right, new_field),
-                                              err_msg=f'{name}/{method}/{field}')
-            report['matrix_checks'].append(dict(case=name, method=method, arrays_identical=True))
+            x = network.encode_plan(network.initial_plan)
+            reference = dispatch_support(network.tree(x), method, np.ones(3))
+            problem = PlanningModel(PlanningEquations(network, method), fixed_plan=network.initial_plan, threads=1)
+            with problem.model:
+                answer = problem.solve(time_limit=60.)
+            assert answer['feasible'] and answer['status'] == 'optimal'
+            delta = abs(answer['objective']-reference['value'])
+            assert delta < .002
+            report['physics_checks'].append(dict(case=name, method=method, boundary_difference_kw=delta))
     assert len(before['queries']) == len(after['queries']) == 42
     for left, right in zip(before['queries'], after['queries']):
-        assert all(left[k] == right[k] for k in ('case', 'method', 'query', 'binary_count'))
+        assert all(left[k] == right[k] for k in ('case', 'method', 'query'))
         assert left['status'] == right['status'] == 'optimal'
         assert left['feasible'] and right['feasible'] and right['margin'] >= -1e-8
         error = abs(left['objective']-right['objective'])

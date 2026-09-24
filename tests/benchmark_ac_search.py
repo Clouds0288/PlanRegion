@@ -1,4 +1,4 @@
-"""Independent AC audit of the saved physical-search experiment, without re-solving it.
+"""Independent AC audit of the saved initial-tree upgrade experiment.
 
 Finite budgets enumerate every affordable design. Infinite-budget positive labels
 need an actual AC witness; negative labels need a global all-design search. The
@@ -20,24 +20,27 @@ from plot import sample_region
 from vertify import classify_orthant, split_grid_box
 from vertify import ACPowerFlow, AC_TOL, FIXED_POINT_TOL, ac_planning_query
 from plot import disagreement_interval
-from tests.reference import validate_power_flow
+from tests.reference import validate_power_flow, fixed_topology
 from tests.benchmark_physical_search import (ROOT, VARIANTS, LABELS, fingerprints,
                                              write_json, case_name)
 
-DEFAULT = ROOT/'results/case33bw/latest'
+DEFAULT = ROOT/'results/case33bw/initial_tree_v3'
 
 
 def affordable_designs(network, budget):
-    """独立参考只枚举预算内方案；按费用剪枝，32 候选预算 2 仅有 498 种。"""
+    """固定初始拓扑的升级枚举；不能作为完整重构域的参考。"""
+    if network.n_corridors != network.n or not all(c.initial_active for c in network.corridors):
+        raise ValueError('Upgrade enumeration requires a fixed initial topology')
     if not np.isfinite(budget):
         raise ValueError('Unlimited budgets require global search, not enumeration')
     result = []
+    upgrades = [c for c in network.corridors if len(c.types) > 1]
     def visit(index, cost, chosen):
-        if index == len(network.planning_corridors):
+        if index == len(upgrades):
             choice = chosen
-            result.append((cost, choice, ACPowerFlow(network.design(choice), threads=1)))
+            result.append((cost, choice, ACPowerFlow(network.tree(network.encode_plan(choice)), threads=1)))
             return
-        corridor = network.planning_corridors[index]
+        corridor = upgrades[index]
         for line_type in corridor.types:
             price = line_type.investment_cost
             if price < 0.:
@@ -82,7 +85,7 @@ def fixed_rays(oracle, rays, steps=24):
 
 def certify_infinite_grid(network, points, divisions, folder):
     started = perf_counter()
-    seed = ACPowerFlow(network.design({c.id: c.types[-1].id for c in network.corridors}), threads=1).classify(points)
+    seed = ACPowerFlow(network.tree(network.encode_plan({c.id: c.types[-1].id for c in network.corridors})), threads=1).classify(points)
     # Only positive AC certificates are reusable across the union.
     states = np.where(seed == 1, 1, 0).astype(np.int8).reshape((divisions,)*3)
     equation = PlanningEquations(network, 'socp')
@@ -109,7 +112,7 @@ def certify_infinite_grid(network, points, divisions, folder):
                                 seconds=perf_counter()-tick,
                                 bound=None if answer is None else answer['bound'],
                                 choice=None if answer is None or answer['x'] is None
-                                else equation.choice(answer['x'])))
+                                else equation.network.decode_plan(answer['x'])))
             if len(queries) % 25 == 0:
                 write_json(folder/'progress.json', dict(stage='infinite_grid',
                     queries=len(queries), unresolved=int((states == 0).sum()),
@@ -191,7 +194,7 @@ def audit_ac_case(network, record, reference, ac_labels, designs, points):
         powers = np.asarray(row['inner']['vertices']).reshape(-1, 3)
         if not len(powers):
             continue
-        oracle = ACPowerFlow(network.design(row['choice']), threads=1)
+        oracle = ACPowerFlow(network.tree(network.encode_plan(row['choice'])), threads=1)
         labels = oracle.classify(powers)
         total += len(powers)
         accepted += int((labels == 1).sum())
@@ -211,7 +214,7 @@ def audit_ac_case(network, record, reference, ac_labels, designs, points):
         if budget is not None:
             union, _ = union_labels([d for d in designs if d[0] <= budget], fail_points)
         else:
-            union = ACPowerFlow(network.design({c.id: c.types[-1].id for c in network.corridors}), threads=1).classify(fail_points)
+            union = ACPowerFlow(network.tree(network.encode_plan({c.id: c.types[-1].id for c in network.corridors})), threads=1).classify(fail_points)
             equation = PlanningEquations(network, 'socp')
             for i in np.flatnonzero(union != 1):
                 answer = ac_planning_query(equation, fail_points[i], threads=1)
@@ -220,7 +223,7 @@ def audit_ac_case(network, record, reference, ac_labels, designs, points):
             failure['union_status'] = int(status)
     maximum = None
     if result['max_point'] is not None:
-        oracle = ACPowerFlow(network.design(result['max_choice']), threads=1)
+        oracle = ACPowerFlow(network.tree(network.encode_plan(result['max_choice'])), threads=1)
         maximum = dict(point=result['max_point'], choice=result['max_choice'],
             total_kw=result['max_total'], ac_status=int(oracle.classify(result['max_point'])[0]),
             diagnostic=converged_diagnostics(oracle, result['max_point'])[0])
@@ -281,7 +284,7 @@ def run_ac_benchmark(args):
     original_protocol = json.loads((args.output/'protocol.json').read_text(encoding='utf-8'))
     if before != original_protocol['source_hashes']:
         raise ValueError('Production sources differ from saved benchmark; refuse mixed-version comparison')
-    protocol = dict(divisions=args.divisions, ac_tolerance=AC_TOL,
+    protocol = dict(topology_scope='initial_tree', divisions=args.divisions, ac_tolerance=AC_TOL,
         fixed_point_tolerance=FIXED_POINT_TOL, finite_budgets=[0, 1, 2],
         source_hashes=before,
         purpose='AC checks of saved domains only; sampling does not replace continuous-domain certification')
@@ -296,7 +299,7 @@ def run_ac_benchmark(args):
                 raise ValueError(f'No construction records for {count} candidates')
             for original in originals:
                 assert original['source_hashes'] == before
-            network = Case33(candidate_count=count)
+            network = fixed_topology(Case33(upgrade_count=count))
             bounds[str(count)] = originals[0]['bounds']
             if (folder/'reference.json').exists():
                 reference = json.loads((folder/'reference.json').read_text(encoding='utf-8'))
@@ -323,7 +326,7 @@ def run_ac_benchmark(args):
             # Check a second independent AC implementation on base and upgraded networks.
             cross = []
             for choice in (network.initial_plan, {c.id: c.types[-1].id for c in network.corridors}):
-                cross.append(dict(choice=choice, **validate_power_flow(network.design(choice))))
+                cross.append(dict(choice=choice, **validate_power_flow(network.tree(network.encode_plan(choice)))))
             write_json(folder/'nodal_cross_checks.json', cross)
     records.sort(key=lambda r: (r['candidate_count'], np.inf if r['budget'] is None else r['budget'], VARIANTS.index(r['variant'])))
     certified = [r for r in records if r['construction_status'] == 'certified']

@@ -1,20 +1,24 @@
-"""唯一网架数据源：基础负荷、径向结构和逐线路型号；功率用 kW/kvar。"""
-from dataclasses import dataclass  # 声明物理数据字段。
-from functools import cached_property  # 固定网架的派生矩阵只计算一次。
-import numpy as np  # 统一节点、支路和型号参数的数组顺序。
+"""候选网架与选定运行树；节点、走廊、型号分别使用唯一索引。"""
+from dataclasses import asdict, dataclass
+from functools import cached_property
+import hashlib
+import json
+
+import numpy as np
+from scipy import sparse
 
 
-@dataclass(frozen=True)  # 投资项目的配置保持不可变。
-class Project:  # 固定拓扑下的单条支路改造项目。
-    """同走廊增设一回相同线路；建成后的等值阻抗为原值的一半。"""
-    name: str  # 改造项目名称。
-    branch: tuple[int, int]  # 原支路的两个真实端点。
-    cost: float  # 项目的增量投资，单位由母网定义。
+@dataclass(frozen=True)
+class Project:
+    """同走廊并联一回相同线路；费用为增量投资。"""
+    name: str
+    branch: tuple[int, int]
+    cost: float
 
 
 @dataclass(frozen=True)
 class TypeParameters:
-    """某条走廊的一个型号配置；阻抗/容量为 p.u.，费用为增量投资。"""
+    """阻抗、送端有功容量用 p.u.；费用单位由网架定义。"""
     id: str
     r: float
     reactance: float
@@ -24,169 +28,304 @@ class TypeParameters:
 
 @dataclass(frozen=True)
 class Corridor:
-    """统一电力走廊；原始设备、原始开合状态和规划使用要求相互独立。"""
     id: str
     endpoints: tuple
     existing_type: str | None
     initial_active: bool
-    must_use: bool
     types: tuple[TypeParameters, ...]
 
 
-@dataclass  # 由字段声明生成固定径向网架的初始化函数。
-class RadialNetwork:  # 所有运行模型读取的统一径向网架数据。
-    """固定方案；阻抗和限值用 p.u.，负荷用 kW/kvar。
+@dataclass
+class Network:
+    """完整候选图。初始开合状态只用于生成初始方案，不限制规划。
 
-    nodes 只列非根节点，load_nodes 是独立变化的负荷节点。
-    capacity 是支路送端有功上限；未给定的限值用 inf，不补造额定值。
+    nodes 仅含非根节点；required 指定必须接入的节点。
+    型号按走廊顺序连续展开，x/P/Q/ell 与 r/reactance/capacity/cost 共用该顺序。
+    负荷用 kW/kvar，base 用 kVA，vmin/vmax 为电压标幺值的平方。
     """
+    name: str
+    root: object
+    nodes: tuple
+    corridors: tuple[Corridor, ...]
+    base: float
+    voltage_kv: float
+    original_p: np.ndarray
+    original_q: np.ndarray
+    load_nodes: tuple
+    q_ratio: np.ndarray
+    vmin: object
+    vmax: object
+    power_limit: float
+    required: object = True
+    source_pmax: float = np.inf
+    source_qmax: float = np.inf
+    source_smax: float = np.inf
+    sources: tuple = ()
 
-    name: str  # 所属算例名称。
-    root: int  # 固定电压的电源根节点。
-    nodes: tuple  # 只含非根节点，决定所有节点数组的顺序。
-    branches: object  # 原始支路端点表，初始化时定向为根到叶。
-    r: object  # 原始支路顺序下的标幺电阻。
-    reactance: object  # 原始支路顺序下的标幺电抗。
-    base: float  # 数值为 kVA；P/Q 用相同基准转换成标幺值。
-    voltage_kv: float  # 基准线电压，kV。
-    original_p: np.ndarray  # 非根节点的原始有功负荷，kW。
-    original_q: np.ndarray  # 非根节点的原始无功负荷，kvar。
-    load_nodes: tuple  # 用于区域坐标的独立变化节点。
-    q_ratio: np.ndarray  # 独立节点的固定 Q/P 比例。
-    vmin: object  # 节点电压幅值下限的平方（p.u.²）。
-    vmax: object  # 节点电压幅值上限的平方（p.u.²）。
-    power_limit: float  # 三个独立节点的总负荷外界（kW），不直接等同于源端容量。
-    capacity: object = np.inf  # 支路送端有功上限，p.u.；未给定则不限制。
-    source_pmax: float = np.inf  # 源端送出有功上限，p.u.。
-    source_qmax: float = np.inf  # 源端送出无功上限，p.u.。
-    source_smax: float = np.inf  # 源端视在容量上限，p.u.。
-    x: object = ()  # 本固定方案的离散建设记录。
-    cost: float = 0.  # 本方案增量投资，基础固定方案默认零费用。
-    sources: tuple = ()  # 决定物理输入的源码文件列表。
+    cost_unit = '相对投资单位'
+    budgets = (0., 1., 2., np.inf)
 
-    cost_unit = "相对投资单位"  # 规划费用的单位由具体网架设置。
-    budgets = (0., 1., 2., np.inf)  # 网架的默认测试预算，可在 Notebook 中覆盖。
+    def __post_init__(self):
+        self.nodes, self.corridors, self.load_nodes = tuple(self.nodes), tuple(self.corridors), tuple(self.load_nodes)
+        if self.root in self.nodes or len(set(self.nodes)) != self.n:
+            raise ValueError('nodes must be unique and exclude the root')
+        self.node_index = {node: i for i, node in enumerate(self.nodes)}
+        self.node_index[self.root] = -1
+        self.selected = np.array([self.node_index[node] for node in self.load_nodes], dtype=int)
+        if np.any(self.selected < 0) or len(set(self.load_nodes)) != len(self.load_nodes):
+            raise ValueError('load_nodes must be distinct nonroot nodes')
+        for name in ('original_p', 'original_q', 'vmin', 'vmax'):
+            setattr(self, name, np.broadcast_to(getattr(self, name), (self.n,)).astype(float))
+        self.q_ratio = np.broadcast_to(self.q_ratio, (len(self.load_nodes),)).astype(float)
+        self.required = np.broadcast_to(self.required, (self.n,)).astype(bool)
+        self.required |= (self.original_p != 0.) | (self.original_q != 0.)
+        self.required[self.selected] = True
+        if len({c.id for c in self.corridors}) != self.n_corridors:
+            raise ValueError('corridor IDs must be unique')
+        senders, receivers, keys, blocks, parameters = [], [], [], [], []
+        for corridor in self.corridors:
+            a, b = (self.node_index[node] for node in corridor.endpoints)
+            if a == b or not corridor.types or len({t.id for t in corridor.types}) != len(corridor.types):
+                raise ValueError(f'invalid corridor: {corridor.id}')
+            if corridor.initial_active and corridor.existing_type not in {t.id for t in corridor.types}:
+                raise ValueError(f'missing initial type: {corridor.id}')
+            a, b = (b, a) if b < 0 else (a, b)
+            senders.append(a)
+            receivers.append(b)
+            blocks.append(slice(len(keys), len(keys)+len(corridor.types)))
+            keys.extend((corridor.id, t.id) for t in corridor.types)
+            parameters.extend(corridor.types)
+        self.senders, self.receivers = np.array(senders), np.array(receivers)
+        self.type_keys, self.type_slices = tuple(keys), tuple(blocks)
+        self.type_corridor = np.repeat(np.arange(self.n_corridors), [len(c.types) for c in self.corridors])
+        self.r, self.reactance, self.capacity, self.cost = (
+            np.array([getattr(t, name) for t in parameters], dtype=float)
+            for name in ('r', 'reactance', 'capacity', 'investment_cost'))
 
     @property
-    def operating_corridors(self):
-        """从当前固定树生成统一记录；不创建任何选型自由度。"""
-        result = []
-        for i, parent in enumerate(self.parent):
-            a, b = self.root if parent < 0 else self.nodes[parent], self.nodes[i]
-            line = TypeParameters('existing', float(self.r[i]), float(self.reactance[i]),
-                                  float(self.capacity[i]), 0.)
-            result.append(Corridor(f'{a}-{b}', (a, b), line.id, True, True, (line,)))
-        return tuple(result)
+    def n(self):
+        return len(self.nodes)
+
+    @property
+    def n_corridors(self):
+        return len(self.corridors)
+
+    @property
+    def n_types(self):
+        return len(self.type_keys)
 
     @cached_property
-    def corridors(self):
-        return self.operating_corridors
+    def corridor_types(self):
+        """走廊投入状态 z = corridor_types @ x。"""
+        return sparse.csr_matrix((np.ones(self.n_types), (self.type_corridor, np.arange(self.n_types))),
+                                 shape=(self.n_corridors, self.n_types))
 
-    @property
-    def planning_corridors(self):
-        """有投入或型号选择的走廊；固定单型号走廊不增加二进制变量。"""
-        return tuple(c for c in self.corridors if not c.must_use or len(c.types) > 1)
+    @cached_property
+    def receiving(self):
+        return sparse.csr_matrix((np.ones(self.n_corridors), (self.receivers, np.arange(self.n_corridors))),
+                                 shape=(self.n, self.n_corridors))
+
+    @cached_property
+    def sending(self):
+        edges = np.flatnonzero(self.senders >= 0)
+        return sparse.csr_matrix((np.ones(len(edges)), (self.senders[edges], edges)),
+                                 shape=(self.n, self.n_corridors))
+
+    @cached_property
+    def incidence(self):
+        return self.receiving-self.sending
+
+    @cached_property
+    def E(self):
+        return sparse.csr_matrix((np.ones(len(self.selected)), (self.selected, np.arange(len(self.selected)))),
+                                 shape=(self.n, len(self.selected)))
+
+    @cached_property
+    def fixed_p(self):
+        values = self.original_p.copy()
+        values[self.selected] = 0.
+        return values
+
+    @cached_property
+    def fixed_q(self):
+        values = self.original_q.copy()
+        values[self.selected] = 0.
+        return values
+
+    def loads(self, power):
+        power = np.asarray(power).reshape(-1, len(self.load_nodes))
+        return ((self.fixed_p+power@self.E.T)/self.base,
+                (self.fixed_q+(power*self.q_ratio)@self.E.T)/self.base)
 
     @property
     def initial_plan(self):
         return {c.id: c.existing_type if c.initial_active else None for c in self.corridors}
 
-    def design(self, plan):
-        """从具名方案生成固定径向网；未投入走廊不进入潮流计算。"""
-        selected = [(c, next(t for t in c.types if t.id == plan[c.id]))
-                    for c in self.corridors if plan[c.id] is not None]
-        return RadialNetwork(self.name, self.root, self.nodes,
-            [c.endpoints for c, t in selected], [t.r for c, t in selected],
-            [t.reactance for c, t in selected], self.base, self.voltage_kv,
-            self.original_p, self.original_q, self.load_nodes, self.q_ratio,
-            self.vmin, self.vmax, self.power_limit,
-            capacity=[t.capacity for c, t in selected], source_pmax=self.source_pmax,
-            source_qmax=self.source_qmax, source_smax=self.source_smax, x=dict(plan),
-            cost=sum(t.investment_cost for c, t in selected), sources=self.sources)
+    def encode_plan(self, plan):
+        """I/O 边界：完整走廊方案转为型号向量。"""
+        if set(plan) != {c.id for c in self.corridors}:
+            raise ValueError('plan must specify every corridor')
+        for corridor in self.corridors:
+            if plan[corridor.id] not in {None, *(t.id for t in corridor.types)}:
+                raise ValueError(f'unknown type for corridor {corridor.id}')
+        return np.array([plan[c] == t for c, t in self.type_keys], dtype=int)
 
-    def __post_init__(self):  # 根据无向支路建立径向顺序并统一所有数组的索引。
-        adjacency = {i: [] for i in (self.root, *self.nodes)}  # 先构造无向邻接表，再确定根向拓扑。
-        for k, (a, b) in enumerate(self.branches):  # 支路编号用于稍后重排对应的设备参数。
-            adjacency[a].append((b, k))  # 向端点 a 记录邻接节点 b 及支路编号。
-            adjacency[b].append((a, k))  # 同时记录反方向，使输入走廊无须预先定向。
-        parent, edge, order = {self.root: None}, {}, [self.root]  # 记录父节点、入边和从根到叶的遍历次序。
-        for node in order:  # 沿从根开始的队列遍历网络。
-            for child, k in adjacency[node]:  # 查看当前节点相邻的每条支路。
-                if child not in parent:  # 只访问尚未确定父节点的新节点。
-                    parent[child], edge[child] = node, k  # 记录该节点的父节点和入边编号。
-                    order.append(child)  # 将新节点加入从根到叶的处理顺序。
-        assert len(order) == self.n+1 and len(self.branches) == self.n  # 支路递推只适用于连通径向网。
-        self.parent = np.array([-1 if parent[i] == self.root else self.nodes.index(parent[i])  # 根端映射为 −1，其余父节点映射为内部索引。
-                                for i in self.nodes])  # 内部索引中 -1 表示接电源根节点。
-        self.order = [self.nodes.index(i) for i in order[1:]]  # 将真实节点号转换为数组索引。
-        indices = [edge[i] for i in self.nodes]  # 第 i 条模型支路必须以第 i 个非根节点为受端。
-        self.r, self.reactance = (np.asarray(a)[indices] for a in (self.r, self.reactance))  # 按受端节点重排支路阻抗。
-        self.capacity = np.broadcast_to(self.capacity, (self.n,))[indices]  # 支路有功上限使用相同重排。
-        self.vmin, self.vmax = (np.broadcast_to(a, (self.n,)) for a in (self.vmin, self.vmax))  # 电压限值按节点给定，不按边重排。
+    def decode_plan(self, x):
+        x = self._binary_selection(x)
+        return {c.id: next((t.id for t, chosen in zip(c.types, x[s]) if chosen), None)
+                for c, s in zip(self.corridors, self.type_slices)}
 
-    @property  # 非根节点数按当前节点表读取。
-    def n(self):  # 返回径向网络的支路数及非根节点数。
-        return len(self.nodes)  # 树中每个非根节点恰有一条入边。
+    def _binary_selection(self, x):
+        x = np.asarray(x)
+        if x.shape != (self.n_types,) or not np.isin(x, (0, 1)).all():
+            raise ValueError('x must be a binary vector in type order')
+        if np.any(self.corridor_types@x > 1):
+            raise ValueError('at most one type may be selected per corridor')
+        return x
 
-    @cached_property  # 缓存独立负荷在完整节点数组中的位置。
-    def selected(self):  # 返回三维负荷坐标对应的内部节点索引。
-        return np.array([self.nodes.index(i) for i in self.load_nodes])  # 三个独立负荷节点在全网数组中的位置。
+    def tree(self, x):
+        return OperatingTree(self, self._binary_selection(x))
 
-    @cached_property  # 接根支路列表与查询负荷无关，只计算一次。
-    def roots(self):  # 找出计算电源送出功率所需的支路。
-        return np.flatnonzero(self.parent < 0)  # 电源直接送出的各条支路。
+    @property
+    def fingerprint(self):
+        payload = asdict(self)
+        payload['cost_unit'] = self.cost_unit
+        encoded = json.dumps(payload, sort_keys=True, default=lambda v: v.tolist(), separators=(',', ':'))
+        return hashlib.sha256(encoded.encode()).hexdigest()
 
-    @cached_property  # 固定拓扑的直接子支路关系只计算一次。
-    def children(self):  # 返回各支路受端的下游入边索引。
-        return [np.flatnonzero(self.parent == i) for i in range(self.n)]  # 各支路受端节点直接连接的下游支路。
 
-    @cached_property  # 缓存固定拓扑的下游关联矩阵。
-    def D(self):  # 构造支路功率汇总与路径压降使用的矩阵 D。
-        """D[e,j]=1 表示 j 在支路 e 下游；D.T 表示各节点到根的路径。"""
-        matrix = np.eye(self.n)  # 每条支路首先包含自己的受端节点。
-        for i in reversed(self.order):  # 先处理叶节点，保证子树信息已完整累加。
-            if self.parent[i] >= 0:  # 接根支路没有需要更新的非根父支路。
-                matrix[self.parent[i]] += matrix[i]  # 从叶到根汇总子树节点，形成下游关联矩阵 D。
-        return matrix  # 返回元素为零或一的下游关联矩阵。
+class OperatingTree:
+    """选定方案的根向视图；节点和型号索引指回 Network，不复制候选图。"""
 
-    @cached_property  # 固定的负荷嵌入矩阵只计算一次。
-    def E(self):  # 把独立负荷坐标映射到全网节点。
-        return np.eye(self.n)[:, self.selected]  # E(n×3) 把三个独立负荷坐标嵌入全网节点向量。
+    def __init__(self, network, x):
+        self.network = net = network
+        chosen = np.flatnonzero(x)
+        adjacency = [[] for _ in range(net.n+1)]  # root 的内部索引 -1 同时指向末项。
+        for k in chosen:
+            e = net.type_corridor[k]
+            a, b = net.senders[e], net.receivers[e]
+            adjacency[a].append((b, k))
+            adjacency[b].append((a, k))
+        parents, edges, order = {-1: -1}, {}, [-1]
+        for node in order:
+            for child, k in adjacency[node]:
+                if child not in parents:
+                    parents[child], edges[child] = node, k
+                    order.append(child)
+        if len(chosen) != len(order)-1 or any(i not in parents for i in np.flatnonzero(net.required)):
+            raise ValueError('selection must be a rooted tree covering every required node')
+        self.node_indices = np.array(sorted(order[1:]), dtype=int)
+        local = {node: i for i, node in enumerate(self.node_indices)}
+        local[-1] = -1
+        self.parent = np.array([local[parents[i]] for i in self.node_indices], dtype=int)
+        self.order = np.array([local[i] for i in order[1:]], dtype=int)
+        self.type_indices = np.array([edges[i] for i in self.node_indices], dtype=int)
+        self.direction = np.where(net.receivers[net.type_corridor[self.type_indices]] == self.node_indices, 1, -1)
+        self.nodes = tuple(net.nodes[i] for i in self.node_indices)
 
-    @cached_property  # 固定背景有功只从原始工况提取一次。
-    def fixed_p(self):  # 返回除独立负荷节点以外的有功负荷。
-        values = self.original_p.copy()  # 复制原始数组，避免清空可变节点时修改输入工况。
-        values[self.selected] = 0.  # 清空可变节点的基准值，防止随后叠加独立负荷时重复计入。
-        return values  # 返回单位仍为 kW 的固定有功背景。
+    @property
+    def n(self):
+        return len(self.nodes)
 
-    @cached_property  # 固定背景无功只从原始工况提取一次。
-    def fixed_q(self):  # 返回除独立负荷节点以外的无功负荷。
-        values = self.original_q.copy()  # 复制原始数组，保持原工况可供交叉核验。
-        values[self.selected] = 0.  # 这些节点的无功由独立有功和固定 Q/P 比例重新给定。
-        return values  # 返回单位仍为 kvar 的固定无功背景。
+    @property
+    def r(self):
+        return self.network.r[self.type_indices]
 
-    def loads(self, power):  # 在不改变背景工况的前提下组装查询负荷。
-        """只替换独立坐标，其余负荷不变；返回全网 P/Q（p.u.）。"""
-        power = np.asarray(power).reshape(-1, len(self.load_nodes))  # 支持一次传入多个三维负荷样本。
-        return ((self.fixed_p+power@self.E.T)/self.base,  # P_node=P_fixed+E*p，kW 转为标幺。
-                (self.fixed_q+(power*self.q_ratio)@self.E.T)/self.base)  # Q_node=Q_fixed+E*diag(Q/P)*p。
+    @property
+    def reactance(self):
+        return self.network.reactance[self.type_indices]
 
-    def ppc(self, power=None):  # 构造供独立节点潮流程序读取的 MATPOWER 格式数据。
-        """标准 MATPOWER 数据，供独立节点导纳矩阵潮流交叉核验。"""
-        power = self.original_p[self.selected] if power is None else power  # 未指定查询时采用原始独立节点负荷。
-        p, q = self.loads(power)  # 得到含固定背景的完整标幺 P/Q。
-        bus = np.zeros((self.n+1, 13))  # MATPOWER 节点表含根节点和全部负荷节点，共 13 列。
-        bus[:, 0], bus[:, 1] = (self.root, *self.nodes), 1  # 写入真实节点编号，默认节点类型为 PQ。
-        bus[0, 1] = 3  # 根节点设置为平衡节点。
-        bus[1:, 2], bus[1:, 3] = p[0]*self.base/1000, q[0]*self.base/1000  # 节点功率从标幺恢复为 MATPOWER 要求的 MW/Mvar。
-        bus[:, 6:8], bus[:, 9:11] = 1., [self.voltage_kv, 1.]  # 设置区域、初始电压、电压基准和分区编号。
-        bus[:, 11:13] = 1.  # 根节点电压上下限固定为 1 p.u.。
-        bus[1:, 11], bus[1:, 12] = np.sqrt(self.vmax), np.sqrt(self.vmin)  # 非根节点电压上下限从平方值恢复为幅值。
-        gen = np.zeros((1, 21))  # 建立一台根节点电源的标准发电机表。
-        gen[0, [0, 3, 4, 5, 6, 7, 8]] = [self.root, self.source_qmax*self.base/1000,  # 填写源端节点及无功上限，单位为 Mvar。
-            -self.source_qmax*self.base/1000, 1., self.base/1000, 1., self.source_pmax*self.base/1000]  # 补入无功下限、电压设定、功率基准、状态和有功上限。
-        branch = np.zeros((self.n, 13))  # 为每条在运支路建立标准参数行。
-        branch[:, 0] = [self.root if i < 0 else self.nodes[i] for i in self.parent]  # 用定向后的父节点恢复支路真实送端编号。
-        branch[:, 1], branch[:, 2], branch[:, 3] = self.nodes, self.r, self.reactance  # 填写受端节点及标幺电阻、电抗。
-        branch[:, 10:13] = [1., -360., 360.]  # 所有固定方案支路均闭合，相角差不另加限制。
-        return dict(version="2", baseMVA=self.base/1000, bus=bus, gen=gen, branch=branch)  # 返回可直接由独立潮流软件读取的标准数据结构。
+    @property
+    def capacity(self):
+        return self.network.capacity[self.type_indices]
+
+    @property
+    def vmin(self):
+        return self.network.vmin[self.node_indices]
+
+    @property
+    def vmax(self):
+        return self.network.vmax[self.node_indices]
+
+    @property
+    def base(self):
+        return self.network.base
+
+    @property
+    def load_nodes(self):
+        return self.network.load_nodes
+
+    @property
+    def q_ratio(self):
+        return self.network.q_ratio
+
+    @property
+    def source_pmax(self):
+        return self.network.source_pmax
+
+    @property
+    def source_qmax(self):
+        return self.network.source_qmax
+
+    @property
+    def source_smax(self):
+        return self.network.source_smax
+
+    @property
+    def power_limit(self):
+        return self.network.power_limit
+
+    @property
+    def cost(self):
+        return float(self.network.cost[self.type_indices].sum())
+
+    @property
+    def fixed_p(self):
+        return self.network.fixed_p[self.node_indices]
+
+    @property
+    def fixed_q(self):
+        return self.network.fixed_q[self.node_indices]
+
+    @cached_property
+    def E(self):
+        return self.network.E[self.node_indices].toarray()
+
+    @cached_property
+    def roots(self):
+        return np.flatnonzero(self.parent < 0)
+
+    @cached_property
+    def children(self):
+        return [np.flatnonzero(self.parent == i) for i in range(self.n)]
+
+    @cached_property
+    def D(self):
+        """D[i,j]=1 表示节点 j 在入边 i 的下游。"""
+        matrix = np.eye(self.n)
+        for i in reversed(self.order):
+            if self.parent[i] >= 0:
+                matrix[self.parent[i]] += matrix[i]
+        return matrix
+
+    def loads(self, power):
+        return tuple(values[:, self.node_indices] for values in self.network.loads(power))
+
+    def ppc(self, power=None):
+        """MATPOWER 数据供独立节点导纳潮流验证；内部节点统一编号 0..n。"""
+        net = self.network
+        power = net.original_p[net.selected] if power is None else power
+        p, q = self.loads(power)
+        bus = np.zeros((self.n+1, 13))
+        bus[:, 0], bus[:, 1] = np.arange(self.n+1), 1
+        bus[0, 1] = 3
+        bus[1:, 2], bus[1:, 3] = p[0]*net.base/1000, q[0]*net.base/1000
+        bus[:, 6:8], bus[:, 9:11], bus[:, 11:13] = 1., [net.voltage_kv, 1.], 1.
+        bus[1:, 11], bus[1:, 12] = np.sqrt(self.vmax), np.sqrt(self.vmin)
+        gen = np.zeros((1, 21))
+        gen[0, [0, 3, 4, 5, 6, 7, 8]] = [0, net.source_qmax*net.base/1000,
+            -net.source_qmax*net.base/1000, 1., net.base/1000, 1., net.source_pmax*net.base/1000]
+        branch = np.zeros((self.n, 13))
+        branch[:, 0], branch[:, 1] = self.parent+1, np.arange(1, self.n+1)
+        branch[:, 2], branch[:, 3], branch[:, 10:13] = self.r, self.reactance, [1., -360., 360.]
+        return dict(version='2', baseMVA=net.base/1000, bus=bus, gen=gen, branch=branch)

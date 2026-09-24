@@ -1,3 +1,7 @@
+# 数学符号与变量契约
+
+修改前必须阅读并遵守 [docs/notation.md](docs/notation.md) 和 [AGENTS.md](AGENTS.md) 的变量契约。同一数学量语义未变就保留代码名称；新增量先登记，改名与单位、索引、结果格式变化须显式迁移。交付前运行 `python -m unittest tests.test_notation -v`，算法变更另做相关数值回归。
+
 <!-- gitnexus:start -->
 # GitNexus — Code Intelligence
 

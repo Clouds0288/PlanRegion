@@ -8,16 +8,16 @@ from Network.case33bw import Case33  # 当前正式网架。
 from plot import BenchmarkResult, METHODS, validation_summary, voxel_surface
 from vertify import ACPowerFlow
 from plot import disagreement, disagreement_interval
+from tests.reference import upgrade_plan
 
 
 class ACReferenceTests(unittest.TestCase):  # 以代表网架核对独立 AC 的数值证书。
     @classmethod
     def setUpClass(cls):  # 不生成完整建设组合表。
-        network = Case33(candidate_count=8)  # 当前八候选线路。
-        plans = [network.initial_plan | {c.id: c.types[k].id
-                 for c, k in zip(network.planning_corridors, x)}
+        network = Case33(upgrade_count=8)  # 当前八候选线路。
+        plans = [upgrade_plan(network, x)
                  for x in (np.zeros(8,dtype=int),np.arange(8)%2,np.ones(8,dtype=int))]
-        cls.models = [ACPowerFlow(network.design(plan), threads=1) for plan in plans]
+        cls.models = [ACPowerFlow(network.tree(network.encode_plan(plan)), threads=1) for plan in plans]
         cls.environment = gp.Env(empty=True)  # 静默的共享全局求解环境。
         cls.environment.setParam('OutputFlag',0)  # 不输出逐点求解日志。
         cls.environment.start()  # 在测试计时之外启动环境。
@@ -35,7 +35,7 @@ class ACReferenceTests(unittest.TestCase):  # 以代表网架核对独立 AC 的
                 actual = int(model.classify(power)[0])  # 独立不动点证书。
                 expected = model.global_status(power,self.environment)  # 显式完整 AC 电流等式。
                 self.assertNotEqual(expected,0)  # 未完成结论不能作为参考真值。
-                self.assertEqual(actual,expected,(model.network.x,power))  # 两套求解路径必须一致。
+                self.assertEqual(actual, expected, (model.network.type_indices, power))
                 counts[actual] += 1  # 统计实际覆盖类别。
         self.assertGreater(counts[-1],0)  # 确实检查域外。
         self.assertGreater(counts[1],0)  # 确实检查域内。

@@ -3,9 +3,29 @@
 固定网架后消去 P/Q/v，仅以电流平方表示损耗；用于核对紧凑模型和割。
 """
 from types import SimpleNamespace  # 将参考矩阵作为一次建模的只读数据集合传递。
-import clarabel  # 独立求解参考 LP/SOCP，不复用正式规划求解器。
+import gurobipy as gp
+from gurobipy import GRB
 import numpy as np  # 由网架数据独立推导消元矩阵。
-from scipy import sparse  # 连续优化接口使用稀疏矩阵。
+
+
+def fixed_topology(network):
+    """历史升级基准专用：仅保留初始树走廊，仍使用统一规划模型。"""
+    from dataclasses import fields
+    from Network import Network
+    data = {field.name: getattr(network, field.name) for field in fields(Network)}
+    data.update(name=network.name+'_initial_tree', corridors=tuple(c for c in network.corridors if c.initial_active))
+    fixed = Network(**data)
+    for name in ('projects', 'upgrade_count', 'budgets', 'cost_unit'):
+        if hasattr(network, name):
+            setattr(fixed, name, getattr(network, name))
+    return fixed
+
+
+def upgrade_plan(network, choices):
+    """历史项目顺序只在测试输入边界转换，运行状态始终按 Network 型号顺序。"""
+    by_endpoints = {frozenset(c.endpoints): c for c in network.corridors}
+    return network.initial_plan | {by_endpoints[frozenset(p.branch)].id: 'parallel' if k else 'existing'
+                                   for p, k in zip(network.projects, choices, strict=True)}
 
 
 def _dispatch_equations(network):  # 构造固定方案的 P/Q/v 消元式。
@@ -51,81 +71,123 @@ def _dispatch_equations(network):  # 构造固定方案的 P/Q/v 消元式。
                            sizes=sizes,relax=np.concatenate(relax))  # 返回锥维数及 phase I 松弛方向。
 
 
-def _solve(objective,matrix,rhs,cones):  # 参考优化器只封装共同的数值设置。
-    settings = clarabel.DefaultSettings()  # 使用连续凸优化算法。
-    settings.verbose = False  # 核对实验不输出每次内点迭代。
-    settings.max_threads = 1  # 所有方法使用统一单线程计时。
-    settings.tol_gap_abs = settings.tol_gap_rel = settings.tol_feas = 1e-10  # 控制参考解与对偶界精度。
-    solver = clarabel.DefaultSolver(sparse.csc_matrix((len(objective),len(objective))),  # 参考目标没有二次项。
-        np.asarray(objective),sparse.csc_matrix(matrix),np.asarray(rhs),cones,settings)  # 输入标准锥形式 A*z+s=b。
-    result = solver.solve()  # 返回原始解、对偶解及目标上下界。
-    if result.status not in (clarabel.SolverStatus.Solved,clarabel.SolverStatus.AlmostSolved):  # 未求解不能发布参考数值。
-        raise RuntimeError(f'Reference solver status {result.status}')  # 保留明确的失败状态供调试。
-    return result  # 上层按本次查询的含义解释目标值。
+def _solve(objective, matrix, rhs, cones):
+    """独立消元参考：cones 元素为 ('linear' 或 'soc', 行数)。"""
+    with gp.Model('independent_dispatch') as model:
+        model.Params.OutputFlag, model.Params.Threads = 0, 1
+        model.Params.FeasibilityTol = model.Params.OptimalityTol = 1e-9
+        model.Params.BarQCPConvTol = 1e-9
+        model.Params.NonConvex, model.Params.DualReductions = 0, 0
+        variables = model.addMVar(len(objective), lb=-GRB.INFINITY, name='dispatch')
+        slack = model.addMVar(len(rhs), lb=-GRB.INFINITY, name='slack')
+        model.addConstr(matrix@variables+slack == rhs)
+        offset = 0
+        for kind, size in cones:
+            block = slack[offset:offset+size]
+            if kind == 'linear':
+                model.addConstr(block >= 0.)
+            else:
+                # 标准二阶锥：首分量非负，且不小于其余分量的范数。
+                head = block[0].item()
+                head.LB = 0.
+                model.addQConstr(gp.quicksum(item.item()**2 for item in block[1:]) <= head**2)
+            offset += size
+        model.setObjective(np.asarray(objective)@variables)
+        model.optimize()
+        if model.Status == GRB.INFEASIBLE:
+            return None
+        assert model.Status == GRB.OPTIMAL, model.Status
+        return SimpleNamespace(x=variables.X, obj_val=model.ObjVal, obj_val_dual=model.ObjVal)
 
 
+def dispatch_support(network, method, normal):
+    """独立消元模型的支撑值，物理方程不读取正式 MP/SP。"""
+    equations = _dispatch_equations(network)
+    n = len(network.load_nodes)
+    if method == 'linear':
+        constant, matrix = equations.linear_c, equations.linear_F
+        cones = [('linear', len(constant))]
+    else:
+        constant, matrix = equations.c, np.c_[equations.F, equations.G]
+        cones = [('linear', equations.linear_count)]+[('soc', size) for size in equations.sizes]
+    dimension = matrix.shape[1]
+    limits = np.zeros((n+1, dimension))
+    limits[:n, :n] = np.eye(n)
+    limits[-1, :n] = -1./network.base
+    matrix = -np.vstack([matrix, limits])
+    rhs = np.r_[constant, np.zeros(n), network.power_limit/network.base]
+    cones.append(('linear', n+1))
+    result = _solve(np.r_[-np.asarray(normal), np.zeros(dimension-n)], matrix, rhs, cones)
+    return dict(p=result.x[:n], value=-result.obj_val, bound=-result.obj_val_dual)
 
 
-def dispatch_support(network,method,normal):  # 独立求固定方案连续域的支撑值。
-    e = _dispatch_equations(network)  # 不读取正式 PlanningEquations 的矩阵。
-    n = len(network.load_nodes)  # 每个独立负荷对应一个自由变量。
-    if method == 'linear':  # 无损模型已经消去全部运行变量。
-        c,matrix = e.linear_c,e.linear_F  # 仅保留负荷变量的线性约束。
-        cones = [clarabel.NonnegativeConeT(len(c))]  # 全部约束都是非负余量。
-    else:  # SOCP 同时优化负荷和各支路电流平方。
-        c,matrix = e.c,np.c_[e.F,e.G]  # 变量按负荷、电流排列。
-        cones = [clarabel.NonnegativeConeT(e.linear_count)]  # 先放线性约束。
-        cones += [clarabel.SecondOrderConeT(size) for size in e.sizes]  # 再放原始电流锥。
-    m = matrix.shape[1]  # 参考问题总变量数。
-    limits = np.zeros((n+1,m))  # 单独加入负荷非负和总量外界。
-    limits[:n,:n] = np.eye(n)  # 各负荷非负。
-    limits[-1,:n] = -1./network.base  # 总负荷不超过共同外界。
-    matrix = -np.vstack([matrix,limits])  # 将余量形式转换为 Clarabel 的 A*z+s=b。
-    rhs = np.r_[c,np.zeros(n),network.power_limit/network.base]  # 总量约束使用标幺余量。
-    cones += [clarabel.NonnegativeConeT(n+1)]  # 负荷边界均为线性约束。
-    objective = np.r_[-np.asarray(normal),np.zeros(m-n)]  # 最小化负支撑值，电流不进入目标。
-    result = _solve(objective,matrix,rhs,cones)  # 获得连续凸域的原始最优值及对偶界。
-    return dict(p=np.asarray(result.x[:n]),value=-result.obj_val,bound=-result.obj_val_dual)  # 恢复最大化方向。
+def dispatch_state(network, power):
+    equations = _dispatch_equations(network)
+    cones = [('linear', equations.linear_count)]+[('soc', size) for size in equations.sizes]
+    return _solve(np.ones(equations.G.shape[1]), -equations.G,
+                  equations.c+equations.F@np.asarray(power), cones).x
 
 
-def dispatch_state(network,power):  # 独立求固定负荷点的 SOCP 电流状态。
-    e = _dispatch_equations(network)
-    n = e.G.shape[1]
-    cones = [clarabel.NonnegativeConeT(e.linear_count)]
-    cones += [clarabel.SecondOrderConeT(size) for size in e.sizes]
-    return np.asarray(_solve(np.ones(n),-e.G,e.c+e.F@np.asarray(power),cones).x)
+def nodal_voltages(network, power, start):
+    """Gurobi 直角坐标 AC 节点方程，与支路递推独立交叉验证。"""
+    net = network
+    p, q = net.loads(power)
+    admittance = np.zeros((net.n+1, net.n+1), dtype=complex)
+    for i, parent in enumerate(net.parent):
+        j = net.n if parent < 0 else parent
+        value = 1./complex(net.r[i], net.reactance[i])
+        admittance[i, i] += value
+        admittance[j, j] += value
+        admittance[i, j] -= value
+        admittance[j, i] -= value
+    with gp.Model('nodal_AC') as model:
+        model.Params.OutputFlag, model.Params.Threads = 0, 1
+        model.Params.NonConvex = 2
+        model.Params.FeasibilityTol = model.Params.OptimalityTol = 1e-9
+        real = model.addVars(net.n, lb=.3, ub=1.1, name='voltage_real')
+        imag = model.addVars(net.n, lb=-.6, ub=.6, name='voltage_imag')
+        real[net.n], imag[net.n] = 1., 0.
+        for i in range(net.n):
+            real[i].Start, imag[i].Start = start[i].real, start[i].imag
+            neighbors = np.flatnonzero(admittance[i])
+            current_real = gp.quicksum(admittance[i, j].real*real[j]-admittance[i, j].imag*imag[j] for j in neighbors)
+            current_imag = gp.quicksum(admittance[i, j].imag*real[j]+admittance[i, j].real*imag[j] for j in neighbors)
+            # S_i=V_i*conj(I_i)；负荷是负注入，根节点承担全网功率平衡。
+            model.addQConstr(real[i]*current_real+imag[i]*current_imag == -p[0, i])
+            model.addQConstr(imag[i]*current_real-real[i]*current_imag == -q[0, i])
+        model.setObjective(0.)
+        model.optimize()
+        assert model.SolCount, model.Status
+        return np.array([complex(real[i].X, imag[i].X) for i in range(net.n)])
 
 
-def validate_power_flow(network):  # 用另一套节点导纳矩阵算法交叉核验支路 AC 实现。
-    """用六个工况，将独立支路递推与节点导纳矩阵 Newton–Raphson 潮流核对。"""
+def validate_power_flow(network):
+    """六个工况：支路递推与 Gurobi 节点 AC 方程对照。"""
     from vertify import ACPowerFlow
-    import warnings  # 仅在转换原始数据时屏蔽已知的接口弃用提示。
-    import pandapower as pp  # 采用独立实现的 Newton–Raphson 潮流。
-    from pandapower.converter.pypower.from_ppc import from_ppc  # 将标准 MATPOWER 数据转换为 pandapower 网架。
-
-    reference = ACPowerFlow(network, threads=1)  # 被核验的是独立 AC 递推，不是 SOCP 方程。
-    maximum_difference = 0.  # 记录所有工况、所有节点的最大电压幅值差。
-    for scale in (1., 0., .5, 1.2, 1.5, 2.):  # 覆盖原始、零独立负荷及多个放大工况。
-        power = scale*network.original_p[network.selected]  # 只缩放三个独立节点，其他背景负荷固定。
-        with warnings.catch_warnings():  # 警告过滤仅在本次格式转换的作用域内有效。
-            warnings.filterwarnings('ignore', category=FutureWarning,  # 只过滤接口的未来弃用警告。
-                                    module='pandapower.converter.pypower.from_ppc')  # 限定来源模块，不屏蔽潮流求解异常。
-            net = from_ppc(network.ppc(power), f_hz=50)  # 同一物理网架转换成节点导纳矩阵模型。
-        pp.runpp(net, algorithm='nr', tolerance_mva=1e-10, numba=False)  # 另一实现的完整 AC 潮流作为交叉核验。
-        # 此处只比较潮流方程；即使电压越限也继续收敛，不能复用 classify 的提前不可行判定。
-        ell = np.zeros((1, network.n))  # 支路递推从零电流平方开始。
-        for _ in range(160):  # 逐次满足完整 AC 电流等式。
-            P, Q, v, u = reference.state(power, ell)  # 当前电流下的送端功率及两端电压平方。
-            new = (P*P+Q*Q)/u  # 强制完整 AC 电流等式。
-            if np.max(np.abs(new-ell)) < 1e-13:  # 电流平方增量达到比运行限值判定更严格的精度。
-                break  # 电流更新已经收敛，停止迭代。
-            ell = new  # 更新电流，进行下一次完整功率平衡与压降计算。
-        difference = float(np.max(np.abs(np.sqrt(v[0])-net.res_bus.loc[list(network.nodes), 'vm_pu'])))  # v 是平方，NR 输出是幅值。
-        assert difference < 1e-8, 'Branch AC and nodal AC disagree'  # 不让方程实现不一致的参考模型进入正式评价。
-        maximum_difference = max(maximum_difference, difference)  # 保留全部工况中的最大电压幅值误差。
-        if scale == 1:  # 保存原始基础工况的物理校验值。
-            baseline = dict(minimum_voltage_pu=float(np.sqrt(v.min())),  # 全网最低电压幅值。
-                            minimum_voltage_bus=int(network.nodes[np.argmin(v)]),  # 对应真实节点号。
-                            active_loss_kw=float((ell*network.r).sum()*network.base))  # Σr*ell，从标幺还原为 kW。
-    return dict(baseline=baseline, nodal_cross_checks=6,  # 返回原始工况和交叉核验次数。
-                maximum_voltage_difference_pu=maximum_difference, pandapower=pp.__version__)
+    reference = ACPowerFlow(network, threads=1)
+    maximum_difference = 0.
+    for scale in (1., 0., .5, 1.2, 1.5, 2.):
+        power = scale*network.network.original_p[network.network.selected]
+        ell = np.zeros((1, network.n))
+        for _ in range(160):
+            P, Q, v, u = reference.state(power, ell)
+            new = (P*P+Q*Q)/u
+            if np.max(np.abs(new-ell)) < 1e-13:
+                break
+            ell = new
+        voltage = np.ones(network.n, dtype=complex)
+        for i in network.order:
+            parent = network.parent[i]
+            upstream = 1. if parent < 0 else voltage[parent]
+            current = np.conj(complex(P[0, i], Q[0, i])/upstream)
+            voltage[i] = upstream-complex(network.r[i], network.reactance[i])*current
+        nodal = nodal_voltages(network, power, voltage)
+        difference = float(np.max(np.abs(np.sqrt(v[0])-np.abs(nodal))))
+        assert difference < 1e-8, 'Branch AC and nodal AC disagree'
+        maximum_difference = max(maximum_difference, difference)
+        if scale == 1.:
+            baseline = dict(minimum_voltage_pu=float(np.sqrt(v.min())),
+                            minimum_voltage_bus=int(network.nodes[np.argmin(v)]),
+                            active_loss_kw=float((ell*network.r).sum()*network.base))
+    return dict(baseline=baseline, nodal_cross_checks=6,
+                maximum_voltage_difference_pu=maximum_difference, gurobi=gp.gurobi.version())

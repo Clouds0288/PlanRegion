@@ -169,8 +169,11 @@ class BenchmarkResult:
         from region import GEOMETRY_TOL
         from vertify import AC_TOL, FIXED_POINT_TOL, GLOBAL_AC_TOL
         metadata = dict(network=network.name, planning=True, cost_unit=network.cost_unit,
-                        load_nodes=list(network.load_nodes), candidate_count=len(network.planning_corridors),
-                        schema_version=2, corridors=[dict(id=c.id, endpoints=c.endpoints,
+                        load_nodes=list(network.load_nodes), corridor_count=network.n_corridors,
+                        type_count=network.n_types, upgrade_count=getattr(network, 'upgrade_count', None),
+                        schema_version=3, network_fingerprint=network.fingerprint,
+                        required_nodes=[node for node, required in zip(network.nodes, network.required) if required],
+                        corridors=[dict(id=c.id, endpoints=c.endpoints,
                             types=[t.id for t in c.types]) for c in network.corridors],
                         budgets=json_value(budgets), divisions=divisions, bounds=bounds.tolist(),
                         seconds={}, continuous=[],
@@ -228,9 +231,13 @@ class BenchmarkResult:
         temporary.replace(folder/'result.npz')
 
     @classmethod
-    def load(cls, folder):
+    def load(cls, folder, network=None):
         with np.load(Path(folder)/'result.npz', allow_pickle=False) as data:
-            return cls(data['states'], json.loads(str(data['metadata'])))
+            result = cls(data['states'], json.loads(str(data['metadata'])))
+        if network is not None and (result.metadata.get('schema_version') != 3
+                or result.metadata.get('network_fingerprint') != network.fingerprint):
+            raise ValueError('Saved result does not match the current network and model schema; recompute it')
+        return result
 
 
 def surface(poly, bounds):
@@ -254,7 +261,7 @@ def region_geometry(records, bounds, cache=None):
         signature = (bounds.tobytes(), tuple(row['choice'].items()), row['cost'], inner.tobytes(), outer.tobytes())
         saved = cache.get(key)
         if saved is None or saved[0] != signature:
-            saved = (signature, dict(choice=dict(row['choice']), cost=row['cost'],
+            saved = (signature, dict(x=list(map(int, key)), choice=dict(row['choice']), cost=row['cost'],
                                      inner=surface(inner, bounds), outer=surface(outer, bounds)))
         current[key] = saved
         geometry.append(saved[1])
@@ -429,12 +436,12 @@ class RunMonitor:
                                   coverage_bound=None, max_total=None, max_total_bound=None, mode=None,
                                   counts_algorithm={})
             if event in ('phase_start', 'point', 'sp_skip'):
-                self.state.update(iteration=0, choice=None, latest_cut=None,
+                self.state.update(iteration=0, choice=None,
                                   bound=None, objective=None, eta=None, query_status=None)
                 if data.get('mode') != 'SP-gap-support':
                     self.state.update(covered_by=None, covered_cost=None, uncovered_witness=None)
             if event == 'phase_start':
-                self.state.update(query=0, point=None, lower=None, upper=None)
+                self.state.update(query=0, point=None, lower=None, upper=None, latest_cut=None)
                 self.state.update(geometry=[], global_outer=None, coverage_complete=False, region=None,
                                   states=None, counts=[], counts_algorithm={}, coverage_bound=None,
                                   max_total=None, max_total_bound=None, mode=None)

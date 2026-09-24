@@ -14,6 +14,8 @@ from main import build_continuous_region
 from model import PlanningEquations, PlanningModel, evaluation_bounds
 from plot import json_value, sample_region
 from vertify import ACPowerFlow
+from tests.reference import fixed_topology
+from tests.planning_checks import margin
 
 
 ROOT = Path(__file__).resolve().parents[1]
@@ -24,15 +26,15 @@ def run(output, region_seconds):
                'Network/case33bw.py', 'Network/four_bus_five_corridor.py']
     report = dict(source_hashes={p: sha256((ROOT/p).read_bytes()).hexdigest() for p in sources},
                   threads=1, query_limit_seconds=60, region_limit_seconds=region_seconds,
-                  queries=[], regions=[])
+                  case33_topology_scope='initial_tree', queries=[], regions=[])
     output.parent.mkdir(parents=True, exist_ok=True)
 
     def save():
         output.write_text(json.dumps(json_value(report), indent=2, allow_nan=False), encoding='utf-8')
 
     with threadpool_limits(limits=1):
-        for name, net in [('fourbus', FourBus()), ('case33_8', Case33(candidate_count=8)),
-                          ('case33_16', Case33(candidate_count=16))]:
+        for name, net in [('fourbus', FourBus()), ('case33_8', fixed_topology(Case33(upgrade_count=8))),
+                          ('case33_16', fixed_topology(Case33(upgrade_count=16)))]:
             powers = ([10., 10., 10.], [25., 15., 20.], [30., 30., 30.]) if name == 'fourbus' else (
                 [100., 800., 150.], [250., 1800., 350.], [300., 3000., 500.])
             for method in ('linear', 'socp'):
@@ -50,11 +52,11 @@ def run(output, region_seconds):
                     if answer is not None:
                         row.update({k: answer[k] for k in ('objective', 'bound', 'feasible', 'p')})
                         if answer['x'] is not None:
-                            row['margin'] = equations.margin(answer['x'], answer['p'], answer['state'])
-                            row['cost'] = float(equations.investment(answer['x']))
-                            choice = equations.choice(answer['x'])
+                            row['margin'] = margin(equations, answer['x'], answer['p'], answer['state'])
+                            row['cost'] = float((equations.network.cost@answer['x']))
+                            choice = equations.network.decode_plan(answer['x'])
                             row['choice'] = choice
-                            oracle = ACPowerFlow(net.design(choice), threads=1)
+                            oracle = ACPowerFlow(net.tree(answer['x']), threads=1)
                             try:
                                 row['ac_status'] = int(oracle.classify(answer['p'])[0])
                             finally:

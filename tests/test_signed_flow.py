@@ -9,6 +9,7 @@ from threadpoolctl import threadpool_limits
 from Network.four_bus_five_corridor import FourBus
 from model import PlanningEquations, PlanningModel, PlanningSP
 from tests.reference import dispatch_support
+from tests.test_corridors import modified
 
 
 REVERSE_PLAN = {'01': None, '12': 'L', '13': 'H', '02': 'H', '23': None}
@@ -24,8 +25,8 @@ def single_thread():
 def test_reference_orientation_does_not_change_physics(method):
     network = FourBus()
     flipped = FourBus()
-    flipped.corridors = tuple(replace(c, endpoints=c.endpoints[::-1])
-                             for c in flipped.corridors)
+    flipped = modified(flipped, corridors=tuple(replace(c, endpoints=c.endpoints[::-1])
+                                                for c in flipped.corridors))
     answers = []
     for net in (network, flipped):
         equations = PlanningEquations(net, method)
@@ -35,13 +36,13 @@ def test_reference_orientation_does_not_change_physics(method):
             answer = problem.solve()
         assert answer['status'] == 'optimal'
         assert answer['feasible']
-        assert answer['objective'] == network.design(REVERSE_PLAN).cost
-        assert equations.choice(answer['x']) == REVERSE_PLAN
+        assert answer['objective'] == network.tree(network.encode_plan(REVERSE_PLAN)).cost
+        assert equations.network.decode_plan(answer['x']) == REVERSE_PLAN
         answers.append((equations, answer))
     original, reversed_ = answers
     np.testing.assert_array_equal(original[1]['x'], reversed_[1]['x'])
     for index, (equations, answer) in enumerate(answers):
-        branch = equations.type_indices['12']['L']
+        branch = equations.network.type_keys.index(('12', 'L'))
         assert (-1 if index == 0 else 1)*answer['state'][equations.P_slice][branch] > 0.
 
 
@@ -53,12 +54,12 @@ def test_reverse_sending_capacity_includes_losses():
     problem.power.UB = [network.power_limit, 0., 0.]
     with problem.model:
         answer = problem.solve()
-    reference = dispatch_support(network.design(REVERSE_PLAN), 'socp', [1., 0., 0.])
+    reference = dispatch_support(network.tree(network.encode_plan(REVERSE_PLAN)), 'socp', [1., 0., 0.])
     assert answer['status'] == 'optimal'
     assert abs(answer['objective']-reference['value']) < .002
-    k = equations.type_indices['12']['L']
+    k = network.type_keys.index(('12', 'L'))
     p = answer['state'][equations.P_slice][k]
-    loss = equations.r[k]*answer['state'][equations.ell_slice][k]
+    loss = network.r[k]*answer['state'][equations.ell_slice][k]
     capacity = 35./network.base
     assert p < 0. and loss > 1e-4
     assert abs(-p+loss-capacity) < 1e-7
@@ -68,16 +69,16 @@ def test_reverse_sending_capacity_includes_losses():
 @pytest.mark.parametrize('method', ['linear', 'socp'])
 def test_required_single_type_can_carry_reverse_flow(method):
     network = FourBus()
-    network.corridors = tuple(replace(c, must_use=True, types=c.types[:1])
-                              if c.id == '12' else c for c in network.corridors)
+    network = modified(network, corridors=tuple(replace(c, types=c.types[:1])
+                         if c.id == '12' else c for c in network.corridors))
     equations = PlanningEquations(network, method)
-    assert len(equations.cost) == 12
+    assert network.n_types == 13
     problem = PlanningModel(equations, fixed_plan=REVERSE_PLAN, power=[3., 4., 5.], threads=1)
     with problem.model:
         answer = problem.solve()
     assert answer['status'] == 'optimal'
-    assert equations.choice(answer['x']) == REVERSE_PLAN
-    assert answer['state'][equations.P_slice][equations.type_indices['12']['L']] < 0.
+    assert equations.network.decode_plan(answer['x']) == REVERSE_PLAN
+    assert answer['state'][equations.P_slice][network.type_keys.index(('12', 'L'))] < 0.
 
 
 def test_connected_cycle_is_rejected_even_at_zero_load():
@@ -92,14 +93,14 @@ def test_connected_cycle_is_rejected_even_at_zero_load():
 @pytest.mark.parametrize('method', ['linear', 'socp'])
 def test_reverse_plan_cut_is_valid_for_every_topology(method):
     equations = PlanningEquations(FourBus(), method)
-    x = equations.selection(REVERSE_PLAN)
+    x = equations.network.encode_plan(REVERSE_PLAN)
     power = np.full(3, 40.)
     cut = PlanningSP(equations, threads=1).solve(x, power)['cut']
     assert cut is not None
     assert cut[0]+cut[1:4]@power+cut[4:]@x < -1e-9
     problem = PlanningModel(equations, threads=1)
     with problem.model:
-        problem.model.setObjective(cut[0]+cut[1:4]@problem.power+cut[4:]@problem.x_vector, GRB.MINIMIZE)
+        problem.model.setObjective(cut[0]+cut[1:4]@problem.power+cut[4:]@problem.x, GRB.MINIMIZE)
         problem.model.Params.TimeLimit = 60.
         problem.model.optimize()
         assert problem.model.Status == GRB.OPTIMAL

@@ -40,7 +40,7 @@ class ACPowerFlow:
         for i in c.order:
             if c.parent[i] >= 0:
                 u[:, i] = v[:, c.parent[i]]
-            # 完整支路压降：v=u-2(rP+xQ)+(r²+x²)*ell，保留二次电流项。
+            # 完整支路压降：v=u-2(rP+χQ)+(r²+χ²)*ell；χ 对应 reactance。
             v[:, i] = (u[:, i]-2*(c.r[i]*P[:, i]+c.reactance[i]*Q[:, i])
                        +(c.r[i]**2+c.reactance[i]**2)*ell[:, i])
         return P, Q, v, u
@@ -98,7 +98,7 @@ class ACPowerFlow:
         bp, bq = [], []
         for i in range(c.n):
             up = 1. if c.parent[i] < 0 else v[int(c.parent[i])]
-            # P_i-ΣP_child-r_i*ell_i=p_i；Q_i-ΣQ_child-x_i*ell_i=q_i。
+            # P_i-ΣP_child-r_i*ell_i=dP_i；Q_i-ΣQ_child-χ_i*ell_i=dQ_i（标幺）。
             bp.append(m.addConstr(P[i]-gp.quicksum(P[int(j)] for j in c.children[i])-c.r[i]*ell[i] == 0))
             bq.append(m.addConstr(Q[i]-gp.quicksum(Q[int(j)] for j in c.children[i])-c.reactance[i]*ell[i] == 0))
             m.addConstr(v[i] == up-2*(c.r[i]*P[i]+c.reactance[i]*Q[i])
@@ -150,8 +150,7 @@ def ac_planning_query(equations, power, *, threads=DEFAULT_SOLVER_THREADS):
             answer['bound'] = bound
             if answer['x'] is None:
                 return answer
-            choice = equations.choice(answer['x'])
-            oracle = ACPowerFlow(equations.network.design(choice), threads=threads)
+            oracle = ACPowerFlow(equations.network.tree(answer['x']), threads=threads)
             try:
                 status = int(oracle.classify(power)[0])
                 if status == 0:
