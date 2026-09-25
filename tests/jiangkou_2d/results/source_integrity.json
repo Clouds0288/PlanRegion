@@ -1,7 +1,0 @@
-{
-  "original_sources_unchanged": false,
-  "externally_changed_files": [
-    "plot.py"
-  ],
-  "test_writes": "tests/jiangkou_2d only; never restore production files"
-}

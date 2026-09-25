@@ -13,7 +13,9 @@ def fixed_topology(network):
     from dataclasses import fields
     from Network import Network
     data = {field.name: getattr(network, field.name) for field in fields(Network)}
-    data.update(name=network.name+'_initial_tree', corridors=tuple(c for c in network.corridors if c.initial_active))
+    selected = np.array([c.initial_active for c in network.corridors])
+    data.update(name=network.name+'_initial_tree', corridors=tuple(c for c in network.corridors if c.initial_active),
+                road_allowed=network.road_allowed[selected])
     fixed = Network(**data)
     for name in ('projects', 'upgrade_count', 'budgets', 'cost_unit'):
         if hasattr(network, name):

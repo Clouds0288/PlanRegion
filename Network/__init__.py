@@ -61,6 +61,7 @@ class Network:
     source_qmax: float = np.inf
     source_smax: float = np.inf
     sources: tuple = ()
+    road_allowed: object = True
 
     cost_unit = '相对投资单位'
     budgets = (0., 1., 2., np.inf)
@@ -82,6 +83,7 @@ class Network:
         self.required[self.selected] = True
         if len({c.id for c in self.corridors}) != self.n_corridors:
             raise ValueError('corridor IDs must be unique')
+        self.road_allowed = np.broadcast_to(self.road_allowed, (self.n_corridors,)).astype(bool).copy()
         senders, receivers, keys, blocks, parameters = [], [], [], [], []
         for corridor in self.corridors:
             a, b = (self.node_index[node] for node in corridor.endpoints)

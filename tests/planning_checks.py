@@ -1,6 +1,8 @@
 """生产运行状态的离线审核；不参与 MP/SP 的可行性分支。"""
+from time import perf_counter
+from model import PlanningModel, PlanningSP
+from vertify import ACPowerFlow
 import numpy as np
-from model import DEFAULT_SOLVER_THREADS, PlanningEquations, PlanningModel
 
 
 def margin(equations, x, power, state):
@@ -63,21 +65,80 @@ def margin(equations, x, power, state):
     return float(min(residual))
 
 
+def joint_benders(equations, *, power=None, budget=np.inf,
+                  cuts=(), start=None, radial_gap_kw=1e-3,
+                  min_total=None, fixed_plan=None, incumbent=None, deadline=np.inf, threads=1, oracle=None):
+    """供独立对照使用的 MP1/MP2 与 SP 联合割迭代。"""
+    problem = PlanningModel(equations, power=power, budget=budget,
+                            cuts_only=True, min_total=min_total, fixed_plan=fixed_plan, threads=threads)
+    oracle, generated = oracle or PlanningSP(equations, threads=threads), []
+    minimizing = power is not None or min_total is not None
+    bound = -np.inf if minimizing else np.inf
+    with problem.model:
+        for cut in cuts:
+            problem.add_cut(cut)
+        if start is not None:
+            problem.x.Start = start
+        if incumbent is not None:
+            incumbent_cost = problem.use_incumbent(incumbent)
+        while True:
+            if perf_counter() >= deadline:
+                return dict(feasible=False, x=None, p=None, state=None, objective=None,
+                            bound=bound, status='unknown', termination='case_time_limit'), generated
+            answer = problem.solve(time_limit=min(20., max(0., deadline-perf_counter())))
+            if answer is None:
+                return None, generated
+            bound = max(bound, answer['bound']) if minimizing else min(bound, answer['bound'])
+            answer['bound'] = bound
+            if incumbent is not None and bound >= incumbent_cost-1e-7:
+                answer = dict(incumbent, objective=incumbent_cost, bound=bound, status='optimal')
+                return answer, generated
+            if answer['x'] is None:
+                return answer, generated
+            point = answer['p']
+            if not minimizing and point.sum() > 0.:
+                point = point * max(0., 1. - radial_gap_kw / point.sum())
+            checked = oracle.solve(answer['x'], point, time_limit=min(
+                5. if equations.method == 'linear' else 10., max(0., deadline-perf_counter())))
+            if not checked['feasible'] and checked['cut'] is None and not minimizing:
+                # 缩入点数值未决时，在 MP 原点分离；只复用全局有效割，不把未知点判为可行。
+                separated = oracle.solve(answer['x'], answer['p'], time_limit=min(
+                    5. if equations.method == 'linear' else 10., max(0., deadline-perf_counter())))
+                if separated['cut'] is not None:
+                    checked = separated
+            if checked['feasible']:
+                value = answer['objective'] if minimizing else point.sum()
+                gap = value-bound if minimizing else bound-value
+                tolerance = 1e-7 if minimizing else radial_gap_kw+1e-5
+                answer.update(p=point, state=checked['state'], feasible=True, objective=value,
+                              status='optimal' if gap <= tolerance else 'feasible')
+                return answer, generated
+            if checked['cut'] is None:
+                answer.update(status='unknown', feasible=False, objective=None)
+                return answer, generated
+            generated.append(checked['cut'])
+            problem.add_cut(checked['cut'])
 
-def evaluation_bounds(network, *, threads=DEFAULT_SOLVER_THREADS):
-    """三个无预算 LP 轴向全局上界确定公共评价箱。"""
-    equations, bounds = PlanningEquations(network, 'linear'), []
-    for axis in np.eye(len(network.load_nodes)):
-        problem = PlanningModel(equations, threads=threads)
-        for e in network.corridors:
-            for k in e.types:
-                if any(t.r <= k.r and t.reactance <= k.reactance and t.capacity >= k.capacity
-                       and (t.r < k.r or t.reactance < k.reactance or t.capacity > k.capacity) for t in e.types):
-                    problem.choices[e.id, k.id].UB = 0.
-        problem.power.UB = axis*network.power_limit
-        with problem.model:
-            answer = problem.solve()
-        if answer is None or answer['bound'] is None or not np.isfinite(answer['bound']):
-            raise RuntimeError('No finite planning bound for the common evaluation box')
-        bounds.append(min(network.power_limit, answer['bound']))
-    return np.ceil(np.asarray(bounds)/10.)*10.
+
+def affordable_designs(network, budget):
+    """固定初始拓扑的升级枚举；不能作为完整重构域的参考。"""
+    if network.n_corridors != network.n or not all(c.initial_active for c in network.corridors):
+        raise ValueError('Upgrade enumeration requires a fixed initial topology')
+    if not np.isfinite(budget):
+        raise ValueError('Unlimited budgets require global search, not enumeration')
+    result = []
+    upgrades = [c for c in network.corridors if len(c.types) > 1]
+    def visit(index, cost, chosen):
+        if index == len(upgrades):
+            choice = chosen
+            result.append((cost, choice, ACPowerFlow(network.tree(network.encode_plan(choice)), threads=1)))
+            return
+        corridor = upgrades[index]
+        for line_type in corridor.types:
+            price = line_type.investment_cost
+            if price < 0.:
+                raise ValueError('Budget pruning requires nonnegative investment costs')
+            if cost+price <= budget:
+                visit(index+1, cost+price, chosen | {corridor.id: line_type.id})
+    visit(0, 0., network.initial_plan)
+    return sorted(result, key=lambda row: (row[0], tuple(row[1].items())))

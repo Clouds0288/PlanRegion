@@ -1,4 +1,5 @@
 __pycache__/
+.pytest_cache/
 *.py[cod]
 *$py.class
 
@@ -18,11 +19,11 @@ Thumbs.db
 !.env.example
 gurobi.lic
 *.tmp
+outputs/
 
 # Ad hoc runs are local; the reviewed Case33 dataset is versioned.
 results/**
 !results/case33bw/
 !results/case33bw/latest/
 !results/case33bw/latest/**
-tests/jiangkou_2d/results/attempt_*/
 

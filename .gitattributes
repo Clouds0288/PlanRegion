@@ -7,13 +7,9 @@
 
 # Generated datasets and embedded replay pages are reviewed through their reports.
 results/** -text -diff
-tests/jiangkou_2d/results/** -text -diff
 results/**/report.md diff
 results/**/protocol.json diff
 
 # Full numerical histories; lightweight reports and HTML stay in ordinary Git.
 results/case33bw/latest/**/replay.json filter=lfs diff=lfs merge=lfs -text
 results/case33bw/latest/**/events.jsonl filter=lfs diff=lfs merge=lfs -text
-tests/jiangkou_2d/results/domain.json filter=lfs diff=lfs merge=lfs -text
-tests/jiangkou_2d/results/domain_checkpoint.json filter=lfs diff=lfs merge=lfs -text
-tests/jiangkou_2d/results/events.jsonl filter=lfs diff=lfs merge=lfs -text
