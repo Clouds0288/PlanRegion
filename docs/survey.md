@@ -19,11 +19,21 @@
 
 ```text
 python survey.py --threads 1
-python survey_plot.py --results results/concept5/<本次时间戳>
+python plot.py --results results/concept5/<本次时间戳>
 ```
 
-每次运行新建结果目录，包含协议及源文件指纹、逐轮区域、全部候选评分、共享割和独立 AC 点核查。非凸见证重新从本次发现的方案生成，`plan_a`、`plan_b` 对应本次 `schemes.json` 的编号；不得用它们索引旧枚举表。
+默认每次运行新建时间戳目录，计算只保存一个 `results.json`：逐轮区域在 `states`，决策在 `trace`，全部候选评分在 `all_candidates`，参数及网架配置在 `protocol`，独立 AC 点核查在 `audit`，最终确认域的建设方案在 `schemes`。道路域缓存及共享割仅驻留内存，不逐查询写文件，也不重复生成 CSV 或报告。
+
+非凸见证重新从本次发现的方案生成，`plan_a`、`plan_b` 对应同一文件中 `schemes` 的编号；不得用它们索引旧枚举表。新格式为 `survey-v2`，旧实验结果原样保留。
 
 默认合成观测是 A/C/E 可用、B/D 不可用，F 未赋真值。预期序列为 A+ → B− → E+ → D− → C+，F 不再勘察。测试中单独保存冻结参考数据，仅用于检验重构没有改变结果，正式入口不读取它。
 
 图中绿色代表本轮新增，红色斜线代表本轮删除；已勘察道路的价值轨迹结束，不补成零。独立 AC 顶点检查只能说明已检验点的可行性，图中连续域仍称 SOCP 规划域。
+
+勘察绘图统一由 `plot.py` 的 `render_survey(result, output)` 完成，生成总图和条件价值图，各保存 PDF、SVG、PNG。样式、图形组装和导出都在这个函数内；顺序、轮数和停止标签取自实际记录。命令行读取 `results.json`，Python 中可直接传入 `run_survey` 返回的结果：
+
+```python
+from plot import render_survey
+
+render_survey(result, "results/concept5/figures")
+```

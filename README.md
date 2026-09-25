@@ -39,10 +39,12 @@ python main.py
 
 ```text
 python survey.py --threads 1
-python survey_plot.py --results results/concept5/<本次时间戳>
+python plot.py --results results/concept5/<本次时间戳>
 ```
 
-每次五节点计算写入新的时间戳目录，图件另存 PDF、SVG 和 PNG。预期勘察顺序为 A+ → B− → E+ → D− → C+，F 停止勘察。更多定义见 [勘察模型与结果](docs/survey.md)。
+每次五节点计算在时间戳目录中只保存一个 `results.json`，包含参数、逐轮域、候选评分、最终方案和核查结果。绘图另存 PDF、SVG 和 PNG。预期勘察顺序为 A+ → B− → E+ → D− → C+，F 停止勘察。更多定义见 [勘察模型与结果](docs/survey.md)。
+
+三维案例的数值结果保存为 `result.npz`；完整过程回放集中在可离线打开的 `live_view.html`，不再重复保存 `events.jsonl` 和 `replay.json`。比较图仍可由数值结果重新生成。
 
 ## 项目结构
 
@@ -54,8 +56,7 @@ python survey_plot.py --results results/concept5/<本次时间戳>
 | region.py | 几何、单方案内外域与并集覆盖 |
 | vertify.py | 独立 AC 潮流及可行性校核 |
 | survey.py | 按需求域、道路信息价值、逐轮勘察和结果保存 |
-| plot.py、live_view.html | 三维结果、实时查看和历史回放 |
-| survey_plot.py | 五节点规划域变化与道路价值图 |
+| plot.py、live_view.html | 勘察图、三维结果、实时查看和历史回放；勘察绘图统一调用 render_survey |
 | tests/ | 核心回归及独立参考模型；数据夹具只用于测试 |
 | docs/ | 当前模型、数学符号和迁移记录 |
 | results/ | 已审核结果与本地运行输出 |

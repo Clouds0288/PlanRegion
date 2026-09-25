@@ -97,32 +97,37 @@ def region_metrics(result, bounds):
                 volume_gap=(outer-inner)/outer if outer else 0.)
 
 
-def disagreement(approximation, ac):  # 根据同一网格中的多余和遗漏体素计算 FR/MR。
+def disagreement(approximation, ac):
     """同一等体积网格上的 FR/MR；空域的条件比例无定义。"""
-    extra = int(np.count_nonzero(approximation & ~ac))  # 黄色：计算域有、AC 参考域没有。
-    missed = int(np.count_nonzero(ac & ~approximation))  # 红色：AC 参考域有、计算域遗漏。
-    computed, reference = int(approximation.sum()), int(ac.sum())  # 两个域各自的网格单元数量。
-    union = computed+missed  # 计算域∪AC 域；遗漏部分与计算域不相交。
-    return dict(fr_percent=100*extra/computed if computed else None,  # FR 分母是计算域。
-                mr_percent=100*missed/reference if reference else None,  # MR 分母是 AC 参考域。
-                region_error_percent=100*(extra+missed)/union if union else 0.,  # 原区域不一致率：对称差/并集。
+    # 1. 统计多余、遗漏及并集单元数
+    extra = int(np.count_nonzero(approximation & ~ac))
+    missed = int(np.count_nonzero(ac & ~approximation))
+    computed, reference = int(approximation.sum()), int(ac.sum())
+    union = computed+missed
+    # 2. FR 以计算域为分母，MR 以 AC 域为分母
+    return dict(fr_percent=100*extra/computed if computed else None,
+                mr_percent=100*missed/reference if reference else None,
+                region_error_percent=100*(extra+missed)/union if union else 0.,
                 computed_cells=computed, ac_cells=reference, extra_cells=extra, missed_cells=missed)
 
 
-def disagreement_interval(approximation, ac):  # 三态网格中，未确定点只能给误差区间。
+def disagreement_interval(approximation, ac):
     """输入 -1/0/1 分别表示已证域外、未确定、已证域内；区间不含网格离散误差。"""
-    def ratio_bounds(left, right):  # 求 |left\right|/|left| 的保守上下界。
-        inside, unknown = left==1, left==0  # 已知域内点必须计入分母，未确定点可取域内或域外。
-        certain = np.count_nonzero(inside & (right==-1))  # 已确认的多余点不能被未知标签消除。
-        lower_denominator = inside.sum()+np.count_nonzero(unknown & (right!=-1))  # 只增加可能重合的点，使比例最小。
-        possible = np.count_nonzero((left!=-1) & (right!=1))  # 所有可能成为多余的点。
-        upper_denominator = inside.sum()+np.count_nonzero(unknown & (right!=1))  # 为最大比例只增加可能多余的点。
-        return [100*certain/lower_denominator if lower_denominator else 0.,  # 可能空域时不给虚假的严格正下界。
-                100*possible/upper_denominator if upper_denominator else 100.]  # 未知空分母使用保守上界。
-    unknown = int(np.count_nonzero((approximation==0)|(ac==0)))  # 比较双方中任意一方未确定的单元数。
+    # 1. 根据未知单元的最有利/最不利归属，求 |left\right| / |left| 的界
+    def ratio_bounds(left, right):
+        inside, unknown = left==1, left==0
+        certain = np.count_nonzero(inside & (right==-1))
+        lower_denominator = inside.sum()+np.count_nonzero(unknown & (right!=-1))
+        possible = np.count_nonzero((left!=-1) & (right!=1))
+        upper_denominator = inside.sum()+np.count_nonzero(unknown & (right!=1))
+        return [100*certain/lower_denominator if lower_denominator else 0.,
+                100*possible/upper_denominator if upper_denominator else 100.]
+    # 2. 分别计算 FR、MR；完整空域的条件比例保持无定义
+    unknown = int(np.count_nonzero((approximation==0)|(ac==0)))
     exact = disagreement(approximation==1,ac==1) if unknown==0 else dict(fr_percent=None,mr_percent=None,region_error_percent=None)
-    fr = ratio_bounds(approximation,ac) if unknown else ([exact['fr_percent']]*2 if exact['fr_percent'] is not None else None)  # 完整空域的比例无定义，不能显示成 0–100%。
-    mr = ratio_bounds(ac,approximation) if unknown else ([exact['mr_percent']]*2 if exact['mr_percent'] is not None else None)  # MR 交换两个集合使用同一定义。
+    fr = ratio_bounds(approximation,ac) if unknown else ([exact['fr_percent']]*2 if exact['fr_percent'] is not None else None)
+    mr = ratio_bounds(ac,approximation) if unknown else ([exact['mr_percent']]*2 if exact['mr_percent'] is not None else None)
+    # 3. 计算对称差 / 并集的误差区间
     certain_difference = np.count_nonzero(approximation*ac == -1)
     possible_overlap = np.count_nonzero((approximation != -1) & (ac != -1))
     certain_overlap = np.count_nonzero((approximation == 1) & (ac == 1))
@@ -302,7 +307,7 @@ def view_data(data, bounds, cache=None):
 
 
 def pack_replay(value):
-    """无损共享重复的几何与历史对象；只改变 HTML 编码，原始 JSON 不变。"""
+    """无损共享重复的几何与历史对象，压缩 HTML 内的回放数据。"""
     objects, indices = [], {}
     def encode(item):
         if isinstance(item, dict):
@@ -363,12 +368,14 @@ class RunMonitor:
     def __init__(self, *, show_ui=False, output=None, open_browser=True,
                  heartbeat_seconds=10., stream=None, record=None):
         import sys
+        # 1. 显示、记录和终端输出配置
         self.show_ui = show_ui
         self.record = show_ui if record is None else bool(record)
         self.output = Path(output) if output is not None else None
         self.open_browser = open_browser
         self.heartbeat_seconds = heartbeat_seconds
         self.stream = sys.stdout if stream is None else stream
+        # 2. 计时与实时服务
         self.started = perf_counter()
         self.finished = None
         self.last_event = self.last_print = self.started
@@ -376,19 +383,16 @@ class RunMonitor:
         self.stop = Event()
         self.server = self.server_thread = self.heartbeat_thread = None
         self.url = None
+        # 3. 当前状态、增量历史与展示几何缓存
         self.events, self.history = [], []
         self.geometry_cache = {}
         self.previous = {}
-        self.journal = None
         self.state = dict(status='running', event='start', message='准备启动',
                           query=0, iteration=0, total_cuts=0, pool_size=0,
                           method_number=0, method_count=4, revision=0, methods=[])
 
     def __enter__(self):
         try:
-            if self.record and self.output is not None:
-                self.output.mkdir(parents=True, exist_ok=True)
-                self.journal = (self.output/'events.jsonl').open('w', encoding='utf-8')
             if self.show_ui:
                 self.start_server()
             self.heartbeat_thread = Thread(target=self.heartbeat, name='planning-progress', daemon=True)
@@ -413,13 +417,14 @@ class RunMonitor:
 
     def __call__(self, event, **data):
         with self.lock:
-            # 算法只传顶点和证书。仅在记录/显示时生成网格，终端模式不做绘图计算。
+            # 1. 仅在记录/显示时转换展示几何，终端模式不做绘图计算
             if event in ('method_start', 'phase_start'):
                 self.geometry_cache.clear()
             if self.record or self.show_ui:
                 data = view_data(data, data.get('bounds', self.state.get('bounds')), self.geometry_cache)
             else:
                 data.pop('records', None)
+            # 2. 更新计时与求解阶段，清空上一阶段的临时状态
             now = perf_counter()
             step_seconds = now-self.last_event
             self.last_event = now
@@ -449,6 +454,7 @@ class RunMonitor:
                     self.state.pop('states', None)
             if event == 'query_end':
                 self.state['query_status'] = data.get('status')
+            # 3. 接收数值结果，按需生成三态计数与割平面
             for key, value in data.items():
                 if key not in ('states', 'cut', 'selection', 'status'):
                     self.state[key] = json_value(value)
@@ -474,6 +480,7 @@ class RunMonitor:
             if event == 'method_end':
                 self.state['methods'] = [*self.state['methods'], dict(method=self.state['method'], seconds=data['seconds'],
                                                   counts=self.state.get('counts', []), cuts=self.state['total_cuts'])]
+            # 4. 只在内存中追加变化帧，完成后统一嵌入回放 HTML
             if self.record:
                 item = {key: self.state.get(key) for key in
                         ('revision', 'method', 'phase', 'query', 'iteration', 'event', 'message', 'point', 'query_status')}
@@ -486,10 +493,7 @@ class RunMonitor:
                 frame = dict(id=len(self.history), elapsed=now-self.started, patch=patch)
                 self.history.append(frame)
                 self.previous = dict(self.state)
-                if self.journal is not None:
-                    self.journal.write(json.dumps(frame, ensure_ascii=False, allow_nan=False)+'\n')
-                    self.journal.flush()
-            # 短查询合并到每秒一次的状态输出，避免快速求解时终端刷屏。
+            # 5. 短查询合并为每秒一次的终端进度
             if event in ('start', 'preparation', 'method_start', 'method_end', 'phase_start', 'phase_end',
                          'saving', 'plotting', 'loaded', 'completed', 'failed', 'interrupted') \
                     or (event == 'query_end' and data.get('status') == 'unknown') \
@@ -536,8 +540,20 @@ class RunMonitor:
             return json.dumps(value, ensure_ascii=False, allow_nan=False).encode('utf-8')
 
     def load_recording(self, path):
-        """恢复完整历史，不调用优化器、不生成虚构求解事件。"""
-        value = json.loads(Path(path).read_text(encoding='utf-8'))
+        """从自包含 HTML 恢复完整历史，不调用优化器。"""
+        # 1. 读取 HTML 中唯一一份压缩回放
+        html = Path(path).read_text(encoding='utf-8')
+        encoded = html.split('window.SAVED_REPLAY_GZIP="', 1)[1].split('";', 1)[0]
+        value = json.loads(gzip.decompress(base64.b64decode(encoded)))
+        # 2. 大记录按对象引用恢复共享几何
+        if 'packed_replay_version' in value:
+            objects = []
+            def resolve(item):
+                return objects[item['ref']] if isinstance(item, dict) else item
+            for kind, node in value['objects']:
+                objects.append({k: resolve(v) for k, v in node.items()} if kind else [resolve(v) for v in node])
+            value = resolve(value['root'])
+        # 3. 恢复历史、事件列表和计时
         self.history = value.pop('history')
         self.events = value.pop('events', [])
         self.state = value
@@ -608,6 +624,7 @@ class RunMonitor:
     def save_snapshot(self):
         if self.output is None:
             return
+        # 1. 从当前数值结果生成展示快照及本地页面资源
         with self.lock:
             self.state = view_data(self.state, self.state.get('bounds'), self.geometry_cache)
         self.output.mkdir(parents=True, exist_ok=True)
@@ -617,14 +634,12 @@ class RunMonitor:
             self.plotly = get_plotlyjs().encode('utf-8')
         self.state['viewer_sha256'] = sha256(self.template.encode('utf-8')).hexdigest()
         payload = self.snapshot().decode('utf-8')
-        temporary = self.output/'replay.json.tmp'
-        temporary.write_text(payload, encoding='utf-8')
-        temporary.replace(self.output/'replay.json')
-        # 大记录包含很多跨帧重复几何，先共享对象再压缩，降低浏览器峰值内存。
+        # 2. 大记录先共享跨帧重复几何，再压缩完整回放
         if len(payload) > 10_000_000:
             payload = json.dumps(pack_replay(json.loads(payload)), ensure_ascii=False,
                                  allow_nan=False, separators=(',', ':'))
         data = base64.b64encode(gzip.compress(payload.encode('utf-8'), compresslevel=6, mtime=0)).decode('ascii')
+        # 3. 数据与绘图库嵌入同一 HTML，不再另存 JSON/JSONL
         html = self.template.replace('<script src="/plotly.min.js"></script>',
                                      '<script>'+self.plotly.decode('utf-8')+'</script>')
         html = html.replace('/*SNAPSHOT*/', 'window.SAVED_REPLAY_GZIP="'+data+'";')
@@ -634,9 +649,6 @@ class RunMonitor:
 
     def close(self):
         self.stop.set()
-        if self.journal is not None:
-            self.journal.close()
-            self.journal = None
         if self.server is not None:
             if self.server_thread is not None and self.server_thread.is_alive():
                 self.server.shutdown()
@@ -679,106 +691,108 @@ def print_summary(result):
         print(f"{budget} | {names[row['method']]} | {status} | {maximum} | {' | '.join(rates)} | {seconds:.3f}", flush=True)
 
 
-def voxel_surface(mask, spacing):  # 把体素集合转换为保留孔洞的外表面三角网格。
-    """Exposed cell faces, merged into rectangles without filling holes.
+def voxel_surface(mask, spacing):
+    """合并同一平面的暴露体素面，保留非凸边界和孔洞；坐标为 kW。"""
+    # 1. 沿三个坐标轴提取正负方向的暴露面
+    mask = np.asarray(mask, dtype=bool)
+    vertices, triangles = [], []
+    for axis in range(3):
+        others = [i for i in range(3) if i != axis]
+        oriented = np.moveaxis(mask, axis, 0)
+        for side in (-1, 1):
+            neighbour = np.zeros_like(oriented)
+            if side == 1:
+                neighbour[:-1] = oriented[1:]
+            else:
+                neighbour[1:] = oriented[:-1]
+            faces = oriented & ~neighbour
+            # 2. 将每个平面的连续单元合并为互不重叠的矩形
+            for plane in range(len(faces)):
+                cells = faces[plane].copy()
+                for row in range(cells.shape[0]):
+                    while cells[row].any():
+                        left = int(np.flatnonzero(cells[row])[0])
+                        right = left+1
+                        while right < cells.shape[1] and cells[row, right]:
+                            right += 1
+                        bottom = row+1
+                        while bottom < cells.shape[0] and cells[bottom, left:right].all():
+                            bottom += 1
+                        cells[row:bottom, left:right] = False
+                        # 3. 恢复空间坐标并统一朝外法向，用两个三角形表示矩形
+                        face = np.zeros((4, 3), dtype=float)
+                        face[:, axis] = plane+(side == 1)
+                        face[:, others[0]] = [row, bottom, bottom, row]
+                        face[:, others[1]] = [left, left, right, right]
+                        normal = np.cross(face[1]-face[0], face[2]-face[0])
+                        if normal[axis]*side < 0:
+                            face = face[::-1]
+                        first = len(vertices)
+                        vertices.extend((face*spacing).tolist())
+                        triangles.extend([[first, first+1, first+2], [first, first+2, first+3]])
+    return dict(vertices=vertices, triangles=triangles)
 
-    Geometry and disagreement percentages use the very same labeled cells.
-    No global convex hull or smoothing changes the meaning of a colored region.
-    """
-    mask = np.asarray(mask, dtype=bool)  # 统一按体素是否属于目标集合处理。
-    vertices, triangles = [], []  # 分别收集表面顶点和三角形索引。
-    for axis in range(3):  # 对三个坐标方向分别寻找暴露面。
-        others = [i for i in range(3) if i != axis]  # 其余两轴构成当前面的二维坐标。
-        oriented = np.moveaxis(mask, axis, 0)  # 将处理方向移到第一个轴，统一后续算法。
-        for side in (-1, 1):  # 分别提取负向和正向的外露面。
-            neighbour = np.zeros_like(oriented)  # 评价箱外侧视为空体素。
-            if side == 1:  # 正方向暴露面由下一层体素决定。
-                neighbour[:-1] = oriented[1:]  # 把正向邻居对齐到当前层。
-            else:  # 负方向使用上一层体素作为邻居。
-                neighbour[1:] = oriented[:-1]  # 把负向邻居对齐到当前层。
-            faces = oriented & ~neighbour  # 当前体素存在而邻居为空时才产生表面。
-            for plane in range(len(faces)):  # 逐层合并位于同一平面的暴露单元。
-                cells = faces[plane].copy()  # 复制当前面掩码，用于标记已被矩形覆盖的单元。
-                for row in range(cells.shape[0]):  # 从上到下处理二维单元行。
-                    while cells[row].any():  # 本行还有未处理表面单元时继续。
-                        left = int(np.flatnonzero(cells[row])[0])  # 找到当前行最左侧剩余单元。
-                        right = left+1  # 矩形初始宽度为一个单元。
-                        while right < cells.shape[1] and cells[row, right]:  # 向右合并连续且属于同一表面的单元。
-                            right += 1  # 扩大当前矩形宽度。
-                        bottom = row+1  # 矩形初始高度为一行。
-                        while bottom < cells.shape[0] and cells[bottom, left:right].all():  # 后续整行都被表面占据时向下合并。
-                            bottom += 1  # 扩大当前矩形高度。
-                        cells[row:bottom, left:right] = False  # 标记这块矩形已处理，防止重复画面。
-                        face = np.zeros((4, 3), dtype=float)  # 每个合并矩形生成四个三维顶点。
-                        face[:, axis] = plane+(side == 1)  # 正向面在体素上边界，负向面在下边界。
-                        face[:, others[0]] = [row, bottom, bottom, row]  # 填入矩形沿第一个面内坐标的范围。
-                        face[:, others[1]] = [left, left, right, right]  # 填入矩形沿第二个面内坐标的范围。
-                        normal = np.cross(face[1]-face[0], face[2]-face[0])  # 计算当前顶点顺序的法向量。
-                        if normal[axis]*side < 0:  # 法向量朝向体素内部时需要反转顺序。
-                            face = face[::-1]  # 统一使表面法向朝外，保留内部孔洞。
-                        first = len(vertices)  # 记住本矩形在总顶点表中的起始索引。
-                        vertices.extend((face*spacing).tolist())  # 体素索引乘以网格步长，恢复 kW 坐标。
-                        triangles.extend([[first, first+1, first+2], [first, first+2, first+3]])  # 用两个三角形覆盖当前矩形。
-    return dict(vertices=vertices, triangles=triangles)  # 返回明确的表面网格，不用跨孔洞凸包替代。
 
-
-def plot_method_comparison(result, budget_index=0):  # 在同一预算下比较三种计算域与独立 AC 参考。
+def plot_method_comparison(result, budget_index=0):
     """同一预算的四方法对比；曲面与 FR/MR 使用同一份网格标签。"""
-    from plotly.subplots import make_subplots  # 建立紧凑的四面板布局。
+    from plotly.subplots import make_subplots
     import plotly.graph_objects as go
 
-    fig = make_subplots(rows=2, cols=2, specs=[[{"type": "scene"}]*2]*2,  # 四个面板均为可旋转的三维场景。
-                        subplot_titles=[f"{letter}  {name}" for letter, name in zip("abcd", METHOD_NAMES)],  # 使用简洁的 a、b、c、d 面板标记。
-                        horizontal_spacing=.02, vertical_spacing=.08)  # 统一控制面板间距。
-    categories = [(3, "与 AC 重合", "#4286AD", 1., "common"),  # 重合部分使用克制的蓝色。
-                  (2, "遗漏", "#D43D3D", 1., "missed"),  # 遗漏的 AC 可行区域使用红色。
-                  (1, "多余", "#E9B72F", 1., "extra")]  # 多余的计算区域使用黄色。
+    # 1. 建立四方法面板与统一的区域类别
+    fig = make_subplots(rows=2, cols=2, specs=[[{"type": "scene"}]*2]*2,
+                        subplot_titles=[f"{letter}  {name}" for letter, name in zip("abcd", METHOD_NAMES)],
+                        horizontal_spacing=.02, vertical_spacing=.08)
+    categories = [(3, "与 AC 重合", "#4286AD", 1., "common"),
+                  (2, "遗漏", "#D43D3D", 1., "missed"),
+                  (1, "多余", "#E9B72F", 1., "extra")]
     categories.append((4, "未确定", "#A6A6A6", .22, "unknown"))
-    for panel, labels in enumerate(result.labels[:, budget_index]):  # 读取当前预算下每种方法的差集标签。
-        for code, name, color, opacity, group in categories:  # 每个面板分别生成重合、遗漏和多余表面。
-            mesh = voxel_surface(labels == code, result.spacing)  # 使用同一套体素表面算法避免不同颜色口径不一致。
-            points = np.asarray(mesh["vertices"]).reshape(-1, 3)  # 将输出顶点转为标准三列坐标数组。
-            faces = np.asarray(mesh["triangles"], dtype=int).reshape(-1, 3)  # 将三角形转为三列整数索引数组。
-            if len(points):  # 类别非空时添加实际表面。
-                trace = go.Mesh3d(x=points[:, 0], y=points[:, 1], z=points[:, 2],  # 三维网格坐标使用实际 kW 值。
-                                 i=faces[:, 0], j=faces[:, 1], k=faces[:, 2],  # 显式指定三角形，保留非凸区域及孔洞。
-                                 name="AC 参考域" if panel == 2 and code==3 else name,  # AC 未确定部分仍标灰色。
-                                 color=color, opacity=opacity, flatshading=True,  # 各类别使用固定颜色与不透明表面。
-                                 legendgroup=group, showlegend=panel == 0,  # 图例只显示一次，按类别控制四面板。
-                                 lighting=dict(ambient=1., diffuse=.25, specular=.05, roughness=.95),  # 采用均匀照明以减少颜色识别偏差。
-                                 hovertemplate="节点负荷 (%{x:.2f}, %{y:.2f}, %{z:.2f}) kW<extra>%{fullData.name}</extra>")  # 悬停仅显示用户关心的节点负荷和区域类别。
-            else:  # 空类别保留图例，避免因某档预算无差异而改变说明。
-                trace = go.Scatter3d(x=[None], y=[None], z=[None], mode="markers", name=name,  # 空图层不产生实际数据点。
-                                    marker=dict(color=color, size=7), legendgroup=group,  # 沿用该类别的颜色和图例分组。
-                                    showlegend=panel == 0, hoverinfo="skip")  # 只在首面板显示图例，关闭空图层悬停。
-            fig.add_trace(trace, row=panel//2+1, col=panel % 2+1)  # 按方法顺序填入对应行列。
-    axis = lambda node, bound: dict(title=dict(text=f"节点 {node} 负荷 (kW)", font=dict(size=11)),  # 坐标标题使用真实节点号及 kW 单位。
-                             range=[0, bound], nticks=5,  # 所有方法采用相同上界和刻度密度。
-                             tickfont=dict(size=10), backgroundcolor="white", gridcolor="#E2E6E9",  # 使用白底与浅灰网格保持论文插图风格。
-                             zerolinecolor="#B8C1C6", showbackground=True)  # 零线稍作区分，避免装饰性背景。
-    scenes = {"scene" if i == 0 else f"scene{i+1}": dict(  # 为四个三维面板建立相同坐标和相机设置。
-        xaxis=axis(result.load_nodes[0], result.bounds[0]),  # 第一坐标对应第一个实际独立负荷节点。
-        yaxis=axis(result.load_nodes[1], result.bounds[1]),  # 第二坐标对应第二个实际独立负荷节点。
-        zaxis=axis(result.load_nodes[2], result.bounds[2]), aspectmode="cube",  # 第三坐标对应第三个节点，统一场景比例。
-        camera=dict(eye=dict(x=1.5, y=1.6, z=1.2), projection=dict(type="orthographic")))  # 正交投影便于比较区域形状与尺度。
-        for i in range(4)}  # 四个场景共用同样的观察方向。
-    buttons = [dict(label=name, method="update", args=[{  # 显示控制只切换已有类别图层。
-        "visible": [trace.legendgroup in groups for trace in fig.data]}])  # 按图例分组决定图层可见性。
-        for name, groups in [("全部", {"common", "missed", "extra", "unknown"}),  # 默认同时显示差集和未确定区域。
-                             ("仅差异", {"missed", "extra"}),  # 可只观察红黄差集。
-                             ("计算域", {"common", "extra"}),  # 计算域由重合与多余部分组成。
+    # 2. 同一份比较标签生成各类别表面，空类别只保留图例
+    for panel, labels in enumerate(result.labels[:, budget_index]):
+        for code, name, color, opacity, group in categories:
+            mesh = voxel_surface(labels == code, result.spacing)
+            points = np.asarray(mesh["vertices"]).reshape(-1, 3)
+            faces = np.asarray(mesh["triangles"], dtype=int).reshape(-1, 3)
+            if len(points):
+                trace = go.Mesh3d(x=points[:, 0], y=points[:, 1], z=points[:, 2],
+                                 i=faces[:, 0], j=faces[:, 1], k=faces[:, 2],
+                                 name="AC 参考域" if panel == 2 and code==3 else name,
+                                 color=color, opacity=opacity, flatshading=True,
+                                 legendgroup=group, showlegend=panel == 0,
+                                 lighting=dict(ambient=1., diffuse=.25, specular=.05, roughness=.95),
+                                 hovertemplate="节点负荷 (%{x:.2f}, %{y:.2f}, %{z:.2f}) kW<extra>%{fullData.name}</extra>")
+            else:
+                trace = go.Scatter3d(x=[None], y=[None], z=[None], mode="markers", name=name,
+                                    marker=dict(color=color, size=7), legendgroup=group,
+                                    showlegend=panel == 0, hoverinfo="skip")
+            fig.add_trace(trace, row=panel//2+1, col=panel % 2+1)
+    # 3. 统一负荷坐标、观察角度和图层控制
+    axis = lambda node, bound: dict(title=dict(text=f"节点 {node} 负荷 (kW)", font=dict(size=11)),
+                             range=[0, bound], nticks=5,
+                             tickfont=dict(size=10), backgroundcolor="white", gridcolor="#E2E6E9",
+                             zerolinecolor="#B8C1C6", showbackground=True)
+    scenes = {"scene" if i == 0 else f"scene{i+1}": dict(
+        xaxis=axis(result.load_nodes[0], result.bounds[0]),
+        yaxis=axis(result.load_nodes[1], result.bounds[1]),
+        zaxis=axis(result.load_nodes[2], result.bounds[2]), aspectmode="cube",
+        camera=dict(eye=dict(x=1.5, y=1.6, z=1.2), projection=dict(type="orthographic")))
+        for i in range(4)}
+    buttons = [dict(label=name, method="update", args=[{
+        "visible": [trace.legendgroup in groups for trace in fig.data]}])
+        for name, groups in [("全部", {"common", "missed", "extra", "unknown"}),
+                             ("仅差异", {"missed", "extra"}),
+                             ("计算域", {"common", "extra"}),
                              ("AC 参考域", {"common", "missed"}),
-                             ("未确定", {"unknown"})]]  # 灰色可独立查看或关闭。
-    fig.update_layout(**scenes, height=900, template="plotly_white",  # 应用四场景设置和统一白底模板。
-                      margin=dict(l=5, r=5, t=72, b=45),  # 保持紧凑留白，将长说明放在图注。
-                      font=dict(family="Arial, Microsoft YaHei, sans-serif", size=12),  # 采用可编辑的常规中英文字体。
-                      legend=dict(orientation="h", x=.5, xanchor="center", y=-.04,  # 图例横向居中放置。
-                                  groupclick="togglegroup"),  # 同类别在四个面板中同时切换。
-                      updatemenus=[dict(type="buttons", direction="right", buttons=buttons,  # 用简短按钮切换需要比较的集合。
-                                        x=.5, xanchor="center", y=1.09, yanchor="top")],  # 控制栏居中，不占用主要绘图区域。
-                      uirevision="method-comparison")  # 切换图层时保留用户旋转后的视角。
-    fig.update_annotations(font=dict(size=13))  # 统一面板标记字号。
-    return fig  # 返回可由 Notebook 展示或导出的图对象。
+                             ("未确定", {"unknown"})]]
+    fig.update_layout(**scenes, height=900, template="plotly_white",
+                      margin=dict(l=5, r=5, t=72, b=45),
+                      font=dict(family="Arial, Microsoft YaHei, sans-serif", size=12),
+                      legend=dict(orientation="h", x=.5, xanchor="center", y=-.04,
+                                  groupclick="togglegroup"),
+                      updatemenus=[dict(type="buttons", direction="right", buttons=buttons,
+                                        x=.5, xanchor="center", y=1.09, yanchor="top")],
+                      uirevision="method-comparison")
+    fig.update_annotations(font=dict(size=13))
+    return fig
 
 
 def plot_continuous_regions(result, budget_index):
@@ -786,11 +800,13 @@ def plot_continuous_regions(result, budget_index):
     from plotly.subplots import make_subplots
     import plotly.graph_objects as go
 
+    # 1. 选择当前预算的连续域结果
     methods = ('linear', 'socp', 'hybrid')
     names = dict(zip(METHODS, METHOD_NAMES))
     fig = make_subplots(rows=1, cols=3, specs=[[dict(type='scene')]*3],
                         subplot_titles=[f'{letter}  {names[m]}' for letter, m in zip('abc', methods)])
     rows = {r['method']: r for r in result.metadata['continuous'] if r['budget_index'] == budget_index}
+    # 2. 绘制方案内域与全局外包络，统一负荷轴及观察角度
     for col, method in enumerate(methods, 1):
         view = region_view(rows[method], result.bounds)
         for kind, color, opacity, label in [('outer', '#7D9CB4', .15, '外包络'),
@@ -809,6 +825,7 @@ def plot_continuous_regions(result, budget_index):
         fig.update_scenes(**axes, aspectmode='cube',
                           camera=dict(eye=dict(x=1.5, y=1.6, z=1.2), projection=dict(type='orthographic')),
                           row=1, col=col)
+    # 3. 整理版面并返回可复用的图对象
     fig.update_layout(height=460, template='plotly_white', margin=dict(l=0, r=0, t=45, b=0),
                       font=dict(family='Arial, Microsoft YaHei, sans-serif', size=11))
     return fig
@@ -823,12 +840,14 @@ def show_result(result, folder, open_browser=True):
         webbrowser.open(path.as_uri())
 
 
-def save_method_comparison(result, folder):  # 为各预算导出同一原始结果驱动的交互页面。
-    import plotly.io as pio  # 把 Plotly 图对象转为 HTML。
+def save_method_comparison(result, folder):
+    """按预算导出交互图与比较表；指标由同一原始结果推导。"""
+    import plotly.io as pio
 
-    folder = Path(folder)  # 使用路径对象组织展示文件。
-    folder.mkdir(parents=True, exist_ok=True)  # 创建当前实验输出目录。
-    filenames = ['region_comparison.html']+[  # 第一档预算作为入口页面。
+    # 1. 设置各预算的页面名称及联动视角
+    folder = Path(folder)
+    folder.mkdir(parents=True, exist_ok=True)
+    filenames = ['region_comparison.html']+[
         f'methods_{index}.html' for index in range(1, len(result.budgets))]
     synchronize = r'''
 const chart = document.getElementById('{plot_id}');
@@ -843,22 +862,24 @@ chart.on('plotly_relayout', event => {
   Plotly.relayout(chart, update).finally(() => { synchronizing = false; });
 });
 '''
-    rows = result.summary  # FR/MR 和时间全部由结果容器现场推导。
+    # 2. 按需计算比较指标与图注
+    rows = result.summary
     domains = {(r['method'], r['budget']): r for r in result.metadata.get('continuous', [])}
-    scope = '可规划域' if result.metadata['planning'] else '固定方案可调度域截面'  # 根据实验配置区分规划域与固定网架截面。
-    spacing = ' × '.join(f'{value:g}' for value in result.spacing)  # 图注标明三个负荷轴的网格步长。
-    cost_unit = result.metadata['cost_unit']  # 费用单位来自唯一网架配置。
+    scope = '可规划域' if result.metadata['planning'] else '固定方案可调度域截面'
+    spacing = ' × '.join(f'{value:g}' for value in result.spacing)
+    cost_unit = result.metadata['cost_unit']
     geometry_note = "上排绿色为认证内域、浅蓝为全局外包络，下排为独立 AC 网格比较。灰色为未确定；网格完整不表示连续边界精确。构域耗时按当前预算列出，AC 时间覆盖全部预算。"
-    for index, (budget, filename) in enumerate(zip(result.budgets, filenames)):  # 逐预算生成相同布局的比较页面。
-        links = ' · '.join(  # 构造各预算之间的导航链接。
-            f'<a href="{name}" aria-current="{"page" if i == index else "false"}">'  # 为当前页面标记选中状态。
-            f'{"无限预算" if np.isinf(b) else f"{b:g} {cost_unit}"}</a>'  # 预算显示使用原始投资单位。
-            for i, (b, name) in enumerate(zip(result.budgets, filenames)))  # 导航顺序与实验预算顺序一致。
-        navigation = f'<nav>预算：{links}</nav>' if result.metadata['planning'] else ''  # 固定方案实验不需要预算导航。
-        table = []  # 收集当前预算四种方法的指标行。
-        for method, name in zip(METHODS, METHOD_NAMES):  # 按统一的方法顺序输出比较表。
-            row = next(row for row in rows if row['method'] == method  # 定位该方法在当前预算下的派生指标。
-                       and row['budget'] == (None if np.isinf(budget) else budget))  # 无限预算的存储形式为 JSON null。
+    for index, (budget, filename) in enumerate(zip(result.budgets, filenames)):
+        # 3. 生成本预算的导航与四方法指标表
+        links = ' · '.join(
+            f'<a href="{name}" aria-current="{"page" if i == index else "false"}">'
+            f'{"无限预算" if np.isinf(b) else f"{b:g} {cost_unit}"}</a>'
+            for i, (b, name) in enumerate(zip(result.budgets, filenames)))
+        navigation = f'<nav>预算：{links}</nav>' if result.metadata['planning'] else ''
+        table = []
+        for method, name in zip(METHODS, METHOD_NAMES):
+            row = next(row for row in rows if row['method'] == method
+                       and row['budget'] == (None if np.isinf(budget) else budget))
             def rate(key):
                 if row[key] is not None:
                     return f'{row[key]:.4f}%'
@@ -872,9 +893,10 @@ chart.on('plotly_relayout', event => {
                          f'<td>{rate("region_error_percent")}</td><td>{rate("fr_percent")}</td>'
                          f'<td>{rate("mr_percent")}</td><td>{row["total_seconds"]:.3f}</td>'
                          f'<td>{counts}</td><td>{row.get("unknown_cells",0)}</td></tr>')
+        # 4. 嵌入连续域和 AC 网格图，统一保存为离线页面
         chart = pio.to_html(plot_method_comparison(result, index), include_plotlyjs=not bool(result.metadata.get('continuous')), full_html=False,
-                           div_id='method-comparison', post_script=synchronize,  # 同步四个场景的相机，便于同视角比较。
-                           config=dict(responsive=True, displaylogo=False, scrollZoom=True))  # 支持窗口尺寸变化与滚轮缩放。
+                           div_id='method-comparison', post_script=synchronize,
+                           config=dict(responsive=True, displaylogo=False, scrollZoom=True))
         continuous = ''
         if result.metadata.get('continuous'):
             continuous = pio.to_html(plot_continuous_regions(result, index), include_plotlyjs=False,
@@ -897,5 +919,286 @@ FR = 多余 / 计算域；MR = 遗漏 / AC 域。AC 自比较的零仅表示它�
 构域时间含建模、求解及几何计算，混合方法计入线性阶段；AC 时间单列。绘图和导出不计。<br>
 {geometry_note}</p>
 </body></html>'''
-        (folder/filename).write_text(html, encoding='utf-8')  # 写入可再生成的展示页面，原始结果仍只存一次。
-    return folder/filenames[0]  # 返回默认预算页面作为 Notebook 入口。
+        (folder/filename).write_text(html, encoding='utf-8')
+    return folder/filenames[0]
+
+
+def render_survey(result, output):
+    """勘察绘图唯一入口：读取结果字典，统一生成总图和条件价值图。"""
+    # 1. 本次绘图的依赖、输出目录和样式
+    import matplotlib as mpl
+    import matplotlib.pyplot as plt
+    from matplotlib.patches import Circle, Patch, PathPatch, Rectangle
+    from matplotlib.path import Path as MplPath
+    from matplotlib.ticker import MaxNLocator
+    from shapely.geometry import shape
+    from shapely.geometry.polygon import orient
+    output = Path(output)
+    output.mkdir(parents=True, exist_ok=True)
+    WIDTH_MM = 183
+    GREEN, GREEN_LIGHT = '#23845D', '#B5D9C6'
+    RED, RED_LIGHT = '#BC4D46', '#F2C9C3'
+    DARK, MUTED, BASE, CONFIRMED, UNKNOWN = '#283C49','#6E808E','#A7B2BA','#ADCADB','#EDF1F5'
+    COLORS = dict(zip('ABCDEF',['#3F6E9E','#A87B42','#7864A5','#B0576A','#32888D','#8A939B']))
+    MARKERS = dict(zip('ABCDEF',['o','s','D','^','v','x']))
+    STYLE = {'font.family':'sans-serif',
+        'font.sans-serif':['Microsoft YaHei','Arial','DejaVu Sans'],
+        'font.size':7.5,'axes.labelsize':8.,'axes.titlesize':8.,
+        'xtick.labelsize':7.,'ytick.labelsize':7.,'legend.fontsize':7.,
+        'svg.fonttype':'none','pdf.fonttype':42,'mathtext.fontset':'dejavusans',
+        'axes.spines.top':False,'axes.spines.right':False,'axes.linewidth':.65,
+        'legend.frameon':False,'savefig.facecolor':'white','figure.facecolor':'white',
+        'hatch.linewidth':.35}
+
+    # 2. 共用的多边形、坐标轴及价值曲线绘制
+    def polygon_parts(geometry):
+        if geometry.is_empty:
+            return []
+        if geometry.geom_type == 'Polygon':
+            return [geometry]
+        return [part for piece in geometry.geoms for part in polygon_parts(piece)]
+
+
+    def fill_geometry(ax, geometry, color, *, edgecolor='none', hatch=None, zorder=1):
+        """按环方向填充多边形，保留孔洞；斜线由 Matplotlib 统一绘制。"""
+        for polygon in polygon_parts(geometry):
+            polygon = orient(polygon, sign=1.)
+            paths = []
+            for ring in [polygon.exterior, *polygon.interiors]:
+                vertices = np.asarray(ring.coords)
+                codes = np.full(len(vertices), MplPath.LINETO, dtype=np.uint8)
+                codes[0], codes[-1] = MplPath.MOVETO, MplPath.CLOSEPOLY
+                paths.append(MplPath(vertices, codes))
+            ax.add_patch(PathPatch(MplPath.make_compound_path(*paths), facecolor=color,
+                                   edgecolor=edgecolor, hatch=hatch, linewidth=.35, zorder=zorder))
+
+
+    def boundary(ax, geometry, color, *, linestyle='-', linewidth=1.1, zorder=4):
+        for polygon in polygon_parts(geometry):
+            coordinates = np.asarray(polygon.exterior.coords)
+            ax.plot(coordinates[:, 0], coordinates[:, 1], color=color, linestyle=linestyle,
+                    linewidth=linewidth, zorder=zorder)
+
+
+    def domain_axes(ax):
+        ax.set(xlim=(0,100),ylim=(0,100),aspect='equal',xlabel=r'$p_1$ (kW)',ylabel=r'$p_2$ (kW)')
+        ax.set_xticks([0,50,100])
+        ax.set_yticks([0,50,100])
+        ax.tick_params(length=2.4,pad=2)
+
+
+    def plot_value_history(ax, result):
+        """每条道路只显示尚未勘察时的条件评分；观测顺序来自 trace。"""
+        # 1. 绘制各道路评分及数值区间
+        for route in result['protocol']['routes']:
+            rows = [row for row in result['all_candidates'] if row['route']==route]
+            x = [row['step'] for row in rows]
+            y = [row['information_efficiency'] for row in rows]
+            ax.plot(x,y,marker=MARKERS[route],markersize=4.,lw=1.15,
+                    color=COLORS[route],label=route,zorder=4 if route!='F' else 2)
+            lower = [row['information_efficiency_lower'] for row in rows]
+            upper = [row['information_efficiency_upper'] for row in rows]
+            ax.fill_between(x,lower,upper,color=COLORS[route],alpha=.18,lw=0)
+        # 2. 圈出每轮实际选择，以观测记录生成横轴标签
+        for action in result['trace']:
+            ax.scatter(action['step']-1,action['information_efficiency'],s=64,facecolors='none',
+                       edgecolors=DARK,linewidths=.9,zorder=8)
+        labels = ['0']+[f'{row["step"]} ({row["route"]}{"+" if row["survey_observation"] else "−"})'
+                        for row in result['trace']]
+        ax.set(xlim=(-.16,len(labels)-.82),ylabel='单位勘察费信息价值\n(kW² / 勘察单位)')
+        ax.set_xticks(range(len(labels)), labels)
+        ax.yaxis.set_major_locator(MaxNLocator(5))
+        ax.set_xlabel('决策时刻：已完成的勘察次数（括号为刚获得的结果）',fontsize=7.)
+        ax.grid(axis='y',color='#E6EBEF',lw=.45,zorder=0)
+        ax.legend(loc='upper right',ncol=6,columnspacing=.85,handlelength=1.3,
+                  bbox_to_anchor=(1.005,1.25),fontsize=7.)
+
+
+    with mpl.rc_context(STYLE):
+        # 3. 总图：网架、非凸见证、逐轮区域及停止证书
+        # 按实际状态数安排版面，读取本次预算与停止阈值
+        rows = (len(result['states'])+2)//3
+        height_mm = 135+65*rows
+        protocol = result['protocol']
+        fig = plt.figure(figsize=(WIDTH_MM/25.4,height_mm/25.4))
+        fig.text(.055,.976,'有限预算下，勘察逐步识别可实现的非凸规划域',fontsize=11.,weight='bold',color=DARK)
+        fig.text(.055,.952,f'五节点合成示例  |  建设预算 {protocol["budget"]:g}；按单位勘察费的信息价值选择道路',
+                 fontsize=7.5,color=MUTED)
+        grid = fig.add_gridspec(rows+2,3,height_ratios=[1.1,*[1.3]*rows,.9],
+                                left=.08,right=.96,bottom=.09,top=.91,wspace=.50,hspace=.90)
+
+        # 绘制网架和本次非凸见证
+        net = fig.add_subplot(grid[0,0],label='topology')
+        ax = net
+        # 设置节点及候选道路的示意坐标
+        positions = {0:(0,2.8),3:(-1,1.5),4:(1,1.5),1:(-1,0),2:(1,0)}
+        paths = {
+            'A':[(0,2.8),(-1.75,2.8),(-1.75,0),(-1,0)],
+            'B':[(0,2.8),(1.75,2.8),(1.75,0),(1,0)],
+            'C':[(-1,0),(-1,-.48),(1,-.48),(1,0)],
+            'D':[(-1,0),(1,1.5)], 'E':[(1,0),(-1,1.5)],
+            'F':[(-1,1.5),(1,1.5)]}
+        radius = .19
+        # 绘制既有线路、候选道路和节点
+        for a,b in [(0,3),(3,1),(0,4),(4,2)]:
+            points = np.asarray([positions[a],positions[b]],float)
+            unit = (points[1]-points[0])/np.linalg.norm(points[1]-points[0])
+            points[0] += radius*unit
+            points[-1] -= radius*unit
+            ax.plot(points[:,0],points[:,1],color=DARK,lw=1.1,zorder=1)
+        for route,path in paths.items():
+            points = np.asarray(path,float)
+            points[0] += radius*(points[1]-points[0])/np.linalg.norm(points[1]-points[0])
+            points[-1] += radius*(points[-2]-points[-1])/np.linalg.norm(points[-2]-points[-1])
+            ax.plot(points[:,0],points[:,1],color=COLORS[route],lw=1.,ls=(0,(3,2)),zorder=2)
+        for node,(x,y) in positions.items():
+            ax.add_patch(Circle((x,y),radius,facecolor=DARK if node==0 else '#EDF3F7',
+                                edgecolor=DARK,lw=.75,zorder=3))
+            ax.text(x,y,str(node),ha='center',va='center',fontsize=7.,zorder=4,
+                    color='white' if node==0 else DARK)
+        # 标注道路、负荷与电源
+        labels = {'A':(-1.96,1.2),'B':(1.96,1.2),'C':(0,-.74),
+                  'D':(-.40,.18),'E':(.40,.18),'F':(0,1.77)}
+        for road,(x,y) in labels.items():
+            ax.text(x,y,road,ha='center',va='center',color=COLORS[road],weight='bold',fontsize=8.)
+        ax.text(0,3.19,'电源',ha='center',fontsize=7.)
+        ax.text(-1.43,-.34,r'$p_1$',fontsize=8.,ha='center')
+        ax.text(1.43,-.34,r'$p_2$',fontsize=8.,ha='center')
+        ax.set(xlim=(-2.25,2.25),ylim=(-.92,3.44),aspect='equal')
+        ax.axis('off')
+        net.set_title('a  网架与候选道路',loc='left',weight='bold')
+        net.text(.5,-.08,'实线：既有；虚线：候选',ha='center',transform=net.transAxes,fontsize=6.7,color=MUTED)
+        nonconvex = fig.add_subplot(grid[0,1],label='nonconvexity')
+        ax = nonconvex
+        # 叠加最终确认域及其凸包
+        final = shape(result['states'][-1]['confirmed'])
+        fill_geometry(ax,final.convex_hull,UNKNOWN)
+        fill_geometry(ax,final,CONFIRMED)
+        boundary(ax,final,DARK,linewidth=1.)
+        # 标注两个可行端点与不可行中点
+        witness = result['nonconvexity_witness']
+        a,b,m = [np.asarray(witness[key]) for key in ('p_a','p_b','p_mid')]
+        ax.plot([a[0],b[0]],[a[1],b[1]],color=MUTED,ls='--',lw=.8,zorder=5)
+        ax.scatter([a[0],b[0]],[a[1],b[1]],s=15,color=DARK,zorder=6)
+        ax.scatter([m[0]],[m[1]],s=22,color=RED,marker='x',linewidth=1.2,zorder=7)
+        for p,label,offset in [(a,'U',(-10,-9)),(b,'V',(5,2)),(m,'M',(3,6))]:
+            ax.text(*(p+offset),label,color=RED if label=='M' else DARK,fontsize=7.5)
+        domain_axes(ax)
+        nonconvex.set_title('b  方案域的并集可以非凸',loc='left',weight='bold')
+        notes = fig.add_subplot(grid[0,2],label='legend')
+        notes.axis('off')
+        notes.text(0,1.,'U、V 分别可行，中点 M 不可行\n各负荷点可以选择不同建设方案',
+                   va='top',fontsize=7.,color=DARK,linespacing=1.7)
+        handles = [Patch(facecolor=UNKNOWN,label='尚未排除的可能范围'),
+                   Patch(facecolor=BASE,label='初始调度域'),
+                   Patch(facecolor=CONFIRMED,label='此前已确认'),
+                   Patch(facecolor=GREEN_LIGHT,label='本轮新增 +'),
+                   Patch(facecolor=RED_LIGHT,edgecolor=RED,hatch='///',label='本轮删除 −')]
+        notes.legend(handles=handles,loc='lower left',borderaxespad=0,fontsize=6.8)
+
+        # 逐轮叠加确认域、乐观域及本轮增加/删除部分
+        initial_optimistic = shape(result['states'][0]['optimistic'])
+        baseline = shape(result['states'][0]['confirmed'])
+        for index,state in enumerate(result['states']):
+            row,col = divmod(index,3)
+            ax = fig.add_subplot(grid[row+1,col],label=f'state_{index}')
+            current,optimistic = shape(state['confirmed']),shape(state['optimistic'])
+            fill_geometry(ax,optimistic,UNKNOWN)
+            fill_geometry(ax,current,CONFIRMED)
+            fill_geometry(ax,baseline,BASE,zorder=2)
+            if index:
+                before = result['states'][index-1]
+                added = current.difference(shape(before['confirmed']))
+                removed = shape(before['optimistic']).difference(optimistic)
+                fill_geometry(ax,added,GREEN_LIGHT,edgecolor=GREEN,zorder=3)
+                fill_geometry(ax,removed,RED_LIGHT,edgecolor=RED,hatch='///',zorder=3)
+            boundary(ax,initial_optimistic,'#B9C2CA',linestyle=':',linewidth=.6,zorder=4)
+            boundary(ax,optimistic,DARK,linestyle='--',linewidth=.8,zorder=5)
+            boundary(ax,current,'#426783',linewidth=1.,zorder=6)
+            domain_axes(ax)
+            if index==0:
+                title = 'c  初始：尚未勘察'
+                detail = f'初始调度域占乐观域 {result["baseline_share"]:.1%}'
+                color = MUTED
+            else:
+                action = result['trace'][index-1]
+                sign = '+' if action['survey_observation'] else '−'
+                status = '可用' if action['survey_observation'] else '不可用'
+                title = f'{chr(99+index)}  {index} · {action["route"]} {status}'
+                area = action['realized_gain']+action['realized_removal']
+                detail = f'{"新增" if action["survey_observation"] else "删除"} {sign}{area:,.1f} kW²'
+                color = GREEN if action['survey_observation'] else RED
+            ax.set_title(title,loc='left',fontsize=7.8,weight='bold',color=DARK,pad=8)
+            ax.text(0,-.31,detail,transform=ax.transAxes,fontsize=6.8,color=color)
+            ax.text(0,-.42,f'确认 {state["confirmed_area"]:,.0f} / 乐观 {state["optimistic_area"]:,.0f} kW²',
+                    transform=ax.transAxes,fontsize=6.5,color=MUTED)
+
+        # 展示条件价值与停止证书
+        value = fig.add_subplot(grid[-1,:],label='value_history')
+        position = value.get_position()
+        value.set_position([.12,position.y0,.84,position.height])
+        plot_value_history(value,result)
+        value.set_title(f'{chr(99+len(result["states"]))}  动态条件价值：圆环为当轮选择',
+                        loc='left',fontsize=8.,weight='bold',color=DARK,pad=18)
+        uninspected = '、'.join(result['uninspected']) or '无'
+        fig.text(.055,.020,f'停止时整体间隙上界 {result["states"][-1]["information_gap_upper"]:.2f} kW²；'
+                 f'停止阈值 {protocol["stopping_area_tolerance"]:g} kW²；未勘察道路：{uninspected}。',
+                 fontsize=6.8,color=MUTED)
+        figures = [(fig, 'concept5_overview')]
+
+        # 4. 条件价值图：完整曲线与逐轮评分矩阵
+        # 绘制条件价值曲线
+        fig = plt.figure(figsize=(WIDTH_MM/25.4,160/25.4))
+        fig.text(.055,.96,'道路价值是条件量：比较同一决策时刻，而非不同道路的最后一次评分',
+                 fontsize=9.8,weight='bold',color=DARK)
+        fig.text(.055,.92,'a  每条路线一条轨迹；圆环 = 当轮选中；勘察后轨迹结束，不能补成零',fontsize=7.8,color=DARK)
+        curve = fig.add_axes([.115,.575,.81,.275],label='conditional_value')
+        plot_value_history(curve,result)
+        fig.text(.055,.456,'b  完整评分矩阵：黑框 = 当轮选择；“—” = 已勘察，不再评分',fontsize=7.8,color=DARK)
+        # 由全部候选评分构造道路 × 决策时刻矩阵
+        routes = list(result['protocol']['routes'])
+        steps = len(result['states'])
+        matrix = np.full((len(routes),steps),np.nan)
+        for row in result['all_candidates']:
+            matrix[routes.index(row['route']),row['step']] = row['information_efficiency']
+        heat = fig.add_axes([.115,.105,.81,.305],label='score_matrix')
+        cmap = mpl.colormaps['Blues'].with_extremes(bad='#F5F6F7')
+        maximum = np.nanmax(matrix)
+        heat.imshow(matrix,aspect='auto',cmap=cmap,vmin=0,vmax=maximum,interpolation='none')
+        for i in range(len(routes)):
+            for j in range(steps):
+                value = matrix[i,j]
+                label = '—' if np.isnan(value) else f'{value:,.1f}'
+                heat.text(j,i,label,ha='center',va='center',fontsize=7.4,
+                          color='white' if value>.6*maximum else MUTED if np.isnan(value) else DARK)
+        # 标记实际选择，标注最后一轮停止检查
+        for row in result['trace']:
+            i,j = routes.index(row['route']),row['step']-1
+            heat.add_patch(Rectangle((j-.465,i-.435),.93,.87,fill=False,edgecolor=DARK,lw=1.1))
+        heat.set_yticks(range(len(routes)),routes)
+        heat.set_xticks(range(steps),[f'第 {i+1} 次前' for i in range(steps-1)]+['停止检查'])
+        heat.tick_params(length=0,pad=6)
+        for i,label in enumerate(heat.get_yticklabels()):
+            label.set_color(COLORS[routes[i]])
+            label.set_weight('bold')
+        for spine in heat.spines.values():
+            spine.set_visible(False)
+        fig.text(.055,.035,'数值单位：kW² / 勘察单位。曲线阴影为求域数值误差区间；各轮仅比较当时尚未勘察的道路。',
+                 fontsize=7.,color=MUTED)
+        figures.append((fig, 'conditional_road_values'))
+
+        # 5. 统一导出 PDF、SVG、PNG
+        for fig, name in figures:
+            for suffix in ('pdf', 'svg', 'png'):
+                fig.savefig(output/f'{name}.{suffix}', dpi=300)
+            plt.close(fig)
+
+
+if __name__ == '__main__':
+    import argparse
+
+    parser = argparse.ArgumentParser(description='从 results.json 绘制勘察结果')
+    parser.add_argument('--results', type=Path, required=True)
+    args = parser.parse_args()
+    result = json.loads((args.results/'results.json').read_text(encoding='utf-8'))
+    render_survey(result, args.results/'figures')

@@ -9,7 +9,7 @@ import unittest
 
 import numpy as np
 
-from plot import RunMonitor, region_geometry, region_view, surface, json_value
+from plot import RunMonitor, region_geometry, region_view, surface, json_value, pack_replay
 from region import RegionState
 from plot import sample_region
 
@@ -88,15 +88,33 @@ class PresentationTests(unittest.TestCase):
             with RunMonitor(record=False, output=folder, stream=StringIO()) as monitor:
                 monitor('completed', results=[result], bounds=self.region.bounds)
                 monitor.save_snapshot()
-            saved = json.loads((Path(folder)/'replay.json').read_text(encoding='utf-8'))
-            self.assertEqual(saved['history'], [])
-            self.assertTrue(saved['results'][0]['inner'][0]['faces'])
+            self.assertEqual([path.name for path in Path(folder).iterdir()], ['live_view.html'])
             self.assertIn('window.SAVED_REPLAY_GZIP=',
                           (Path(folder)/'live_view.html').read_text(encoding='utf-8'))
             with RunMonitor(record=False, stream=StringIO()) as restored:
-                restored.load_recording(Path(folder)/'replay.json')
-                self.assertEqual(json.loads(restored.snapshot())['results'], saved['results'])
+                restored.load_recording(Path(folder)/'live_view.html')
+                saved = json.loads(restored.snapshot())
+                self.assertEqual(saved['history'], [])
+                self.assertTrue(saved['results'][0]['inner'][0]['faces'])
+                self.assertEqual(saved['results'], monitor.state['results'])
         self.assertEqual(json.dumps(json_value(result)), original)
+
+    def test_large_html_recording_restores_packed_history(self):
+        with TemporaryDirectory() as folder:
+            with RunMonitor(record=True, output=folder, stream=StringIO()) as monitor:
+                monitor('phase_start', geometry=[{'vertices': [[0., -0., 1e-12]]}])
+                monitor('point', point=[1., 2., 3.], query=1)
+                monitor('completed', message='done')
+                monitor.state['padding'] = 'x'*10_000_001
+                with patch('plot.pack_replay', wraps=pack_replay) as packed:
+                    monitor.save_snapshot()
+                    packed.assert_called_once()
+            with RunMonitor(record=False, stream=StringIO()) as restored:
+                restored.load_recording(Path(folder)/'live_view.html')
+                self.assertEqual(restored.history, monitor.history)
+                self.assertEqual(restored.events, monitor.events)
+                self.assertEqual(restored.state, monitor.state | {
+                    'history_total': len(monitor.history), 'recording_version': 1})
 
 
 if __name__ == '__main__':

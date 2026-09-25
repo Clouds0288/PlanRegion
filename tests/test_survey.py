@@ -61,7 +61,7 @@ class SurveyTests(unittest.TestCase):
 
     def test_production_modules_do_not_import_experiments_or_tests(self):
         paths = [ROOT/name for name in ('main.py', 'model.py', 'region.py', 'plot.py', 'vertify.py',
-                                       'survey.py', 'survey_plot.py')]
+                                       'survey.py')]
         paths.extend((ROOT/'Network').glob('*.py'))
         for path in paths:
             tree = ast.parse(path.read_text(encoding='utf-8-sig'))
@@ -73,13 +73,17 @@ class SurveyTests(unittest.TestCase):
                 else:
                     continue
                 self.assertFalse(any(name.split('.')[0] in {'tests', 'experiments'} for name in names), path.name)
-        self.assertNotIn('.codex', (ROOT/'survey_plot.py').read_text(encoding='utf-8'))
+        self.assertNotIn('.codex', (ROOT/'plot.py').read_text(encoding='utf-8'))
 
     def test_standalone_run_matches_frozen_reference(self):
         with TemporaryDirectory() as directory:
             output = Path(directory)/'fresh'
-            with redirect_stdout(StringIO()):
+            cache = survey.DomainCache(threads=1, time_limit=60.)
+            with redirect_stdout(StringIO()), patch.object(survey, 'DomainCache', return_value=cache):
                 result = survey.run_survey(output=output, threads=1, time_limit=60.)
+            saved = json.loads((output/'results.json').read_text(encoding='utf-8'))
+            self.assertEqual(saved, survey.json_value(result))
+            self.assertEqual([path.name for path in output.iterdir()], ['results.json'])
             expected = self.reference['result']
             self.assertEqual([(r['route'], r['survey_observation']) for r in result['trace']],
                              [(r['route'], r['survey_observation']) for r in expected['trace']])
@@ -91,18 +95,24 @@ class SurveyTests(unittest.TestCase):
             for actual, old in zip(result['states'], expected['states'], strict=True):
                 for name in ('confirmed_area', 'optimistic_area'):
                     self.assertAlmostEqual(actual[name], old[name], delta=.5)
-            for row in json.loads((output/'domains.json').read_text(encoding='utf-8')):
-                old = self.domains[frozenset(row['allowed'])]
-                inner, outer = shape(row['inner']), shape(row['outer'])
+            for allowed, row in cache.items():
+                old = self.domains[allowed]
+                inner, outer = row['inner'], row['outer']
                 self.assertLess(inner.difference(old['outer']).area, 1e-6)
                 self.assertLess(old['inner'].difference(outer).area, 1e-6)
                 self.assertLess(inner.symmetric_difference(old['inner']).area, .5)
-            audit = json.loads((output/'audit.json').read_text(encoding='utf-8'))
+                for subset, smaller in cache.items():
+                    if subset < allowed:
+                        for kind in ('inner', 'outer'):
+                            self.assertLess(smaller[kind].difference(row[kind]).area, 1e-6)
+            audit = saved['audit']
             self.assertTrue(audit['passed'])
             self.assertEqual(audit['ac_inner_vertices'], audit['ac_feasible_vertices'])
             self.assertTrue(audit['midpoint_infeasible'])
-            protocol = json.loads((output/'protocol.json').read_text(encoding='utf-8'))
-            self.assertEqual(protocol['schema'], 'survey-v1')
+            self.assertEqual(saved['protocol']['schema'], 'survey-v2')
+            scheme_ids = {row['id'] for row in saved['schemes']}
+            self.assertIn(saved['nonconvexity_witness']['plan_a'], scheme_ids)
+            self.assertIn(saved['nonconvexity_witness']['plan_b'], scheme_ids)
             self.assertNotIn('reference_directory', result)
 
 

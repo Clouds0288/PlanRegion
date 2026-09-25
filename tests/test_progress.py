@@ -146,13 +146,15 @@ class ProgressTests(unittest.TestCase):
             self.assertEqual(result.states.shape, (4, 1, 2, 2, 2))
             self.assertTrue((Path(folder)/'region_comparison.html').exists())
             browser.assert_called_once()
-            saved = json.loads((Path(folder)/'replay.json').read_text(encoding='utf-8'))
+            with RunMonitor(record=False, stream=StringIO()) as restored:
+                restored.load_recording(Path(folder)/'live_view.html')
+                saved = json.loads(restored.snapshot())
             self.assertEqual(saved['status'], 'completed')
             events = [frame['patch'].get('event') for frame in saved['history']]
             self.assertIn('mp_start', events)
             self.assertIn('point', events)
-            self.assertTrue((Path(folder)/'events.jsonl').exists())
-            self.assertTrue((Path(folder)/'live_view.html').exists())
+            self.assertEqual({path.name for path in Path(folder).iterdir()},
+                             {'result.npz', 'region_comparison.html', 'live_view.html'})
             for region in result.metadata['continuous']:
                 self.assertEqual(set(region['counts']), {'sp', 'cuts'})
                 self.assertEqual(set(region['timing']), {'total_seconds'})

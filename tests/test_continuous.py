@@ -158,7 +158,10 @@ class ContinuousTests(unittest.TestCase):
                 self.assertEqual(len(saved['history']), 704)
                 self.assertEqual(saved['history'], monitor.history)
                 self.assertEqual(saved['geometry'], [])
-                self.assertEqual(len((Path(directory)/'events.jsonl').read_text(encoding='utf-8').splitlines()), 704)
+                self.assertEqual([path.name for path in Path(directory).iterdir()], ['live_view.html'])
+                with RunMonitor(record=False, stream=StringIO()) as restored:
+                    restored.load_recording(Path(directory)/'live_view.html')
+                    self.assertEqual(restored.history, monitor.history)
 
 
 if __name__ == '__main__':

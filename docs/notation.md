@@ -1,8 +1,8 @@
 # 数学符号与代码变量规范
 
-版本：1.4，2026-09-25。按用户要求恢复 d25c070 的 MP1 / MP2 / 对偶 SP 主线，并将同一几何流程推广至二维。三维接口、单位及联合割布局保持不变。
+版本：1.6，2026-09-25。勘察绘图合并至 plot.py，保留单一入口；MP1 / MP2 / 对偶 SP、单位、索引及联合割布局保持不变。
 
-本文是本项目数学符号、代码名称、单位、数组顺序和结果字段的统一约定。正式代码为 `Network/`、`model.py`、`region.py`、`vertify.py`、`plot.py`、`main.py`、`survey.py`、`survey_plot.py`；测试、注释和新文档使用同一约定。项目外归档的源码、已有结果和固定方案历史推导保留原口径，其局部记号须通过附录（原第 10 节）换算。
+本文是本项目数学符号、代码名称、单位、数组顺序和结果字段的统一约定。正式代码为 `Network/`、`model.py`、`region.py`、`vertify.py`、`plot.py`、`main.py`、`survey.py`；测试、注释和新文档使用同一约定。项目外归档的源码、已有结果和固定方案历史推导保留原口径，其局部记号须通过附录（原第 10 节）换算。
 
 **同一个量的含义、单位和索引没有改变，就保持原代码名。** 性能优化、拆函数、改求解器、整理代码都不是重新命名数学量的理由。本文登记当前名称，不要求为追求字面一致再做一次全库改名。新增量和迁移按第 11 节办理。
 
@@ -46,7 +46,7 @@
 
 `network.type_keys[nu] == (e,k)` 是具名键与扁平位置的唯一桥梁。求解器内 `p[i]` 用真实负荷节点 ID；数组 `power[h]` 用 `load_nodes[h]` 的位置。`n/m/t/d` 在数学文档中固定为上表维数；`m = model`、`e = equations` 等既有局部对象别名不重定义这些数学符号。
 
-模型装配可处理 `d` 个负荷坐标；正式 `region.py` 和剩余域几何支持 `d=2` 或 `3`，原 AC 网格输出和实时查看器仍固定三维。二维勘察由 `survey.py`、`survey_plot.py` 输出。不得仅把文档写成任意维，就声称几何实现已经支持任意维。
+模型装配可处理 `d` 个负荷坐标；正式 `region.py` 和剩余域几何支持 `d=2` 或 `3`，原 AC 网格输出和实时查看器仍固定三维。二维勘察由 `survey.py` 计算，`plot.py` 绘图。不得仅把文档写成任意维，就声称几何实现已经支持任意维。
 
 ## 3. 网架参数、量纲和数据入口
 
@@ -454,3 +454,23 @@ python -m unittest tests.test_notation -v
 | 核心测试依赖 | [joint_benders](../tests/planning_checks.py)、[affordable_designs](../tests/planning_checks.py) | 从临时 benchmark 脚本提取，原名称、形参和逻辑保留；只用于测试，正式主线不导入 |
 
 所有历史实验的符号、单位与输出说明仍可在冻结契约追溯。清理范围、归档定位和保留结构见 [清理记录](cleanup.md)。
+
+## 19. 1.5 整理迁移：计算、绘图与单次保存
+
+本次不改变潮流方程、信息价值公式、数值精度、勘察停止证书或历史结果。第 18 节记录的旧输出布局保留用于追溯，新运行采用以下布局：
+
+| 对象 | 旧布局 → 当前布局 | 含义与调用方 |
+|---|---|---|
+| 勘察结果 | 多个 JSON、逐查询文件、CSV 和报告 → 单个 `results.json`，`protocol.schema=survey-v2` | 既有 `states/trace/all_candidates`、面积、评分、非凸见证和统计字段不改名；参数、核查和方案分别合并至 `protocol/audit/schemes` |
+| 道路域缓存 | `DomainCache(output, ...)` → `DomainCache(...)` | 去掉输出目录参数；道路集合、原始构域结果和共享割只在内存中保存，不再维护 `queries`、逐模式记录或单独的域/割文件 |
+| 非凸见证方案 | `schemes.json` → `results.json` 的 `schemes` | `plan_a/plan_b` 仍对应本次方案编号，负荷点仍为 kW |
+| 三维回放 | `events.jsonl`、`replay.json` 与内嵌相同内容的 HTML → 单个 `live_view.html` | 原始数值结果仍为 `result.npz`；完整回放只嵌入 HTML 一次，`RunMonitor.load_recording` 从该 HTML 恢复 |
+| 绘图 | 全局输出目录、导入时设置样式 → 显式输出目录、局部样式 | `concept_figure/history_figure` 返回图对象，`render_survey` 统一保存 PDF/SVG/PNG；独立绘图只读取 `results.json` |
+
+旧目录及其 JSON/CSV 不自动转换或删除。已有科学结果字段与数学登记项保留；此迁移仅减少重复持久化，移除逐查询日志及源文件指纹副本。结果中的网架指纹、模型参数、评分区间、认证状态和独立 AC 点核查仍保留。集合包含关系和面积间隙分解由回归测试检验，生产流程保留未认证域、无有效停止证书和未通过核查时的明确失败条件。
+
+## 20. 1.6 整理迁移：勘察绘图统一入口
+
+`survey_plot.py` 合并至 `plot.py` 并删除。勘察绘图只对外提供 [render_survey](../plot.py)，原 `concept_figure/history_figure` 的图形组装合并到该函数，几何绘制和曲线绘制仅作为函数内部的共用辅助步骤。原脚本命令改为 `python plot.py --results <结果目录>`。
+
+`render_survey(result, output)` 的参数及 PDF/SVG/PNG 文件名保持不变；输入仍为 `survey-v2` 结果，`p_a/p_b/p_mid`、区域坐标、面积、评分、观测顺序和全部数值字段均不变。保留前两节的历史接口说明用于追溯，不保留旧模块转发或第二套绘图接口。
