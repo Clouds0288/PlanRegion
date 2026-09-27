@@ -298,12 +298,15 @@ def main():
     parser.add_argument('--output', type=Path)
     parser.add_argument('--threads', type=int, default=1)
     parser.add_argument('--time-limit', type=float, default=60.)
-    parser.add_argument('--show-ui', action='store_true')
-    parser.add_argument('--step', action='store_true')
     args = parser.parse_args()
-    from main import run
-    run(Concept5(), output=args.output, threads=args.threads, time_limit=args.time_limit,
-        show_ui=args.show_ui or args.step, step_by_step=args.step, keep_ui=args.show_ui or args.step)
+    # 独立勘察入口；默认主线已经迁为 FourBus，不再借 main.run 调度。
+    result = run_survey(threads=args.threads, time_limit=args.time_limit)
+    if args.output is not None:
+        import json
+        from plot import json_value
+        args.output.mkdir(parents=True, exist_ok=True)
+        (args.output/'results.json').write_text(json.dumps(json_value(result), ensure_ascii=False), encoding='utf-8')
+    return result
 
 
 if __name__ == '__main__':

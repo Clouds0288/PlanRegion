@@ -215,3 +215,23 @@ def validate_ac_region(network, budgets, divisions, bounds, *, threads=DEFAULT_S
     if np.any(states == 0):
         raise RuntimeError(f'AC grid has {np.count_nonzero(states == 0)} unclassified cells')
     return states
+
+
+def validate_socp_region(network, budget, divisions, bounds, *, threads=DEFAULT_SOLVER_THREADS,
+                         progress=lambda completed, total: None):
+    """二维独立扫描：每个 p 固定，完整 SOCP 的 x、y 自由，不使用构域割或内域。"""
+    bounds = np.asarray(bounds, dtype=float)
+    assert bounds.shape == (2,)
+    equations = GridPhysics(network, 'socp')
+    states = np.empty((divisions, divisions), dtype=np.int8)
+    total = divisions**2
+    progress(0, total)
+    for completed, index in enumerate(np.ndindex(states.shape), 1):
+        power = (np.asarray(index)+.5)*bounds/divisions
+        problem = MasterProblem(equations, power=power, budget=budget, threads=threads)
+        with problem.model:
+            answer = problem.solve()
+        states[index] = 1 if answer is not None else -1
+        if completed % divisions == 0:
+            progress(completed, total)
+    return dict(bounds=bounds, states=states)

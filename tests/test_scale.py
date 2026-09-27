@@ -79,7 +79,7 @@ class ScaleTests(unittest.TestCase):  # 规模扩展只改变网架设置。
         with patch.object(MasterProblem, 'solve', new=query):
             bounds = np.array([540.,5950.,970.])
             with self.assertRaisesRegex(RuntimeError, 'SOCP has no certificate'):
-                main.build_continuous_region(fixed_topology(Case33(upgrade_count=8)), 'hybrid', 0., bounds, threads=1)
+                main.build_continuous_region(fixed_topology(Case33(upgrade_count=8)), 'socp', 0., bounds, threads=1)
 
     def test_notebook_does_not_depend_on_test_orchestration(self):  # 测试设施与正式流程保持明确边界。
         from pathlib import Path

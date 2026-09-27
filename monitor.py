@@ -1,418 +1,734 @@
-"""运行记录、步骤控制与本地查看服务。"""
+"""Python 原生监视窗口：一份增量历史同时用于实时展示、保存和回放。"""
 from pathlib import Path
-from threading import Condition, Event, RLock, Thread
+from threading import Condition, Event, Thread
 from time import perf_counter
-from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
-from urllib.parse import urlsplit, parse_qs
-from hashlib import sha256
-import base64
 import gzip
 import json
-import webbrowser
 
 import numpy as np
-from plot import ROOT, json_value, view_data, cut_slice, pack_replay, print_summary
+
+
+class RegionTimeout(RuntimeError):
+    """本次构域未在时限内取得全局证书。"""
+
+
+def _plain(value):
+    if isinstance(value, np.ndarray):
+        return value.tolist()
+    if isinstance(value, np.generic):
+        return value.item()
+    if isinstance(value, dict):
+        return {str(k): _plain(v) for k, v in value.items()}
+    if isinstance(value, (tuple, list)):
+        return [_plain(v) for v in value]
+    if isinstance(value, float) and not np.isfinite(value):
+        return None
+    return value
+
+
+def _merge(state, patch):
+    """每个网架独立更新，历史帧只存发生变化的网架。"""
+    for key, value in patch.items():
+        if key in ('schemes', 'cut_history'):
+            state[key] = {**state.get(key, {}), **value}
+        else:
+            state[key] = value
 
 
 class RunMonitor:
-    """同一份记录用于落盘、实时展示和回放；步骤控制只在计算边界等待。"""
+    """求解线程只提交数值；Tk 与绘图仅在主线程执行。"""
 
-    def __init__(self, *, show_ui=False, output=None, open_browser=True,
-                  heartbeat_seconds=10., stream=None, record=True, step_by_step=False):
-        import sys
-        # 1. 显示、记录和终端输出配置
-        self.show_ui = show_ui
-        self.record = record
-        self.output = Path(output) if output is not None else None
-        self.open_browser = open_browser
-        self.heartbeat_seconds = heartbeat_seconds
-        self.stream = sys.stdout if stream is None else stream
-        # 2. 计时与实时服务
-        self.started = perf_counter()
-        self.finished = None
-        self.last_event = self.last_print = self.started
-        self.lock = RLock()
-        self.condition = Condition(self.lock)
-        self.step_by_step = step_by_step
+    def __init__(self, *, output=None, callback=None, clock=perf_counter):
+        self.output = None if output is None else Path(output)
+        self.callback, self._clock = callback, clock
+        self.condition = Condition()
+        self.cancelled = Event()
+        self.paused = False
+        self.permits = 0
         self.paused_seconds = 0.
-        self.pause_started = None
-        self.journal = None
-        self.stop = Event()
-        self.server = self.server_thread = self.heartbeat_thread = None
-        self.url = None
-        # 3. 当前状态、增量历史与展示几何缓存
-        self.events, self.history = [], []
-        self.geometry_cache = {}
-        self.previous = {}
-        self.state = dict(status='running', event='start', message='准备启动',
-                          query=0, iteration=0, total_cuts=0, pool_size=0,
-                          method_number=0, method_count=4, revision=0, methods=[], waiting=False,
-                          run_id=self.output.name if self.output else None)
+        self.started = self._clock()
+        self.time_limit = np.inf
+        self.state, self.history, self.scheme_ids = {}, [], {}
+        self.validation_state = {}
+        self.sp_numbers = {}
+        self.result = self.error = None
+        self.busy = False
 
-    def __enter__(self):
-        try:
-            if self.record and self.output is not None:
-                self.output.mkdir(parents=True, exist_ok=True)
-                self.journal = (self.output/'steps.jsonl').open('w', encoding='utf-8', buffering=1)
-            if self.show_ui:
-                self.start_server()
-            self.heartbeat_thread = Thread(target=self.heartbeat, name='planning-progress', daemon=True)
-            self.heartbeat_thread.start()
-        except BaseException:
-            self.close()
-            raise
-        return self
-
-    def __exit__(self, kind, error, traceback):
-        try:
-            if error is not None:
-                self('interrupted' if isinstance(error, KeyboardInterrupt) else 'failed',
-                     message='用户中断计算' if isinstance(error, KeyboardInterrupt) else f'计算失败：{error}')
-                if self.record and self.output is not None:
-                    try:
-                        self.save_snapshot()
-                    except OSError as snapshot_error:
-                        print(f'无法保存监视快照：{snapshot_error}', file=self.stream, flush=True)
-        finally:
-            self.close()
-
-    def __call__(self, event, *, checkpoint=False, **data):
-        with self.lock:
-            # 1. 仅在记录/显示时转换展示几何，终端模式不做绘图计算
-            if event in ('method_start', 'phase_start'):
-                self.geometry_cache.clear()
-            if self.record or self.show_ui:
-                data = view_data(data, data.get('bounds', self.state.get('bounds')), self.geometry_cache)
-            else:
-                data.pop('records', None)
-            # 2. 更新计时与求解阶段，清空上一阶段的临时状态
-            now = perf_counter()
-            step_seconds = now-self.paused_seconds-self.last_event
-            self.last_event = now-self.paused_seconds
-            self.state.update(event=event, message=data.get('message', event),
-                              revision=self.state['revision']+1,
-                              paused_seconds=self.paused_seconds, wall_seconds=now-self.started,
-                              step_by_step=self.step_by_step,
-                              waiting=checkpoint and self.step_by_step and not self.stop.is_set())
-            self.pause_started = now if self.state['waiting'] else None
-            if event in ('completed', 'failed', 'interrupted'):
-                self.state['status'] = event
-                self.finished = now
-            if event == 'method_start':
-                self.state.update(query=0, iteration=0, total_cuts=0, pool_size=0,
-                                  point=None, choice=None, latest_cut=None, counts=[], phase='',
-                                  states=None, lower=None, upper=None, bound=None, objective=None)
-                self.state.update(geometry=[], global_outer=None, coverage_complete=False, region=None,
-                                  coverage_bound=None, max_total=None, max_total_bound=None, mode=None,
-                                  counts_algorithm={})
-            if event in ('phase_start', 'point', 'sp_skip'):
-                self.state.update(iteration=0, choice=None,
-                                  bound=None, objective=None, eta=None, query_status=None, answer=None)
-                if data.get('mode') != 'SP-gap-support':
-                    self.state.update(covered_by=None, covered_cost=None, uncovered_witness=None)
-            if event == 'phase_start':
-                self.state.update(query=0, point=None, lower=None, upper=None, latest_cut=None)
-                self.state.update(geometry=[], global_outer=None, coverage_complete=False, region=None,
-                                  states=None, counts=[], counts_algorithm={}, coverage_bound=None,
-                                  max_total=None, max_total_bound=None, mode=None, domain=None, point_reason=None)
-                if not self.record:
-                    self.state.pop('states', None)
-            if event == 'query_end':
-                self.state['query_status'] = data.get('status')
-            if event in ('survey_state', 'completed'):
-                self.state.update(point_reason=None, answer=None)
-            # 3. 接收数值结果，按需生成三态计数与割平面
-            for key, value in data.items():
-                if key not in ('states', 'cut', 'selection', 'status'):
-                    self.state[key] = json_value(value)
-            if 'states' in data:
-                states = np.asarray(data['states'])
-                counts = [dict(inside=int(np.count_nonzero(s == 1)),
-                               outside=int(np.count_nonzero(s == -1)),
-                               unknown=int(np.count_nonzero(s == 0)), total=int(s.size)) for s in states]
-                self.state['counts'] = counts
-                self.state['divisions'] = states.shape[-1]
-                if self.record:
-                    self.state['states'] = states.reshape(len(states), -1).tolist()
-            if event == 'cut':
-                self.state['total_cuts'] += 1
-                if self.record and self.state.get('bounds') is not None:
-                    sliced = cut_slice(data['cut'], data['selection'], self.state['bounds'])
-                    self.state['latest_cut'] = dict(**sliced, point=json_value(data['point']),
-                                                    joint_coefficients=json_value(data['cut']),
-                                                    selection=json_value(data['selection']),
-                                                    choice=self.state.get('choice'),
-                                                    iteration=self.state['iteration'],
-                                                    number=self.state['total_cuts'])
-            if event == 'method_end':
-                self.state['methods'] = [*self.state['methods'], dict(method=self.state['method'], seconds=data['seconds'],
-                                                  counts=self.state.get('counts', []), cuts=self.state['total_cuts'])]
-            # 4. 追加变化帧并立即落盘；每 100 帧保留完整状态
-            if self.record:
-                item = {key: self.state.get(key) for key in
-                        ('revision', 'method', 'phase', 'query', 'iteration', 'event', 'message', 'point', 'query_status')}
-                item['elapsed'] = now-self.started-self.paused_seconds
-                if event == 'cut':
-                    item['cut'] = self.state.get('latest_cut')
-                self.events.append(item)
-                self.state.update(elapsed=now-self.started-self.paused_seconds, step_seconds=step_seconds)
-                patch = {k: v for k, v in self.state.items() if k not in self.previous or self.previous[k] != v}
-                frame = dict(id=len(self.history), elapsed=self.state['elapsed'], patch=patch)
-                self.history.append(frame)
-                self.previous = dict(self.state)
-                if self.journal is not None:
-                    saved = dict(frame, recording_version=2)
-                    if frame['id'] % 100 == 0:
-                        saved['patch'] = dict(self.state)
-                    self.journal.write(json.dumps(saved, ensure_ascii=False, allow_nan=False)+'\n')
-            # 短查询合并为每秒一次的终端进度
-            if event in ('start', 'preparation', 'method_start', 'method_end', 'phase_start', 'phase_end',
-                         'saving', 'plotting', 'loaded', 'completed', 'failed', 'interrupted') \
-                    or (event == 'query_end' and data.get('status') == 'unknown') \
-                    or now-self.last_print >= 1.:
-                self.print_status()
-            self.condition.notify_all()
-        # 5. 释放记录锁后等待用户；下一步只放行当前边界
-        with self.condition:
-            try:
-                while self.state['waiting'] and not self.stop.is_set():
-                    self.condition.wait()
-            finally:
-                if self.pause_started is not None:
-                    self.paused_seconds += perf_counter()-self.pause_started
-                    self.pause_started = None
-            if self.stop.is_set() and checkpoint:
-                raise KeyboardInterrupt()
+    @classmethod
+    def follow(cls, progress, *, clock=perf_counter):
+        return progress if isinstance(progress, cls) else cls(callback=progress, clock=clock)
 
     def clock(self):
-        """返回扣除人工等待的时钟，供计算时限和耗时共用。"""
-        with self.lock:
-            return (self.pause_started if self.pause_started is not None else perf_counter())-self.paused_seconds
+        return self._clock()-self.paused_seconds
 
-    def control(self, action, revision=None):
+    def remaining(self, limit):
+        remaining = self.time_limit-(self.clock()-self.started)
+        if remaining <= 0.:
+            raise RegionTimeout(f'构域超过 {self.time_limit:g} 秒，未取得全局覆盖证书')
+        return min(limit, remaining)
+
+    def timing(self):
+        return dict(total_seconds=self.clock()-self.started)
+
+    def _emit(self, event, *, checkpoint=True, **values):
         with self.condition:
-            if self.finished is not None:
-                return False
-            if action == 'next':
-                if not self.state['waiting'] or revision != self.state['revision']:
-                    return False
-                self.state['waiting'] = False
+            if self.cancelled.is_set():
+                raise KeyboardInterrupt()
+            values = _plain(values)
+            patch = {k: v for k, v in values.items() if self.state.get(k) != v}
+            for key in ('schemes', 'cut_history'):
+                if key in patch:
+                    patch[key] = {k: v for k, v in patch[key].items()
+                                  if self.state.get(key, {}).get(k) != v}
+                    if not patch[key]:
+                        del patch[key]
+            patch['event'] = event
+            _merge(self.state, patch)
+            self.history.append(dict(elapsed=self.clock()-self.started, patch=patch))
+            before = self._clock()
+            while checkpoint and self.paused and not self.permits and not self.cancelled.is_set():
+                self.condition.wait()
+            self.paused_seconds += self._clock()-before
+            if self.permits:
+                self.permits -= 1
+            if self.cancelled.is_set():
+                raise KeyboardInterrupt()
+
+    def _notify(self, event, geometry=None, **values):
+        """旧研究脚本的数值回调；不增加文件或第二份事件记录。"""
+        if self.callback is not None:
+            if geometry is not None:
+                values.update(records=geometry.records.values(), bounds=geometry.bounds)
+            self.callback(event, **values)
+
+    def _scheme(self, x):
+        key = tuple(x)
+        if key not in self.scheme_ids:
+            index = len(self.scheme_ids)
+            self.scheme_ids[key] = chr(65+index%26)+(str(index//26+1) if index >= 26 else '')
+        return self.scheme_ids[key]
+
+    def _geometry(self, region):
+        return dict(axis_bounds=region.axis_bounds, total_bound=region.total_bound,
+                    cuts=len(region.cuts), schemes={self._scheme(row['x']): dict(
+                        x=row['x'], choice=row['choice'], cost=row['cost'], inner=row['inner']*region.bounds,
+                        outer=row['outer']*region.bounds) for row in region.records.values()})
+
+    # 1. 初始化：每个完整 MP2 的可行点立即入帧。
+    def begin(self, network, method, budget, region, time_limit):
+        self.started = self.clock()
+        self.time_limit = time_limit
+        self._emit('phase_start', phase='初始化', network=network.name, load_nodes=network.load_nodes,
+                   bounds=region.bounds, budget=budget, method=method, status='running',
+                   cost_unit=network.cost_unit, initial_plan=network.initial_plan,
+                   cut_history={str(i+1): dict(cut=cut, scheme=None) for i, cut in enumerate(region.cuts)},
+                   sp=0, global_search=0, global_point=None, sp_point=None,
+                   **self._geometry(region))
+        self._notify('phase_start', region)
+
+    def initializing(self, index):
+        self._emit('mp_start', phase='初始化', direction=index)
+        self._notify('mp_start')
+
+    def seed(self, answer, region):
+        scheme = self._scheme(answer['x'])
+        self._emit('feasible', phase='初始化', seed_point=dict(scheme=scheme, p=answer['p']),
+                   **self._geometry(region))
+        self._notify('query_end', answer={k: v for k, v in answer.items() if k not in ('state', 'cut')})
+        self._notify('feasible', region, point=answer['p'], point_reason='MP2 完整可行解')
+
+    # 2. 选点；3. 全局搜索：全局见证与后续 SP 支撑点分别存储。
+    def selecting(self, count, supporting):
+        self._emit('selection', phase='选点', candidate_count=count, supporting=supporting)
+
+    def global_start(self, sp_since_global):
+        self._emit('residual_start', phase='全局搜索', global_search=self.state['global_search']+1,
+                   sp_since_global=sp_since_global, global_point=None)
+        self._notify('residual_start')
+
+    def global_end(self, answer, region):
+        point = None if answer['complete'] else dict(scheme=self._scheme(answer['x']), p=answer['p'])
+        self._emit('residual_end', phase='全局搜索', global_point=point,
+                   coverage_bound=answer['bound'], coverage_complete=answer['complete'],
+                   **self._geometry(region))
+        self._notify('residual_end', region, answer=answer)
+
+    # 4. SP：橙色点表示固定的 (x,p)；只记录原始 eta 和认证状态，不保存运行向量 y。
+    def sp_start(self, x, power, number):
+        self.sp_numbers[(tuple(x), tuple(power))] = number
+        self._emit('point', phase='SP', sp=number, eta=None, feasible=None,
+                   sp_point=dict(scheme=self._scheme(x), p=power, number=number))
+        self._notify('point', point=power, choice=self.state['schemes'][self._scheme(x)]['choice'])
+
+    def sp_end(self, answer):
+        self._emit('sp_end', phase='SP', eta=answer['eta'], feasible=answer['feasible'])
+        self._notify('sp_end', answer=dict(eta=answer['eta'], feasible=answer['feasible']))
+
+    def updated(self, region, event, *, x, power, checked=None):
+        values = self._geometry(region)
+        values.update(sp_point=dict(scheme=self._scheme(x), p=power,
+                                   number=self.sp_numbers.get((tuple(x), tuple(power)))), phase='SP')
+        if checked is not None:
+            values.update(eta=checked['eta'], feasible=checked['feasible'])
+        if event == 'cut':
+            values.update(cut_history={str(len(region.cuts)): dict(cut=checked['cut'], scheme=self._scheme(x))})
+        self._emit(event, **values)
+        if event == 'cut':
+            self._notify(event, region, cut=checked['cut'], selection=x, point=power)
+        else:
+            self._notify(event, region, point=power)
+
+    # 5. 构域完成后独立扫描；最终指标、几何、回放只写同一个压缩文件。
+    def finish(self, result, region):
+        self._emit('region_end', phase='构域完成', result=result, coverage_complete=True,
+                   coverage_bound=result['coverage_bound'], **self._geometry(region))
+        self._notify('region_end', region, region=result)
+
+    def scanning(self, completed, total):
+        self._validation_update(phase='SOCP 扫描', scan_progress=[completed, total])
+
+    def _validation_update(self, **values):
+        """校验只更新独立面板，不占用构域回放帧，也不等待单步按钮。"""
+        with self.condition:
+            if self.cancelled.is_set():
+                raise KeyboardInterrupt()
+            values = _plain(values)
+            self.validation_state.update(values)
+            self.state.update(values)
+
+    def validation(self, reference, result):
+        from region import contains, halfspaces
+        states = np.asarray(reference['states'])
+        divisions = states.shape[0]
+        indices = np.indices(states.shape).reshape(2, -1).T
+        points = (indices+.5)*reference['bounds']/divisions
+        inside = np.zeros(len(points), dtype=bool)
+        for row in result['inner']:
+            inside |= contains(points, halfspaces(row['vertices']))
+        truth = states.ravel() == 1
+        missed, extra = np.count_nonzero(truth & ~inside), np.count_nonzero(inside & ~truth)
+        validation = dict(bounds=reference['bounds'], states=states,
+            mr_percent=100.*missed/truth.sum() if truth.any() else None,
+            fr_percent=100.*extra/inside.sum() if inside.any() else None)
+        self._validation_update(phase='完成', status='completed', validation=validation)
+
+    def frame(self, index):
+        with self.condition:
+            state = {}
+            for item in self.history[:index+1]:
+                _merge(state, item['patch'])
+            return state
+
+    def control(self, action):
+        with self.condition:
+            if action == 'pause':
+                self.paused = True
             elif action == 'continue':
-                self.step_by_step = False
-                self.state['waiting'] = False
-            elif action == 'pause':
-                self.step_by_step = True
-            else:
-                raise ValueError('Unknown control action')
+                self.paused, self.permits = False, 0
+            elif action == 'next':
+                self.paused, self.permits = True, 1
+            elif action == 'cancel':
+                self.cancelled.set()
             self.condition.notify_all()
-            return True
 
-    def print_status(self, *, heartbeat=False):
-        now = perf_counter()
-        state = self.state
-        prefix = f"[{self.clock()-self.started:8.1f}s]"
-        if state.get('method'):
-            prefix += f" [{state['method']}/{state.get('phase', '')}]"
-        details = []
-        if state.get('query'):
-            details.append(f"查询 #{state['query']} / MP 轮次 {state['iteration']}")
-        if state.get('point') is not None:
-            details.append('p=('+', '.join(f'{v:.2f}' for v in state['point'])+') kW')
-        counts = state.get('counts', [])
-        if counts:
-            total = sum(c['total'] for c in counts)
-            unknown = sum(c['unknown'] for c in counts)
-            details.append(f'已分类 {total-unknown}/{total} ({100*(total-unknown)/total:.1f}%) / 未确定 {unknown}')
-        details.append(f"新增割 {state['total_cuts']} / 割池 {state['pool_size']}")
-        if state['event'] == 'method_end':
-            details.append(f"方法耗时 {state['seconds']:.3f}s")
-        if heartbeat:
-            details.append(f'此步骤已等待 {self.clock()-self.last_event:.1f}s')
-        print(f"{prefix} {state['message']} | {' | '.join(details)}", file=self.stream, flush=True)
-        self.last_print = now
-
-    def heartbeat(self):
-        while not self.stop.wait(self.heartbeat_seconds):
-            with self.lock:
-                if self.state['status'] == 'running' and not self.state['waiting'] and perf_counter()-self.last_print >= self.heartbeat_seconds:
-                    self.print_status(heartbeat=True)
-
-    def snapshot(self, after=0):
-        with self.lock:
-            now = perf_counter() if self.finished is None else self.finished
-            paused = self.paused_seconds+(now-self.pause_started if self.pause_started is not None else 0.)
-            value = dict(self.state, elapsed=now-self.started-paused,
-                          step_seconds=self.state.get('step_seconds', 0.) if self.finished else now-paused-self.last_event,
-                         events=self.events[-150:], history=self.history[max(0, after):],
-                          history_total=len(self.history), recording_version=2,
-                          paused_seconds=paused,
-                          wall_seconds=now-self.started, step_by_step=self.step_by_step)
-            return json.dumps(value, ensure_ascii=False, allow_nan=False).encode('utf-8')
-
-    def load_recording(self, path):
-        """从逐步日志或自包含 HTML 恢复历史，不调用优化器。"""
-        # 1. 读取已提交的日志帧，或 HTML 中的压缩回放
-        if Path(path).suffix == '.jsonl':
-            self.history, self.state = [], {}
-            for line in Path(path).read_text(encoding='utf-8').splitlines(keepends=True):
-                if not line.endswith('\n'):
-                    break  # 中断写入的最后半行没有提交。
-                frame = json.loads(line)
-                self.history.append(frame)
-                self.state.update(frame['patch'])
-            self.previous = dict(self.state)
-            self.paused_seconds = self.state.get('paused_seconds', 0.)
-            self.finished = perf_counter()
-            self.started = self.finished-self.state.get('wall_seconds', self.state.get('elapsed', 0.))
-            return
-        html = Path(path).read_text(encoding='utf-8')
-        encoded = html.split('window.SAVED_REPLAY_GZIP="', 1)[1].split('";', 1)[0]
-        value = json.loads(gzip.decompress(base64.b64decode(encoded)))
-        # 2. 大记录按对象引用恢复共享几何
-        if 'packed_replay_version' in value:
-            objects = []
-            def resolve(item):
-                return objects[item['ref']] if isinstance(item, dict) else item
-            for kind, node in value['objects']:
-                objects.append({k: resolve(v) for k, v in node.items()} if kind else [resolve(v) for v in node])
-            value = resolve(value['root'])
-        # 3. 恢复历史、事件列表和计时
-        self.history = value.pop('history')
-        self.events = value.pop('events', [])
-        self.state = value
-        self.paused_seconds = value.get('paused_seconds', 0.)
-        self.finished = perf_counter()
-        self.started = self.finished-self.state.get('wall_seconds', self.state.get('elapsed', 0.))
-        self.previous = dict(self.state)
-
-    def start_server(self):
-        # 使用现有 Plotly 的本地脚本；页面离线可用，无 CDN 或 Node 服务。
-        from plotly.offline import get_plotlyjs
-        self.plotly = get_plotlyjs().encode('utf-8')
-        self.template = (ROOT/'live_view.html').read_text(encoding='utf-8')
-        owner = self
-
-        class Handler(BaseHTTPRequestHandler):
-            def do_POST(self):
-                if self.path != '/control':
-                    self.send_error(404)
-                    return
-                command = json.loads(self.rfile.read(int(self.headers['Content-Length'])))
-                if command.get('action') not in ('next', 'continue', 'pause'):
-                    self.send_error(400)
-                    return
-                accepted = owner.control(command['action'], command.get('revision'))
-                self.send_response(204 if accepted else 409)
-                self.end_headers()
-
-            def do_GET(self):
-                path = urlsplit(self.path).path
-                if path == '/':
-                    payload, mime = owner.template.encode('utf-8'), 'text/html; charset=utf-8'
-                elif path == '/state':
-                    try:
-                        after = int(parse_qs(urlsplit(self.path).query).get('after', ['0'])[0])
-                    except ValueError:
-                        self.send_error(400, 'after must be an integer')
-                        return
-                    payload, mime = owner.snapshot(after), 'application/json; charset=utf-8'
-                elif path == '/plotly.min.js':
-                    payload, mime = owner.plotly, 'application/javascript; charset=utf-8'
-                elif path.startswith('/result/') and owner.output is not None:
-                    name = path[len('/result/'):]
-                    if '/' in name or '\\' in name or not (name == 'region_comparison.html' or
-                            (name.startswith('methods_') and name.endswith('.html'))):
-                        self.send_error(404)
-                        return
-                    try:
-                        payload = (owner.output/name).read_bytes()
-                    except OSError:
-                        self.send_error(404)
-                        return
-                    mime = 'text/html; charset=utf-8'
-                else:
-                    self.send_error(404)
-                    return
-                self.send_response(200)
-                self.send_header('Content-Type', mime)
-                self.send_header('Content-Length', str(len(payload)))
-                self.send_header('Cache-Control', 'no-store')
-                self.end_headers()
-                try:
-                    self.wfile.write(payload)
-                except (BrokenPipeError, ConnectionResetError):
-                    pass  # 关闭浏览器不影响计算。
-
-            def log_message(self, format, *args):
-                pass
-
-        self.server = ThreadingHTTPServer(('127.0.0.1', 0), Handler)
-        self.server.daemon_threads = True
-        self.url = f'http://127.0.0.1:{self.server.server_port}/'
-        self.server_thread = Thread(target=self.server.serve_forever, name='planning-view', daemon=True)
-        self.server_thread.start()
-        print(f'实时监视：{self.url}', file=self.stream, flush=True)
-        if self.open_browser:
-            try:
-                webbrowser.open(self.url)
-            except (OSError, webbrowser.Error) as error:
-                print(f'自动打开浏览器失败，可手动访问上方地址：{error}', file=self.stream, flush=True)
-
-    def save_snapshot(self):
+    def save(self):
         if self.output is None:
             return
-        # 1. 从当前数值结果生成展示快照及本地页面资源
-        with self.lock:
-            self.state = view_data(self.state, self.state.get('bounds'), self.geometry_cache)
-        self.output.mkdir(parents=True, exist_ok=True)
-        if not hasattr(self, 'template'):
-            from plotly.offline import get_plotlyjs
-            self.template = (ROOT/'live_view.html').read_text(encoding='utf-8')
-            self.plotly = get_plotlyjs().encode('utf-8')
-        self.state['viewer_sha256'] = sha256(self.template.encode('utf-8')).hexdigest()
-        payload = self.snapshot().decode('utf-8')
-        # 2. 大记录先共享跨帧重复几何，再压缩完整回放
-        if len(payload) > 10_000_000:
-            payload = json.dumps(pack_replay(json.loads(payload)), ensure_ascii=False,
-                                 allow_nan=False, separators=(',', ':'))
-        data = base64.b64encode(gzip.compress(payload.encode('utf-8'), compresslevel=6, mtime=0)).decode('ascii')
-        # 3. 数据与绘图库嵌入同一 HTML，供离线回放
-        html = self.template.replace('<script src="/plotly.min.js"></script>',
-                                     '<script>'+self.plotly.decode('utf-8')+'</script>')
-        html = html.replace('/*SNAPSHOT*/', 'window.SAVED_REPLAY_GZIP="'+data+'";')
-        path = self.output/'live_view.html'
-        path.write_text(html, encoding='utf-8')
-        print(f'完整过程回放（{len(self.history)} 条事件）：{path}', file=self.stream, flush=True)
+        self.output.parent.mkdir(parents=True, exist_ok=True)
+        temporary = self.output.with_suffix('.tmp')
+        with gzip.open(temporary, 'wt', encoding='utf-8') as stream:
+            json.dump(dict(version=4, history=self.history, validation_state=self.validation_state), stream, ensure_ascii=False,
+                      allow_nan=False, separators=(',', ':'))
+        temporary.replace(self.output)
+
+    def load_recording(self, path):
+        with gzip.open(path, 'rt', encoding='utf-8') as stream:
+            data = json.load(stream)
+        if data['version'] not in (3, 4):
+            raise ValueError('只支持原生窗口的 version=3/4 回放')
+        self.history = data['history']
+        self.validation_state = data.get('validation_state', {})
+        if data['version'] == 3:
+            # 旧回放只有几何，没有割系数；仅分离校验，不猜测或重建缺失割。
+            self.history = []
+            for item in data['history']:
+                if item['patch'].get('event') in ('scan', 'completed'):
+                    self.validation_state.update({k: v for k, v in item['patch'].items() if k != 'event'})
+                else:
+                    self.history.append(item)
+        self.state = self.frame(len(self.history)-1)
+        self.state.update(self.validation_state)
+
+    def _work(self, calculate):
+        self.busy = True
+        try:
+            self.result = calculate()
+        except BaseException as error:
+            self.error = error
+            with self.condition:
+                patch = dict(status='failed', phase='中断' if isinstance(error, KeyboardInterrupt) else '失败',
+                             error=str(error))
+                _merge(self.state, patch)
+                if self.validation_state:
+                    self.validation_state.update(patch)
+                else:
+                    self.history.append(dict(elapsed=self.clock()-self.started, patch=patch))
+        finally:
+            self.save()
+            self.busy = False
+
+    def execute(self, calculate, *, show_ui=True):
+        if show_ui:
+            window = NativeWindow(self)
+            worker = Thread(target=self._work, args=(calculate,), daemon=True, name='SOCP')
+            worker.start()
+            window.root.mainloop()
+            if worker.is_alive():
+                self.control('cancel')
+            worker.join()
+        else:
+            self._work(calculate)
+        if self.error is not None:
+            raise self.error
+        return self.result
+
+    def replay(self):
+        NativeWindow(self).root.mainloop()
+
+
+# 原生界面与绘图均在此文件中；主线无需管理窗口、计时器或帧播放。
+INNER, OUTER, GLOBAL, SP = '#397f85', '#a9b9c4', '#cc3838', '#ef8a23'
+CUT = '#8055a4'
+
+
+def _cut_segment(cut, x, bounds):
+    """alpha + beta @ p + delta @ x = 0 在二维显示框中的截线；只用于绘图。"""
+    cut, x, bounds = np.asarray(cut), np.asarray(x), np.asarray(bounds)
+    beta, constant = cut[1:3], cut[0]+cut[3:]@x
+    points = []
+    for fixed in (0, 1):
+        free = 1-fixed
+        if beta[free] == 0.:
+            continue
+        for edge in (0., bounds[fixed]):
+            value = -(constant+beta[fixed]*edge)/beta[free]
+            if -1e-9*bounds[free] <= value <= (1+1e-9)*bounds[free]:
+                point = np.zeros(2)
+                point[fixed], point[free] = edge, np.clip(value, 0., bounds[free])
+                if not any(np.allclose(point, old, rtol=1e-9, atol=1e-9) for old in points):
+                    points.append(point)
+    return np.asarray(points).reshape(-1, 2)
+
+
+def _union(polygons):
+    from shapely.geometry import MultiPoint
+    from shapely.ops import unary_union
+    return unary_union([MultiPoint(points).convex_hull for points in polygons if len(points)])
+
+
+def _draw(ax, geometry, *, color, fill=False, alpha=1., linestyle='-', linewidth=1.):
+    """按几何并集绘制，保留不相连部分和孔洞；不跨方案作凸包。"""
+    from matplotlib.path import Path as MplPath
+    from matplotlib.patches import PathPatch
+    if geometry.is_empty:
+        return
+    if geometry.geom_type in ('MultiPolygon', 'GeometryCollection', 'MultiLineString', 'MultiPoint'):
+        for part in geometry.geoms:
+            _draw(ax, part, color=color, fill=fill, alpha=alpha, linestyle=linestyle, linewidth=linewidth)
+    elif geometry.geom_type == 'Polygon':
+        from shapely.geometry.polygon import orient
+        poly = orient(geometry, sign=1.)
+        paths = []
+        for ring in [poly.exterior, *poly.interiors]:
+            points = np.asarray(ring.coords)
+            codes = [MplPath.MOVETO]+[MplPath.LINETO]*(len(points)-2)+[MplPath.CLOSEPOLY]
+            paths.append(MplPath(points, codes))
+        path = MplPath.make_compound_path(*paths)
+        ax.add_patch(PathPatch(path, facecolor=color if fill else 'none', edgecolor=color,
+                              alpha=alpha, linewidth=linewidth, linestyle=linestyle))
+    else:
+        points = np.asarray(geometry.coords)
+        ax.plot(points[:, 0], points[:, 1], color=color, linewidth=linewidth,
+                marker='.' if len(points) == 1 else None, linestyle=linestyle, alpha=alpha)
+
+
+class NativeWindow:
+    """A 总域、B 动态网架、C 独立扫描；实时 / 回放共用同一绘图入口。"""
+
+    def __init__(self, monitor):
+        import tkinter as tk
+        from tkinter import ttk
+        from matplotlib.figure import Figure
+        from matplotlib.backends.backend_tkagg import FigureCanvasTkAgg
+        import matplotlib as mpl
+        mpl.rcParams.update({'font.family': 'sans-serif', 'font.sans-serif': ['Microsoft YaHei', 'DejaVu Sans'],
+                             'font.size': 9, 'axes.unicode_minus': False, 'svg.fonttype': 'none'})
+        self.monitor = monitor
+        self.root = tk.Tk()
+        self.root.title('SOCP 规划域 · 二维割线回放')
+        self.root.geometry('1420x900')
+        self.root.minsize(1000, 700)
+        self.root.protocol('WM_DELETE_WINDOW', self.close)
+        self.index, self.last_drawn, self.live, self.playing = 0, -1, True, False
+        self.last_validation = None
+        self.setting_slider = False
+        self.scheme_views = {}
+        self.scheme_page, self.focus_scheme = 0, None
+        self.status = tk.StringVar(value='初始化')
+        self.global_text, self.sp_text = tk.StringVar(value='全局点：—'), tk.StringVar(value='SP 点：—')
+        ttk.Label(self.root, textvariable=self.status, font=('Microsoft YaHei', 11)).pack(anchor='w', padx=12, pady=(8, 2))
+        point_bar = ttk.Frame(self.root)
+        point_bar.pack(fill='x', padx=12)
+        ttk.Label(point_bar, textvariable=self.global_text, foreground=GLOBAL).pack(side='left', padx=(0, 28))
+        ttk.Label(point_bar, textvariable=self.sp_text, foreground=SP).pack(side='left')
+        body = ttk.Panedwindow(self.root, orient='horizontal')
+        body.pack(fill='both', expand=True, padx=8, pady=6)
+        left, right = ttk.Frame(body), ttk.LabelFrame(body, text='B  已知网架 · 绿色认证 / 灰色待验证 / 紫色割')
+        body.add(left, weight=1)
+        body.add(right, weight=1)
+        self.axes, self.canvases = {}, {}
+        for panel, title in (('A', 'A  负荷域并集'), ('C', 'C  SOCP 扫描校验')):
+            frame = ttk.LabelFrame(left, text=title)
+            frame.pack(fill='both', expand=True, pady=2)
+            fig = Figure(figsize=(5.8, 3.3), dpi=100)
+            ax = fig.add_subplot(111)
+            fig.subplots_adjust(left=.13, right=.97, bottom=.19, top=.86)
+            canvas = FigureCanvasTkAgg(fig, master=frame)
+            canvas.get_tk_widget().pack(fill='both', expand=True)
+            self.axes[panel], self.canvases[panel] = ax, canvas
+        pages = ttk.Frame(right)
+        pages.pack(fill='x', padx=4, pady=3)
+        ttk.Button(pages, text='上一页', command=lambda: self.change_page(-1)).pack(side='left')
+        ttk.Button(pages, text='下一页', command=lambda: self.change_page(1)).pack(side='left')
+        self.page_number = tk.IntVar(value=1)
+        self.page_selector = ttk.Spinbox(pages, from_=1, to=1, width=5, textvariable=self.page_number,
+                                         command=self.choose_page)
+        self.page_selector.pack(side='left', padx=6)
+        self.page_selector.bind('<Return>', lambda event: self.choose_page())
+        self.page_text = tk.StringVar(value='0 个网架')
+        ttk.Label(pages, textvariable=self.page_text).pack(side='left')
+        viewport = ttk.Frame(right)
+        viewport.pack(fill='both', expand=True)
+        self.scroll = tk.Canvas(viewport, highlightthickness=0)
+        scrollbar = ttk.Scrollbar(viewport, orient='vertical', command=self.scroll.yview)
+        self.scroll.configure(yscrollcommand=scrollbar.set)
+        scrollbar.pack(side='right', fill='y')
+        self.scroll.pack(side='left', fill='both', expand=True)
+        self.scheme_frame = ttk.Frame(self.scroll)
+        self.embedded = self.scroll.create_window((0, 0), window=self.scheme_frame, anchor='nw')
+        self.scheme_frame.bind('<Configure>', lambda event: self.scroll.configure(scrollregion=self.scroll.bbox('all')))
+        self.scroll.bind('<Configure>', lambda event: self.scroll.itemconfigure(self.embedded, width=event.width))
+        self.scheme_frame.columnconfigure((0, 1), weight=1)
+        controls = ttk.Frame(self.root)
+        controls.pack(fill='x', padx=10, pady=(2, 10))
+        for text, action in (('暂停计算', lambda: monitor.control('pause')),
+                             ('计算一步', lambda: monitor.control('next')),
+                             ('继续计算', lambda: monitor.control('continue')),
+                             ('上一帧', lambda: self.seek(self.index-1)),
+                             ('下一帧', lambda: self.seek(self.index+1)),
+                             ('上一割', lambda: self.seek_cut(-1)),
+                             ('下一割', lambda: self.seek_cut(1)),
+                             ('播放 / 暂停', self.play), ('实时', self.go_live)):
+            ttk.Button(controls, text=text, command=action).pack(side='left', padx=2)
+        self.frame_text = tk.StringVar(value='0 / 0')
+        ttk.Label(controls, textvariable=self.frame_text, width=15).pack(side='right')
+        self.slider = ttk.Scale(controls, from_=0, to=1, command=self.slide)
+        self.slider.pack(side='left', fill='x', expand=True, padx=8)
+        self.root.after(40, self.tick)
 
     def close(self):
-        with self.condition:
-            self.stop.set()
-            self.state['waiting'] = False
-            self.condition.notify_all()
-        if self.journal is not None:
-            self.journal.close()
-            self.journal = None
-        if self.server is not None:
-            if self.server_thread is not None and self.server_thread.is_alive():
-                self.server.shutdown()
-                self.server_thread.join(timeout=2.)
-            self.server.server_close()
-        if self.heartbeat_thread is not None:
-            self.heartbeat_thread.join(timeout=2.)
+        if self.monitor.busy:
+            self.monitor.control('cancel')
+        self.root.destroy()
 
+    def seek(self, index):
+        self.live, self.playing = False, False
+        self.index = max(0, min(int(index), len(self.monitor.history)-1))
+        self.show()
 
-    def show_result(self, result, *, export=True, keep_ui=False):
-        if isinstance(result, dict):
-            print(f"勘察完成：{result['seconds']:.3f}s，{result['query_count']} 个道路集合，{result['joint_cut_count']} 条共享割；结果：{self.output}", file=self.stream)
+    def slide(self, value):
+        if not self.setting_slider:
+            self.seek(float(value))
+
+    def seek_cut(self, direction):
+        indices = [i for i, item in enumerate(self.monitor.history)
+                   if item['patch'].get('event') == 'cut' and direction*(i-self.index) > 0]
+        if indices:
+            self.seek(min(indices) if direction > 0 else max(indices))
+
+    def change_page(self, direction):
+        self.page_number.set(self.scheme_page+1+direction)
+        self.choose_page()
+
+    def choose_page(self):
+        import tkinter as tk
+        try:
+            self.scheme_page = self.page_number.get()-1
+        except (ValueError, tk.TclError):
+            return
+        self._draw_schemes(self.monitor.frame(self.index))
+
+    def play(self):
+        self.live = False
+        if self.index >= len(self.monitor.history)-1:
+            self.index = 0
+        self.playing = not self.playing
+        self.last_drawn = -1
+
+    def go_live(self):
+        self.live, self.playing = True, False
+
+    def tick(self):
+        total = len(self.monitor.history)
+        if total:
+            if self.live:
+                self.index = total-1
+            elif self.playing:
+                self.index = min(self.index+1, total-1)
+                if self.index == total-1:
+                    self.playing = False
+            self.show()
+        self.root.after(140 if self.playing else 80, self.tick)
+
+    def _axes(self, ax, state):
+        ax.clear()
+        bounds = np.asarray(state['bounds'])
+        limits = np.minimum(bounds, np.asarray(state['axis_bounds']))
+        limits = np.maximum(limits, .01)
+        ax.set(xlim=(0, limits[0]*1.04), ylim=(0, limits[1]*1.04),
+               xlabel=f"$p_{{{state['load_nodes'][0]}}}$ (kW)",
+               ylabel=f"$p_{{{state['load_nodes'][1]}}}$ (kW)")
+        ax.set_aspect('auto')  # Case33 两个坐标量级不同，仍用物理 kW 刻度。
+        ax.spines[['top', 'right']].set_visible(False)
+        ax.tick_params(labelsize=8)
+        ax.grid(alpha=.15, linewidth=.5)
+
+    def _markers(self, ax, state, scheme=None):
+        for key, color, marker, size in (('global_point', GLOBAL, 'D', 43), ('sp_point', SP, 'o', 34)):
+            point = state.get(key)
+            if point and (scheme is None or point['scheme'] == scheme):
+                ax.scatter(*point['p'], c=color, marker=marker, s=size, zorder=8,
+                           edgecolors='white', linewidths=.7, clip_on=False)
+
+    def show(self):
+        if not self.monitor.history:
+            return
+        # 校验与时间轴独立；停止拖动时进度仍刷新，回到旧帧时最终比较仍保留。
+        with self.monitor.condition:
+            latest = dict(self.monitor.state)
+        if 'bounds' in latest:
+            key = (tuple(latest['axis_bounds']), tuple(latest.get('scan_progress', [])),
+                   id(latest.get('validation')), latest.get('error'))
+            if key != self.last_validation:
+                self.last_validation = key
+                self._draw_validation(latest)
+        if self.index == self.last_drawn:
+            return
+        self.last_drawn = self.index
+        state = self.monitor.frame(self.index)
+        point = state.get('global_point') if state.get('phase') == '全局搜索' else state.get('sp_point') or state.get('seed_point')
+        if point and point['scheme'] != self.focus_scheme:
+            self.focus_scheme = point['scheme']
+            keys = list(state.get('schemes', {}))
+            if self.focus_scheme in keys:
+                self.scheme_page = keys.index(self.focus_scheme)//4
+        self.root.title(f"{state.get('network', '')} · SOCP 规划域 · 二维割线回放")
+        total = len(self.monitor.history)
+        self.frame_text.set(f'{self.index+1} / {total}')
+        self.setting_slider = True
+        self.slider.configure(to=max(1, total-1))
+        self.slider.set(self.index)
+        self.setting_slider = False
+        phase = state.get('phase', '初始化')
+        detail = ''
+        if phase == '初始化' and 'direction' in state:
+            index = state['direction']
+            detail = f" · MP2 {'p'+str(state['load_nodes'][index]) if index < len(state['load_nodes']) else '总负荷'}"
+        elif phase == '选点':
+            detail = f" · {state['candidate_count']} 个{'支撑点' if state['supporting'] else '顶点'}"
+        elif phase == 'SP' and state.get('eta') is not None:
+            detail = f" · η={state['eta']:.3g} · {'认证' if state['feasible'] else '不可行'}"
+            if state.get('event') == 'cut':
+                detail += ' · 采用割'
+        if state.get('error'):
+            detail = ' · '+state['error']
+        self.status.set(f"{phase}{detail}    SP 累计 {state.get('sp', 0)} · 全局 #{state.get('global_search', 0)} · 割 {state.get('cuts', 0)}")
+        for key, text, label in (('global_point', self.global_text, '全局点'), ('sp_point', self.sp_text, 'SP 点')):
+            point = state.get(key)
+            if point and key == 'sp_point' and point.get('number') is not None:
+                label += f" #{point['number']}"
+            text.set(label+'：—' if not point else f"{label}：{point['scheme']}  p=({point['p'][0]:.3f}, {point['p'][1]:.3f}) kW")
+        if 'bounds' not in state:
+            return
+        self._draw_union(state)
+        self._draw_schemes(state)
+
+    def _draw_cuts(self, ax, state, scheme, *, history=True):
+        """同一联合割按当前面板的 x 代入；总图仅展示来源网架的一条截线。"""
+        from matplotlib.collections import LineCollection
+        cuts = state.get('cut_history', {})
+        if not cuts or scheme not in state.get('schemes', {}):
+            return
+        latest = next(reversed(cuts))
+        limits = np.minimum(state['bounds'], state['axis_bounds'])*1.04
+        previous = []
+        for number, item in cuts.items():
+            if not history and number != latest:
+                continue
+            segment = _cut_segment(item['cut'], state['schemes'][scheme]['x'], limits)
+            if len(segment) != 2:
+                if number == latest:
+                    cut = np.asarray(item['cut'])
+                    corners = np.array([[0., 0.], [limits[0], 0.], [0., limits[1]], limits])
+                    slack = cut[0]+corners@cut[1:3]+cut[3:]@state['schemes'][scheme]['x']
+                    message = ('本框全部排除' if slack.max() < 0. else
+                               '本框均满足此割' if slack.min() >= 0. else '仅与角点相交')
+                    ax.text(.02, .94, f'割 #{number}：{message}', transform=ax.transAxes,
+                            color=CUT, fontsize=8, va='top')
+                continue
+            active = number == latest
+            if active:
+                ax.plot(*segment.T, color=CUT, linewidth=1.6, zorder=5, gid=f'cut-{number}-{scheme}')
+                midpoint = segment.mean(axis=0)
+                ax.annotate(f'#{number}', midpoint, xytext=(4, 4), textcoords='offset points',
+                            color=CUT, fontsize=8, zorder=9)
+            else:
+                previous.append(segment)
+        ax.add_collection(LineCollection(previous, colors=CUT, linestyles='--',
+                                         linewidths=.7, alpha=.28, zorder=4))
+
+    def _removed(self, state, scheme=None):
+        """只在加割帧显示真实前后差集；无需另存被切掉的多边形。"""
+        if state.get('event') != 'cut':
+            return _union([])
+        before = self.monitor.frame(self.index-1).get('schemes', {})
+        after = state['schemes']
+        keys = before.keys() if scheme is None else [scheme]
+        old = _union([before[key]['outer'] for key in keys if key in before])
+        new = _union([after[key]['outer'] for key in keys if key in after])
+        return old.difference(new)
+
+    def _draw_union(self, state):
+        from matplotlib.lines import Line2D
+        from region import initial_polytope
+        ax = self.axes['A']
+        self._axes(ax, state)
+        inner = _union([row['inner'] for row in state.get('schemes', {}).values()])
+        result = state.get('result')
+        outer = _union([row['vertices'] for row in result['outer']]) if result else _union([
+            initial_polytope(state['bounds'], state['total_bound'], state['axis_bounds'])*state['bounds']])
+        _draw(ax, outer, color=OUTER, fill=True, alpha=.20)
+        _draw(ax, outer, color=OUTER, linestyle='--')
+        known = _union([row['outer'] for row in state.get('schemes', {}).values()])
+        if not result:
+            _draw(ax, known, color=OUTER, fill=True, alpha=.30)
+            _draw(ax, known, color=OUTER, linewidth=1.2)
+        _draw(ax, inner, color=INNER, fill=True, alpha=.38)
+        _draw(ax, inner, color=INNER, linewidth=1.2)
+        _draw(ax, self._removed(state), color=CUT, fill=True, alpha=.18)
+        cuts = state.get('cut_history', {})
+        if cuts:
+            number = next(reversed(cuts))
+            scheme = cuts[number]['scheme']
+            self._draw_cuts(ax, state, scheme, history=False)
+            if scheme:
+                ax.text(.98, .96, f'割 #{number} · 在网架 {scheme} 下', transform=ax.transAxes,
+                        ha='right', va='top', color=CUT, fontsize=8)
+        self._markers(ax, state)
+        handles = [Line2D([], [], color=INNER, label='认证内域并集'),
+                           Line2D([], [], color=OUTER, linestyle='--',
+                                  label='认证外包络' if result else '全局外包络')]
+        if not result:
+            handles.append(Line2D([], [], color=OUTER, label='已知条件外域并集'))
+        ax.legend(handles=handles, loc='lower left', bbox_to_anchor=(-.1, 1.01),
+                  ncol=3, frameon=False, fontsize=8, columnspacing=.9, handlelength=1.8)
+        self.canvases['A'].draw_idle()
+
+    def _draw_schemes(self, state):
+        from tkinter import ttk
+        from matplotlib.figure import Figure
+        from matplotlib.backends.backend_tkagg import FigureCanvasTkAgg
+        schemes = state.get('schemes', {})
+        pages = max(1, (len(schemes)+3)//4)
+        self.scheme_page = max(0, min(self.scheme_page, pages-1))
+        self.page_number.set(self.scheme_page+1)
+        self.page_selector.configure(to=pages)
+        self.page_text.set(f'/ {pages} 页 · 共 {len(schemes)} 个网架')
+        visible = list(schemes)[self.scheme_page*4:(self.scheme_page+1)*4]
+        for key, (frame, ax, canvas) in self.scheme_views.items():
+            if key not in visible:
+                frame.grid_remove()
+        for index, key in enumerate(visible):
+            row = schemes[key]
+            if key not in self.scheme_views:
+                if len(self.scheme_views) == 4:
+                    reusable = next(old for old in self.scheme_views if old not in visible)
+                    self.scheme_views[key] = self.scheme_views.pop(reusable)
+                else:
+                    frame = ttk.LabelFrame(self.scheme_frame, text=key)
+                    fig = Figure(figsize=(3., 3.0), dpi=100)
+                    ax = fig.add_subplot(111)
+                    fig.subplots_adjust(left=.20, right=.96, bottom=.18, top=.73)
+                    canvas = FigureCanvasTkAgg(fig, master=frame)
+                    canvas.get_tk_widget().pack(fill='both', expand=True)
+                    self.scheme_views[key] = frame, ax, canvas
+            frame, ax, canvas = self.scheme_views[key]
+            frame.grid(row=index//2, column=index%2, sticky='nsew', padx=3, pady=3)
+            frame.configure(text=f"{key} · {row['cost']:g} {state.get('cost_unit', '')}")
+            self._axes(ax, state)
+            _draw(ax, _union([row['outer']]), color=OUTER, fill=True, alpha=.28)
+            _draw(ax, _union([row['outer']]), color=OUTER, linestyle='--')
+            _draw(ax, _union([row['inner']]), color=INNER, fill=True, alpha=.45)
+            _draw(ax, self._removed(state, key), color=CUT, fill=True, alpha=.22)
+            self._draw_cuts(ax, state, key)
+            self._markers(ax, state, key)
+            from textwrap import fill
+            initial = state.get('initial_plan', {})
+            changes = [f"{edge}:{'断开' if kind is None else '并联' if kind == 'parallel' else '接入' if kind == 'existing' else kind}"
+                       for edge, kind in row['choice'].items() if initial.get(edge) != kind]
+            label = fill(' · '.join(changes) if changes else '原始网架', width=38)
+            ax.set_title(label, fontsize=8, pad=6)
+            canvas.draw_idle()
+
+    def _draw_validation(self, state):
+        from matplotlib.lines import Line2D
+        ax = self.axes['C']
+        self._axes(ax, state)
+        validation = state.get('validation')
+        if validation is None:
+            progress = state.get('scan_progress')
+            message = ('构域完成后独立扫描' if progress is None else
+                       f'SOCP 扫描  {progress[0]} / {progress[1]}  ({100*progress[0]/progress[1]:.1f}%)')
+            if state.get('error'):
+                message = ('校验未完成' if progress is not None else '构域未完成')+'\n'+state['error']
+            ax.text(.5, .55, message,
+                    transform=ax.transAxes, ha='center', color='#777777')
         else:
-            print_summary(result)
-        if self.record or export or self.show_ui:
-            exporting = perf_counter()
-            self.save_snapshot()
-            print(f'回放导出耗时：{perf_counter()-exporting:.3f}s', file=self.stream, flush=True)
-        if self.show_ui and keep_ui:
-            try:
-                input('计算已完成，网页可继续查看；按 Enter 或 Ctrl+C 关闭监视服务。\n')
-            except (EOFError, KeyboardInterrupt):
-                pass
+            states = np.asarray(validation['states'])
+            bounds, n = np.asarray(validation['bounds']), states.shape[0]
+            centers = [(np.arange(n)+.5)*b/n for b in bounds]
+            # 参考域按真实扫描格显示；曲线为算法的连续多边形，不平滑扫描结果。
+            from matplotlib.colors import ListedColormap
+            ax.pcolormesh(np.arange(n+1)*bounds[0]/n, np.arange(n+1)*bounds[1]/n,
+                          (states.T == 1).astype(int), cmap=ListedColormap(['white', '#d5e3ea']),
+                          vmin=0, vmax=1, shading='flat', rasterized=True)
+            inner = _union([row['vertices'] for row in state['result']['inner']])
+            _draw(ax, inner, color=INNER, linewidth=1.5)
+            ax.contour(*centers, (states.T == 1).astype(float), levels=[.5], colors=['#526c80'], linewidths=.7)
+            fmt = lambda value: '—' if value is None else f'{value:.3f}%'
+            ax.set_title(f"遗漏 {fmt(validation['mr_percent'])}    多余 {fmt(validation['fr_percent'])}    · {n}×{n} 网格", fontsize=9)
+            ax.legend(handles=[Line2D([], [], color='#526c80', label='SOCP 扫描参考'),
+                               Line2D([], [], color=INNER, label='认证内域并集')],
+                      loc='upper right', frameon=False, fontsize=8)
+        self.canvases['C'].draw_idle()
 
+
+if __name__ == '__main__':
+    import argparse
+    parser = argparse.ArgumentParser(description='原生窗口回放，不运行优化器')
+    parser.add_argument('recording', nargs='?', type=Path,
+                        default=Path(__file__).resolve().parent/'results'/'fourbus_2d'/'monitor.json.gz')
+    args = parser.parse_args()
+    monitor = RunMonitor()
+    monitor.load_recording(args.recording)
+    monitor.replay()

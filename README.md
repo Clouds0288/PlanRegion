@@ -1,89 +1,71 @@
 # PlanRegion：有限预算下的可规划域
 
-使用统一候选网架、线路型号和潮流模型，通过方向 MP2 初始化、最大负荷候选点和 SP 联合割构造可规划域，由全局剩余域模型检查覆盖。默认只运行 SOCP，完成构域后独立 AC 校核；LP 和混合模型接口仍保留。
+默认运行 **FourBus、SOCP、二维负荷 (p₁,p₂)**，节点 3 负荷固定为 0，建设预算 20,000 元。所有节点仍须接入。完整流程在 `main.py`，不依赖实验目录或历史结果。
 
-当前默认是五节点六候选道路案例：逐步勘察并更新确认域、乐观域和道路边际信息价值。正式计算不依赖历史实验目录或旧结果。
+## 运行与回放
 
-## 安装
-
-Python 环境需要有效的 Gurobi 许可证。
-
-```text
-python -m pip install -r requirements.txt
-```
-
-测试依赖单独安装：
-
-```text
-python -m pip install -r requirements-dev.txt
-```
-
-## 运行
-
-修改 `main.py` 顶部参数后运行：
+环境需要有效的 Gurobi 许可证、Tkinter 和 `requirements.txt` 中的依赖。
 
 ```text
 python main.py
+python main.py --case case33
 ```
 
-| NETWORK | 案例 | 入口行为 |
-|---|---|---|
-| concept5 | 五节点、4 条既有线、6 条候选道路 | 二维规划域和完整逐轮勘察；当前默认 |
-| fourbus | 四节点五走廊、多型号线路 | 三维连续构域及 AC 校核 |
-| case33 | Case33，含 5 条联络线 | 可配置升级数量、建设预算及重构 |
-| jiangkou | 江口候选网架 | 三维连续构域及 AC 校核 |
+直接打开 Python 原生窗口，无需浏览器。修改 `main.py` 顶部的 `NETWORK = FourBus` 或 `NETWORK = Case33` 即可切换案例；直接运行或调用 `main()` 使用此配置，显式 `--case` 参数可覆盖选择。`BUDGET`、`DIVISIONS`、`REGION_TAU`、`SOLVER_THREADS` 等参数仍可在顶部调试。`SHOW_UI=False` 无窗口执行；每个案例只保存一个 `results/<case>_2d/monitor.json.gz`，默认下一次运行覆盖该文件。
 
-五节点采用已验证的概念参数：建设预算 4，p₁/p₂ 为节点 1、2 的负荷，独立可用先验 0.8，单次勘察费 1。`SOLVER_THREADS`、`CASE_TIME_LIMIT`、`OUTPUT`、`RECOMPUTE`、`SHOW_UI`、`STEP_BY_STEP` 由主入口设置；三维网架还支持 `BUDGETS`、`REGION_TAU`、`DIVISIONS`。
+Case33 使用二维 `(p₁₈,p₂₅)`，节点 33 及其他非动态节点保持原始负荷；默认 4 个升级候选，预算 2 相对投资单位，独立扫描 20×20，构域时限 900 秒。配置在 `main(case=...)` 的两行案例表中；两个入口都不运行三维模型。初始化 MP2 使用剩余构域时限，超时直接停止，不降低认证精度。
 
-默认打开本地调试窗口，并在步骤边界等待。点击“执行下一步”推进一次算法步骤，“连续运行”自动执行，“暂停计算”在下一边界停下。时间轴的上一帧、下一帧只回看记录，不改变计算。人工等待不计入构域时限。`STEP_BY_STEP=False` 自动运行；`SHOW_UI=False` 关闭窗口但继续完整记录。
+窗口提供：
 
-求解超时、数值精度不足、未收敛或无法取得有效证书时直接报错并停止，不自动重求、切换模型或修补答案。已完成步骤及错误仍写入日志与回放；未完成运行不发布成功结果。
+- **A 总域**：所有已认证网架内域的并集，以及安全全局外包络。
+- **B 已知网架**：每个网架独立的内域和条件外域；新网架自动加入。同一联合割分别代入各网架 x，当前割为紫色实线、历史割为淡紫虚线；加割帧中浅紫色为刚切掉的部分。
+- **C 校验**：构域完成后，独立完整 SOCP 扫描与认证内域比较。只更新扫描进度与最终遗漏、多余百分比，不增加回放帧；拖动构域时间轴时最终对比保持显示。
 
-要复现单线程五节点计算及其图件：
+全局见证是红色菱形，SP 点是橙色圆点，两者分别记录。暂停计算、计算一步、继续计算控制求解步骤；上一帧、下一帧、播放、时间轴只控制查看。“上一割 / 下一割”直接跳到采用割的帧。点击“实时”回到最新状态，人工暂停不占构域时限。
+
+总图同时区分安全全局外包络和已知网架条件外域并集；紫色线只展示当前割在来源网架下的截线，并注明网架。它不是独立于 x 的全局负荷割。
+
+网架面板每页最多 4 个，可直接输入页码；新增网架或选点换网架时自动定位。窗口复用绘图区，Case33 数千个网架不会各自创建窗口对象。历史割批量绘制，完整系数仍保留在回放中。
 
 ```text
-python survey.py --threads 1
-python plot.py --results results/concept5/<本次时间戳>
+python monitor.py
+python monitor.py path/to/monitor.json.gz
+python monitor.py results/case33_2d/monitor.json.gz
 ```
 
-每次计算由 `main.run` 建立独立时间戳目录。五节点的 `results.json` 包含参数、逐轮域、候选评分、最终方案和核查结果；`steps.jsonl` 在计算期间逐步保存选点、求解返回、割和内外域变化；`live_view.html` 是同一记录的离线回放。绘图另存 PDF、SVG 和 PNG。预期勘察顺序为 A+ → B− → E+ → D− → C+，F 停止勘察。更多定义见 [勘察模型与结果](docs/survey.md)。
+回放不调用优化器。求解失败直接停止，在同一回放文件保留已完成步骤及错误，不重试、不切换模型、不发布成功证书。
 
-三维案例的数值结果保存为 `result.npz`，过程使用相同的 `steps.jsonl` 与 `live_view.html`。中断后可用 `RunMonitor.load_recording` 读取已经完整写入的步骤，也可重新导出回放；这不恢复求解器。比较图仍可由数值结果重新生成。`RECOMPUTE=False` 读取 `OUTPUT` 指定的运行；未指定时读取该网架最新时间戳目录。
+## 五步主线
 
-## 项目结构
+1. **初始化**：2 个轴向 MP2 + 1 个总负荷 MP2；x、p、y 均自由。MP2 上界形成初始外域，可行点按各自网架加入内域。
+2. **选点**：收集已知网架收缩外域中未被内域并集覆盖的顶点。活动全局见证先补齐同网架支撑。
+3. **全局搜索**：普通候选为空，或累计至少 32 次新增 SP 且当前批次 / 活动见证完成时调用。x、p 自由，允许新网架；不含 0.01 触发。
+4. **SP 更新**：固定 x、p，y 自由，最小化违反量 eta。先收入本批全部可行点，再采用仍未覆盖候选中 eta 最大的一条联合割。完全相同的 (x,p) 复用结果，缓存命中不计 SP 次数。
+5. **完成与校验**：只有全局覆盖证书（或初始化已证空域）才结束。随后固定每个扫描点 p，由独立完整 SOCP 自由选 x、y 判断可行性，不使用构域割或已知网架列表。
 
-| 文件或目录 | 职责 |
+`REGION_TAU=0.005` 控制径向精度：普通外域顶点 `p` 向原点收缩 0.5% 后，若 `(1-tau)*p` 已落入认证内域并集，就跳过该候选的 SP。全局搜索使用同一收缩比例；不能只跳过近点而保留更严格的全局终止要求。此值不是 eta 容差、固定 kW 距离或面积误差；跳过的边界薄层仍留在内外包络之间，不标成已认证。
+
+认证前，总图的安全全局外包络是 MP2 的轴向 / 总量界。不能把已知网架条件外域的并集当作所有未搜索网架的外域。认证后，显示覆盖证书导出的最终外包络。各网架的认证内域只能各自取凸包，再求并集。
+
+扫描使用网格中心；FourBus 默认 80×80，Case33 默认 20×20；参考为 **SOCP 扫描**，不是 AC 真值。遗漏 = 参考可行而算法内域未覆盖的格点 / 参考可行格点；多余 = 算法内域覆盖而参考不可行的格点 / 算法内域格点。百分比受网格分辨率影响；连续域精度仍由 `tau` 与全局证书说明。
+
+## 文件职责
+
+| 文件 | 职责 |
 |---|---|
-| Network/ | 网架、线路型号、负荷、道路参数和原始数据 |
-| main.py | 运行配置、对偶构域、统一记录与保存入口 |
-| monitor.py | 步骤记录、暂停/继续、时钟与本地查看服务 |
-| model.py | 主问题、物理方程、对偶 SP、联合割与剩余域搜索 |
-| region.py | 几何、单方案内外域与并集覆盖 |
-| vertify.py | 独立 AC 潮流及可行性校核 |
-| survey.py | 按需求域、道路信息价值、逐轮勘察与核查 |
-| plot.py、live_view.html | 勘察图、三维结果、实时查看和历史回放；勘察绘图统一调用 render_survey |
-| tests/ | 核心回归及独立参考模型；数据夹具只用于测试 |
-| docs/ | 当前模型、数学符号和迁移记录 |
-| results/ | 已审核结果与本地运行输出 |
+| main.py | 五步求解主循环和最小运行入口 |
+| model.py | 完整 MP、固定参数 SP、联合割、全局剩余域模型 |
+| region.py | 单网架几何、裁剪、并集覆盖判定 |
+| monitor.py | 原生窗口、精简状态、暂停计时、单文件回放 |
+| vertify.py | 独立 SOCP 扫描；保留可单独调用的 AC 校验 |
+| Network/ | 网架与物理参数；FourBus 类仍支持既有三维实验 |
+| survey.py / plot.py | 独立勘察及历史图件，不进入当前主线 |
 
-主循环全部在 `main.build_continuous_region`，注释按 **1 初始化 → 2 选点 → 3 全局搜索 → 4 SP 更新 → 5 汇总** 编号。二维初始化解 3 次 MP2、三维解 4 次；不再默认解 MP1。`region.py` 只处理几何，`model.py` 只完成单次优化。普通候选按实际 kW 总量排序；内部见证的同网架支撑和最终覆盖证明仍保留。
+旧 HTML、JSONL、BenchmarkResult、线性 / 混合调度不再由默认主入口生成或调用。数学字段和迁移说明见 [docs/notation.md](docs/notation.md) 第 33 节；历史报告保留原运行口径。
 
 ## 验证
 
-本次主线重构、五步调试入口和 SOCP 验证结果见 [主线验证记录](docs/main_flow_validation.md)。
-
 ```text
 python -m unittest tests.test_notation -v
-python -m pytest tests/test_socp_main.py tests/test_main_flow.py tests/test_solver_results.py -q -k "not linear"
-python -m pytest tests -q
+python -m pytest tests/test_socp_main.py tests/test_monitor.py tests/test_main_flow.py tests/test_solver_results.py tests/test_progress.py tests/test_startup.py -q
 ```
-
-默认测试包含五节点完整重算。较慢的全规模构域测试由环境变量 `PLANREGION_SLOW_TESTS=1` 启用。浏览器几何回归需要 Node.js。
-
-数学符号、单位、数组顺序和结果字段统一遵守 [notation.md](docs/notation.md)。进一步说明见 [连续构域](docs/continuous_region.md)、[联合割模型](docs/compact_planning.md)、[固定方案 SOCP](docs/socp_model.md)。
-
-## 已审核结果与清理记录
-
-- [五节点对偶复现报告](results/concept5_dual/2026-09-25_run2/report.md)：原始复现用时约 30.03 秒，26 个道路集合、166 条共享割，与枚举结果在数值误差内一致；尚未证明速度优于枚举。
-- [Case33 历史报告](results/case33bw/latest/report.md)：保留已审核原始数据。大体积回放由 Git LFS 管理，获取时运行 `git lfs pull`。
-- [项目清理记录](docs/cleanup.md)：临时实验和历史试跑已归档到项目外。历史符号登记完整保留，当前代码只引用活动接口。

@@ -33,24 +33,21 @@ def test_mp_accepts_cuts_and_incumbent_without_a_query_wrapper():
 def test_axis_certificate_is_saved_before_later_mp2_can_time_out(failed_call):
     network = main.FourBus()
     original, calls = MasterProblem.solve, []
-
     def solve(problem, *args, **kwargs):
         calls.append(problem)
         if len(calls) == failed_call:
             raise main.RegionTimeout('MP timeout')
-        answer = original(problem, *args, **kwargs)
-        assert answer['feasible']
-        return answer
-
+        return original(problem, *args, **kwargs)
     oracle = SubProblem(GridPhysics(network, 'socp'), threads=1)
-    monitor = RunMonitor(stream=StringIO())
-    with pytest.raises(main.RegionTimeout, match='MP timeout'), monitor, \
+    monitor = RunMonitor()
+    with pytest.raises(main.RegionTimeout, match='MP timeout'), \
          patch.object(MasterProblem, 'solve', new=solve), patch('main.SubProblem', return_value=oracle):
-        main.build_continuous_region(network, 'socp', 20000., [150.]*3, threads=1, progress=monitor)
-    assert len(calls) == failed_call
-    assert oracle.calls == 0
+        monitor.execute(lambda: main.build_continuous_region(network, 'socp', 20000., [150.]*3,
+                        threads=1, progress=monitor), show_ui=False)
+    assert len(calls) == failed_call and oracle.calls == 0
     assert monitor.state['status'] == 'failed'
-    assert sum(e['event'] == 'feasible' for e in monitor.events) == failed_call-1
+    assert sum(f['patch'].get('event') == 'feasible' for f in monitor.history) == failed_call-1
+
 
 
 def test_directional_seeds_of_same_scheme_share_one_region():

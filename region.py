@@ -25,6 +25,8 @@ def polytope_vertices(points):
     coordinates = delta@basis.T
     if rank == 1:
         return points[np.unique([coordinates[:, 0].argmin(), coordinates[:, 0].argmax()])]
+    # 一次可逆的仿射缩放，避免极薄多面体的长宽比进入 Qhull；输出仍取原点。
+    coordinates /= np.linalg.norm(coordinates, axis=0)
     return points[np.sort(ConvexHull(coordinates).vertices)]
 
 
@@ -39,9 +41,11 @@ def halfspaces(points):
     basis = np.linalg.svd(delta, full_matrices=True)[2]
     coordinates = delta@basis[:rank].T
     if rank >= 2:
-        hull = ConvexHull(coordinates)
-        normal = hull.equations[:, :rank]@basis[:rank]
+        scale = np.linalg.norm(coordinates, axis=0)
+        hull = ConvexHull(coordinates/scale)
+        normal = (hull.equations[:, :rank]/scale)@basis[:rank]
         eq = np.c_[normal, hull.equations[:, rank]-normal@center]
+        eq /= np.linalg.norm(normal, axis=1)[:, None]  # 保持 GEOMETRY_TOL 的原单位。
     elif rank == 1:
         normal = np.array([basis[0], -basis[0]])
         eq = np.c_[normal, [-coordinates.max(), coordinates.min()]-normal@center]
@@ -74,7 +78,9 @@ def clip_polytope(vertices, constant, coefficient):
         return np.empty((0, d))
     points = list(vertices[values >= -1e-11])
     if len(vertices) >= d+1 and np.linalg.matrix_rank(vertices-vertices[0], tol=1e-10) == d:
-        edges = {tuple(sorted(edge)) for face in ConvexHull(vertices).simplices
+        coordinates = (vertices-vertices[0])@np.linalg.svd(vertices-vertices[0], full_matrices=False)[2].T
+        coordinates /= np.linalg.norm(coordinates, axis=0)
+        edges = {tuple(sorted(edge)) for face in ConvexHull(coordinates).simplices
                  for edge in combinations(face, 2)}
     else:
         edges = combinations(range(len(vertices)), 2)
@@ -95,7 +101,9 @@ def polytope_volume(poly):
     poly = poly.reshape(-1, d)
     if len(poly) < d+1 or np.linalg.matrix_rank(poly-poly[0], tol=1e-10) < d:
         return 0.
-    return float(ConvexHull(poly).volume)
+    coordinates = (poly-poly[0])@np.linalg.svd(poly-poly[0], full_matrices=False)[2].T
+    scale = np.linalg.norm(coordinates, axis=0)
+    return float(ConvexHull(coordinates/scale).volume*np.prod(scale))
 
 
 class RegionState:

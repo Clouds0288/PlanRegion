@@ -13,7 +13,8 @@ import unittest
 import numpy as np
 from threadpoolctl import threadpool_limits
 
-from main import Case33, RegionTimeout, build_continuous_region
+from Network.case33bw import Case33
+from main import RegionTimeout, build_continuous_region
 from model import RemainingRegionModel
 from tests.planning_checks import margin
 from model import GridPhysics, MasterProblem
@@ -35,7 +36,7 @@ class ContinuousTests(unittest.TestCase):
 
 
     def test_deadline_preserves_unknown_domain(self):
-        with self.assertRaisesRegex(RegionTimeout, 'exceeded'):
+        with self.assertRaisesRegex(RegionTimeout, '构域超过'):
             build_continuous_region(self.network, 'socp', 0., self.bounds, time_limit=0., threads=1)
 
     def test_complete_query_reuses_verified_state_without_sp(self):
@@ -135,30 +136,22 @@ class ContinuousTests(unittest.TestCase):
 
     def test_complete_replay_round_trip_beyond_old_limit(self):
         with TemporaryDirectory() as directory:
-            with RunMonitor(record=True, output=directory, stream=StringIO()) as monitor:
-                geometry = np.array([[0., 1., 2.]])
-                monitor('phase_start', method='linear', phase='linear', geometry=geometry)
-                geometry[:] = 99
-                for i in range(701):
-                    monitor('point', point=[float(i), 0., 0.], query=i+1)
-                monitor('phase_start', method='hybrid', phase='socp')
-                monitor('completed', message='complete')
-                monitor.save_snapshot()
-                state = {}
-                for frame in monitor.history[:352]:
-                    state.update(frame['patch'])
-                self.assertEqual(state['point'], [350., 0., 0.])
-                self.assertEqual(monitor.history[0]['patch']['geometry'], [[0., 1., 2.]])
-                html = (Path(directory)/'live_view.html').read_text(encoding='utf-8')
-                encoded = re.search(r'window.SAVED_REPLAY_GZIP="([^"]+)";', html)[1]
-                saved = json.loads(gzip.decompress(base64.b64decode(encoded)))
-                self.assertEqual(len(saved['history']), 704)
-                self.assertEqual(saved['history'], monitor.history)
-                self.assertEqual(saved['geometry'], [])
-                self.assertEqual({path.name for path in Path(directory).iterdir()}, {'steps.jsonl', 'live_view.html'})
-                with RunMonitor(record=False, stream=StringIO()) as restored:
-                    restored.load_recording(Path(directory)/'live_view.html')
-                    self.assertEqual(restored.history, monitor.history)
+            monitor = RunMonitor(output=Path(directory)/'monitor.json.gz')
+            geometry = np.array([[0., 1., 2.]])
+            monitor._emit('start', geometry=geometry)
+            geometry[:] = 99
+            for i in range(701):
+                monitor._emit('point', point=[float(i), 0., 0.])
+            monitor._emit('completed', status='completed')
+            monitor.save()
+            self.assertEqual(monitor.frame(351)['point'], [350., 0., 0.])
+            self.assertEqual(monitor.frame(0)['geometry'], [[0., 1., 2.]])
+            restored = RunMonitor()
+            restored.load_recording(monitor.output)
+            self.assertEqual(len(restored.history), 703)
+            self.assertEqual(restored.history, monitor.history)
+            self.assertEqual({p.name for p in Path(directory).iterdir()}, {'monitor.json.gz'})
+
 
 
 if __name__ == '__main__':

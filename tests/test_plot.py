@@ -63,59 +63,45 @@ class PresentationTests(unittest.TestCase):
         self.assertEqual(len(cache), 1)
 
     def test_recorded_geometry_is_independent_of_later_growth(self):
-        with RunMonitor(record=True, stream=StringIO()) as monitor:
-            monitor('geometry', records=self.region.records.values(), bounds=self.region.bounds)
-            first = json.loads(monitor.snapshot())['geometry']
-            self.region.add_point([0], CUBE*.8)
-            monitor('geometry', records=self.region.records.values(), bounds=self.region.bounds)
-            self.assertEqual(monitor.history[0]['patch']['geometry'], first)
-            self.assertNotEqual(monitor.state['geometry'], first)
-            self.assertTrue(monitor.state['geometry'][0]['inner']['faces'])
-            self.assertNotIn('records', monitor.state)
+        monitor = RunMonitor()
+        monitor._emit('geometry', **monitor._geometry(self.region))
+        first = monitor.frame(0)
+        self.region.add_point([0], CUBE*.8)
+        monitor._emit('geometry', **monitor._geometry(self.region))
+        self.assertEqual(monitor.frame(0), first)
+        self.assertNotEqual(monitor.state['schemes'], first['schemes'])
+
 
     def test_terminal_monitor_does_not_build_surfaces(self):
         with patch('plot.surface', side_effect=AssertionError('unexpected plotting')):
-            result = self.region.finish(certified=False)
-            with RunMonitor(record=False, stream=StringIO()) as monitor:
-                monitor('geometry', records=self.region.records.values(), bounds=self.region.bounds)
-                monitor('region_end', region=result, bounds=self.region.bounds)
-                self.assertEqual(monitor.geometry_cache, {})
-                self.assertEqual(monitor.history, [])
+            monitor = RunMonitor()
+            monitor._emit('geometry', **monitor._geometry(self.region))
+            self.assertNotIn('faces', monitor.state['schemes']['A'])
+
 
     def test_export_and_reload_without_event_recording(self):
-        result = self.region.finish(certified=True)
-        original = json.dumps(json_value(result))
+        # 新协议统一保存帧，不再提供另一套静态 HTML 导出。
         with TemporaryDirectory() as folder:
-            with RunMonitor(record=False, output=folder, stream=StringIO()) as monitor:
-                monitor('completed', results=[result], bounds=self.region.bounds)
-                monitor.save_snapshot()
-            self.assertEqual([path.name for path in Path(folder).iterdir()], ['live_view.html'])
-            self.assertIn('window.SAVED_REPLAY_GZIP=',
-                          (Path(folder)/'live_view.html').read_text(encoding='utf-8'))
-            with RunMonitor(record=False, stream=StringIO()) as restored:
-                restored.load_recording(Path(folder)/'live_view.html')
-                saved = json.loads(restored.snapshot())
-                self.assertEqual(saved['history'], [])
-                self.assertTrue(saved['results'][0]['inner'][0]['faces'])
-                self.assertEqual(saved['results'], monitor.state['results'])
-        self.assertEqual(json.dumps(json_value(result)), original)
+            monitor = RunMonitor(output=Path(folder)/'monitor.json.gz')
+            monitor._emit('completed', result=self.region.finish(True))
+            monitor.save()
+            restored = RunMonitor()
+            restored.load_recording(monitor.output)
+            self.assertEqual(restored.state, monitor.state)
+            self.assertEqual([p.name for p in Path(folder).iterdir()], ['monitor.json.gz'])
+
 
     def test_large_html_recording_restores_packed_history(self):
+        # 2.1：大记录同样只写原生窗口压缩帧，保留小数精度。
         with TemporaryDirectory() as folder:
-            with RunMonitor(record=True, output=folder, stream=StringIO()) as monitor:
-                monitor('phase_start', geometry=[{'vertices': [[0., -0., 1e-12]]}])
-                monitor('point', point=[1., 2., 3.], query=1)
-                monitor('completed', message='done')
-                monitor.state['padding'] = 'x'*10_000_001
-                with patch('monitor.pack_replay', wraps=pack_replay) as packed:
-                    monitor.save_snapshot()
-                    packed.assert_called_once()
-            with RunMonitor(record=False, stream=StringIO()) as restored:
-                restored.load_recording(Path(folder)/'live_view.html')
-                self.assertEqual(restored.history, monitor.history)
-                self.assertEqual(restored.events, monitor.events)
-                self.assertEqual(restored.state, {k:v for k,v in json.loads(monitor.snapshot()).items()
-                                                  if k not in ('history', 'events')})
+            monitor = RunMonitor(output=Path(folder)/'monitor.json.gz')
+            for i in range(1001):
+                monitor._emit('point', point=[i*1e-12, 0.])
+            monitor.save()
+            restored = RunMonitor()
+            restored.load_recording(monitor.output)
+            self.assertEqual(restored.history, monitor.history)
+
 
 
 if __name__ == '__main__':

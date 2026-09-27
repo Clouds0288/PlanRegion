@@ -54,11 +54,12 @@ class SurveyTests(unittest.TestCase):
                                    self.reference['result']['trace'][0]['marginal_information_value'])
 
     def test_default_main_dispatches_to_formal_survey(self):
+        # 新默认入口迁为二维 FourBus；勘察从 survey.run_survey 单独启动。
         with patch.object(main, 'run', return_value='finished') as run:
-            with patch.object(main, 'NETWORK', 'concept5'):
-                self.assertEqual(main.main(), 'finished')
-        self.assertIsInstance(run.call_args.args[0], main.Concept5)
-        self.assertEqual(run.call_args.kwargs['step_by_step'], main.STEP_BY_STEP and main.SHOW_UI)
+            self.assertEqual(main.main(), 'finished')
+        self.assertIsInstance(run.call_args.args[0], main.FourBus)
+        self.assertEqual(run.call_args.args[0].load_nodes, (1, 2))
+
 
     def test_production_modules_do_not_import_experiments_or_tests(self):
         paths = [ROOT/name for name in ('main.py', 'model.py', 'region.py', 'plot.py', 'vertify.py',
@@ -84,14 +85,9 @@ class SurveyTests(unittest.TestCase):
                 caches.append(original(**settings))
                 return caches[-1]
             with redirect_stdout(StringIO()), patch.object(survey, 'DomainCache', side_effect=create_cache):
-                result = main.run(main.Concept5(), output=output, threads=1, time_limit=60., show_ui=False)
+                result = survey.run_survey(threads=1, time_limit=60.)
             cache = caches[0]
-            saved = json.loads((output/'results.json').read_text(encoding='utf-8'))
-            self.assertEqual(saved, main.json_value(result))
-            self.assertEqual({path.name for path in output.iterdir()}, {'results.json', 'steps.jsonl', 'live_view.html'})
-            events = [json.loads(line)['patch'].get('event') for line in (output/'steps.jsonl').read_text(encoding='utf-8').splitlines()]
-            for event in ('point', 'sp_end', 'cut', 'domain_end', 'survey_scores', 'survey_observation', 'completed'):
-                self.assertIn(event, events)
+            saved = result  # 独立入口直接返回同一份结果，不再经 main 写网页记录。
             expected = self.reference['result']
             self.assertEqual([(r['route'], r['survey_observation']) for r in result['trace']],
                              [(r['route'], r['survey_observation']) for r in expected['trace']])

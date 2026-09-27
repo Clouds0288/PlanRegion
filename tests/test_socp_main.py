@@ -1,4 +1,4 @@
-"""SOCP 主线：方向上界、真实负荷选点、全局覆盖及 AC 调用次序。"""
+"""SOCP 主线：顶点评分、32 次检查、二维切片及独立扫描。"""
 from unittest.mock import patch
 
 import numpy as np
@@ -6,8 +6,9 @@ import pytest
 
 import main
 from model import GridPhysics, MasterProblem, RemainingRegionModel, SubProblem
-from plot import sample_region
+from monitor import RunMonitor
 from region import RegionState, contains, halfspaces
+from vertify import validate_socp_region
 
 
 def test_direction_objective_keeps_other_loads_free():
@@ -23,18 +24,30 @@ def test_direction_objective_keeps_other_loads_free():
 
 
 def test_vertex_priority_uses_kw_not_normalized_sum():
-    network, bounds = main.Concept5(), np.array([100., 10.])
+    # 新语义：违反量优先，即使它的总负荷较小；相同 (x,p) 的第二轮不得重复求 SP。
+    network = main.FourBus(load_nodes=(1, 2))
     x = network.encode_plan(network.initial_plan).astype(int)
-    state = RegionState(bounds, 110., 0.)
+    state = RegionState([1., 1.], 2., 0.)
     state.add_scheme(x, network.initial_plan, 0.)
     state.records[tuple(x)]['outer'] = np.array([[.7, .1], [.2, .9]])
-    seed = dict(x=x, p=np.zeros(2), bound=100., feasible=True, status='optimal')
+    seed = dict(x=x, p=np.zeros(2), bound=2., feasible=True, status='optimal')
+    chosen, other = np.r_[-.5, np.zeros(2+len(x))], np.r_[-.2, np.zeros(2+len(x))]
+    def score(oracle, choice, power, time_limit=None):
+        oracle.calls += 1
+        return dict(eta=.008 if power[0] > .5 else .003, feasible=False, state=None,
+                    cut=chosen if power[0] > .5 else other)
+    oracle = SubProblem(GridPhysics(network, 'socp'), threads=1)
     with patch('main.RegionState', return_value=state), \
+         patch('main.SubProblem', return_value=oracle), \
          patch.object(MasterProblem, 'solve', return_value=seed), \
-         patch.object(SubProblem, 'solve', side_effect=RuntimeError('selected')) as check:
-        with pytest.raises(RuntimeError, match='selected'):
-            main.build_continuous_region(network, 'socp', 4., bounds, tau=0., threads=1)
-    np.testing.assert_array_equal(check.call_args.args[1], [70., 1.])
+         patch.object(SubProblem, 'solve', new=score), \
+         patch.object(state, 'apply_cut', side_effect=[None, RuntimeError('second local cut')]) as apply, \
+         patch.object(RemainingRegionModel, 'solve', side_effect=AssertionError('0.01 hard trigger')):
+        with pytest.raises(RuntimeError, match='second local cut'):
+            main.build_continuous_region(network, 'socp', 20000., [1., 1.], tau=0., threads=1)
+    assert oracle.calls == 2
+    np.testing.assert_array_equal(apply.call_args_list[0].args[0], chosen)
+    np.testing.assert_array_equal(apply.call_args_list[1].args[0], chosen)
 
 
 def test_axis_bounds_clip_existing_new_and_final_outer():
@@ -53,58 +66,70 @@ def test_axis_bounds_clip_existing_new_and_final_outer():
 
 
 def test_socp_flow_agrees_with_independent_fixed_point_queries():
-    network = main.FourBus()
-    bounds = np.full(3, network.power_limit)
-    events, directions, upper = [], [], []
+    network = main.FourBus(load_nodes=(1, 2))
+    bounds = np.full(2, network.power_limit)
+    monitor = RunMonitor()
+    directions, upper = [], []
     solve = MasterProblem.solve
-
     def mp(problem, *args, **kwargs):
-        assert kwargs.get('incumbent') is None
         answer = solve(problem, *args, **kwargs)
         directions.append(problem.direction.copy())
         upper.append(answer['bound'])
         return answer
-
-    def progress(event, **data):
-        events.append(event)
-        if data.get('answer') is not None:
-            assert 'state' not in data['answer'] and 'cut' not in data['answer']
-        if event == 'point' and data['point_reason'].startswith('已知网架'):
-            point = data['point']/bounds
-            assert not any(contains([point], halfspaces(row['inner']))[0] for row in data['records'])
-
     with patch.object(MasterProblem, 'solve', new=mp):
-        result = main.build_continuous_region(network, 'socp', 20000., bounds, threads=1, progress=progress)
-    np.testing.assert_array_equal(directions, np.vstack([np.eye(3), np.ones(3)]))
-    np.testing.assert_allclose(result['axis_bounds'], np.minimum(bounds, upper[:3]))
+        result = main.build_continuous_region(network, 'socp', 20000., bounds, threads=1, progress=monitor)
+    np.testing.assert_array_equal(directions, np.vstack([np.eye(2), np.ones(2)]))
+    np.testing.assert_allclose(result['axis_bounds'], np.minimum(bounds, upper[:2]))
     assert result['status'] == 'certified' and result['coverage_bound'] <= 1e-8
-    assert events.count('mp_start') == 4 and 'residual_start' in events
-    assert events.index('point') > [i for i, e in enumerate(events) if e == 'query_end'][-1]
-    # 当前真实负荷点由完整、固定 p 的整数 SOCP 独立判断，不使用割或内域。
-    points = np.array([[5., 5., 5.], [70., 10., 5.], [0., 30., 5.], [0., 0., 40.], [80., 20., 20.]])
-    labels = sample_region(result, points, bounds)
-    assert np.all(labels != 0)
-    for point, label in zip(points, labels):
-        problem = MasterProblem(GridPhysics(network, 'socp'), power=point, budget=20000., threads=1)
-        with problem.model:
-            answer = problem.solve()
-        assert (label == 1) == (answer is not None)
+    assert main.REFINEMENT_CHECKS == 32
+    reference = validate_socp_region(network, 20000., 12, result['axis_bounds'], threads=1)
+    points = (np.indices((12, 12)).reshape(2, -1).T+.5)*result['axis_bounds']/12
+    inner = np.zeros(len(points), dtype=bool)
+    outer = inner.copy()
+    for row in result['inner']:
+        inner |= contains(points, halfspaces(row['vertices']))
+    for row in result['outer']:
+        outer |= contains(points, halfspaces(row['vertices']))
+    truth = reference['states'].ravel() == 1
+    assert not np.any(inner & ~truth)
+    assert not np.any(truth & ~outer)
+    assert len(monitor.state['schemes']) > 2
+    assert len({tuple(f['patch']['sp_point']['p']) for f in monitor.history
+                if f['patch']['event'] == 'point' and 'sp_point' in f['patch']}) > 5
+
+
+def test_interval_checks_actual_new_sp_after_batch():
+    # 三维保留为核心回归：该预算确实触发 32 间隔，二维默认可能先把顶点查完。
+    monitor = RunMonitor()
+    result = main.build_continuous_region(main.FourBus(), 'socp', 20000., [142.5]*3,
+                                          threads=1, progress=monitor)
+    first = next(f['patch'] for f in monitor.history if f['patch']['event'] == 'residual_start')
+    assert first['sp_since_global'] >= 32
+    assert first['sp_since_global'] < 96
+    assert result['coverage_bound'] <= 1e-8
 
 
 def test_default_run_finishes_socp_before_ac(tmp_path):
-    build, validate = main.build_continuous_region, main.validate_ac_region
+    # 2.1 迁移：校验改为独立 SOCP，主线不再调用 AC。
+    build, scan = main.build_continuous_region, main.validate_socp_region
     calls = []
     def region(*args, **kwargs):
         result = build(*args, **kwargs)
         calls.append(('region', args[1], result['status']))
         return result
-    def ac(*args, **kwargs):
+    def validate(*args, **kwargs):
         assert calls == [('region', 'socp', 'certified')]
-        calls.append(('ac',))
-        return validate(*args, **kwargs)
-    with patch('main.build_continuous_region', side_effect=region), patch('main.validate_ac_region', side_effect=ac):
-        result = main.run(main.FourBus(), budgets=[20000.], divisions=3, output=tmp_path, show_ui=False, threads=1)
-    assert calls[-1] == ('ac',)
-    assert set(result.metadata['seconds']) == {'socp', 'ac'}
-    assert {r['method'] for r in result.summary} == {'socp', 'ac'}
-    assert (tmp_path/'result.npz').exists()
+        calls.append(('scan',))
+        return scan(*args, **kwargs)
+    output = tmp_path/'monitor.json.gz'
+    with patch('main.build_continuous_region', side_effect=region), \
+         patch('main.validate_socp_region', side_effect=validate):
+        result = main.run(main.FourBus(load_nodes=(1, 2)), divisions=4, output=output,
+                          show_ui=False, threads=1)
+    monitor = RunMonitor()
+    monitor.load_recording(output)
+    assert calls[-1] == ('scan',)
+    assert monitor.state['status'] == 'completed'
+    assert monitor.state['validation']['fr_percent'] == 0.
+    assert result['status'] == 'certified'
+    assert [p.name for p in tmp_path.iterdir()] == ['monitor.json.gz']

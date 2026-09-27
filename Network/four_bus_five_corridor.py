@@ -32,7 +32,7 @@ class FourBus(Network):
     transformer_kva, new_corridor_cny_m = 150., 45.
     cost_unit, budgets = '元', (20000., 40000., 60000., np.inf)
 
-    def __init__(self):
+    def __init__(self, load_nodes=(1, 2, 3)):
         base = self.transformer_kva
         zbase = self.voltage_kv**2/(base/1000.)
         corridors = []
@@ -43,8 +43,8 @@ class FourBus(Network):
                     (self.new_corridor_cny_m if existing is None else 0.))) for t in self.lines)
             corridors.append(Corridor(name, endpoints, existing, existing is not None, types))
         super().__init__('four_bus_five_corridor', 0, (1, 2, 3), tuple(corridors),
-            base, self.voltage_kv, np.zeros(3), np.zeros(3), (1, 2, 3),
-            np.full(3, np.tan(np.arccos(self.power_factor))), self.voltage_min_pu**2, 1.,
+            base, self.voltage_kv, np.zeros(3), np.zeros(3), load_nodes,
+            np.full(len(load_nodes), np.tan(np.arccos(self.power_factor))), self.voltage_min_pu**2, 1.,
             base*self.power_factor, source_smax=1.,
             sources=('Network/__init__.py', 'Network/four_bus_five_corridor.py'))
 

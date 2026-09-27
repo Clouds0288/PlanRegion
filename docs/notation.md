@@ -1,6 +1,6 @@
 # 数学符号与代码变量规范
 
-版本：2.0，2026-09-27。方向 MP2 初始化、主循环统一选点，默认仅运行 SOCP；联合割布局及公共归一化坐标保持不变。
+版本：2.1，2026-09-28。顶点 SP 违反量优先、32 次新增 SP 的全局检查间隔；默认二维 FourBus + SOCP + Python 原生监视窗口，径向精度 tau=0.005。联合割布局及公共归一化坐标保持不变。
 
 本文是本项目数学符号、代码名称、单位、数组顺序和结果字段的统一约定。正式代码为 `Network/`、`model.py`、`region.py`、`vertify.py`、`plot.py`、`main.py`、`survey.py`、`monitor.py`；测试、注释和新文档使用同一约定。项目外归档的源码、已有结果和固定方案历史推导保留原口径，其局部记号须通过附录（原第 10 节）换算。
 
@@ -286,7 +286,7 @@ SP 直接使用 `eta` 目标、`Aggregate=0`、`ScaleFlag=0`、`BarQCPConvTol=1e
 | 字段 / 量 | 代码定义 | 单位 / 布局 |
 |---|---|---|
 | `max_total`、`max_total_bound` | [build_continuous_region:max_total](../main.py)、[build_continuous_region:max_total_bound](../main.py) | 最大总负荷的可行值、全局上界，kW；未获值可为 `None` |
-| `max_point`、`max_choice`、`max_cost` | [build_continuous_region:max_point](../main.py)、[build_continuous_region:max_choice](../main.py)、[build_continuous_region:max_cost](../main.py) | kW 向量、具名方案、投资 |
+| `max_point`、`max_choice`、`max_cost`（2.1 退役） | 原 `build_continuous_region` 字段；迁移至 [RunMonitor.seed](../monitor.py)、[RunMonitor._geometry](../monitor.py)，见第 33 节 | 初始化 kW 点、具名方案与费用不再重复写入最终结果 |
 | `inner`、`outer`、`vertices` | [RegionState.finish:inner](../region.py)、[RegionState.finish:outer](../region.py)、[RegionState.finish:vertices](../region.py) | 最终顶点为 kW；`inner` 各项另含 `choice/cost`；`outer` 为全局外包络 |
 | `status`、`counts`、`timing` | [build_continuous_region:status](../main.py)、[build_continuous_region:counts](../main.py)、[build_continuous_region:timing](../main.py) | 成功返回 `certified`，未完成改为异常；旧 `unknown/time_limit` 记录保留；`sp/cuts` 次数；`total_seconds` 秒 |
 | 三态网格 | [BenchmarkResult.states](../plot.py) | `(len(METHODS), n_budgets, N_g, N_g, N_g)`，`-1/0/1` |
@@ -318,12 +318,12 @@ SP 直接使用 `eta` 目标、`Aggregate=0`、`ScaleFlag=0`、`BarQCPConvTol=1e
 | AC 运行限值容差 | [AC_TOL](../vertify.py) | `1e-9`，标幺尺度 |
 | AC 电流等式迭代容差 | [FIXED_POINT_TOL](../vertify.py) | `1e-12`，\(P^2+Q^2-u\ell\) 残差尺度 |
 | AC 显式全局参照模型认证容差 | [GLOBAL_AC_TOL](../vertify.py) | `1e-7`，用于残差与运行违反量 |
-| 径向收缩 \(\tau\) | [REGION_TAU](../main.py) | `0.002`，`0 <= tau < 1` |
+| 径向收缩 \(\tau\) | [REGION_TAU](../main.py) | `0.005`，`0 <= tau < 1` |
 | MP2 目标间隙容差 | [MasterProblem.solve.radial_gap_kw](../model.py) | `1e-3` kW；保留既有参数名，仅用于目标间隙判定，不再修改负荷，不是 `tau` |
 | 单次 MP / SP / 剩余域 / AC 时限 | [MP_TIME_LIMIT](../model.py)、[SP_TIME_LIMIT](../model.py)、[RESIDUAL_TIME_LIMIT](../model.py)、[AC_TIME_LIMIT](../vertify.py) | 秒；SP 按方法取值 |
 | 整体时限、线程 | [CASE_TIME_LIMIT](../main.py)、[SOLVER_THREADS](../main.py)、[DEFAULT_SOLVER_THREADS](../model.py) | 秒、正整数；混合阶段共享整体时限 |
 | 全局搜索间隔、AC 迭代上限 | [REFINEMENT_CHECKS](../main.py)、[AC_ITERATIONS](../vertify.py) | 正整数；前者为自上次全局搜索以来的 SP 次数，活动见证处理完后生效 |
-| 算例 / 升级数 / 预算 / 剩余域模式 | [NETWORK](../main.py)、[UPGRADE_COUNT](../main.py)、[BUDGETS](../main.py)、[RESIDUAL_MODE](../main.py) | 配置，不另创造数学决策变量 |
+| 算例 / 升级数 / 预算 / 剩余域模式 | 原 `NETWORK/UPGRADE_COUNT/BUDGETS` 入口于 2.1 退役；当前 [main](../main.py)、[BUDGET](../main.py)、[RESIDUAL_MODE](../main.py)，见第 33 节 | 默认二维 FourBus、单预算；其他算例仍可单独使用其类 |
 
 数值取值以对应代码常量为准；调整时同步本表及结果元数据说明。不得将不同语义的容差合成一个通用 `tol` 后改变认证口径。
 
@@ -634,3 +634,100 @@ FourBus 中零潮流、v=1、压降松弛为零满足全部 SP 硬约束，故 e
 | 实际含初始化算法时间 | [run_mainline_comparison:total_seconds](../experiments/fourbus_mainline_comparison.py) | 秒；主线直接取 `timing.total_seconds`，分块取 `seconds+initial_seconds`；事后几何射线分析不计入 |
 
 其余射线容量差、相对误差、三角网格体积估计继续采用第 26、29 节名称和定义。参考射线复用同一未变化物理模型的第 29 节独立求解数据；所有重复运行均计算误差，保存逐次结果和中位数/范围。图形使用其中耗时位于中位数的实际运行展示三维域，误差曲线保留全部重复运行，耗时图显示全部观测值。
+
+## 31. 主线顶点 SP 违反量排序实验
+
+`experiments/fourbus_vertex_priority.py` 独立实现主线的 SOCP 循环，复用物理约束、联合割代数、同网架见证支撑、几何更新及 `RemainingRegionModel`。生产 `main.py/model.py/region.py` 不变。普通候选仍为已知网架收缩外域顶点中未被认证内域并集覆盖的 `(x, point)`，其中 `point` 是归一化坐标；评分在实际负荷 `power=point*bounds` 上求解。
+
+每轮固定候选集合，对所有候选求原始 SOCP 最小 eta；先收集所有可行证书，再在仍未被并集覆盖的不可行候选中按 eta 最大、实际总负荷最大、x/point 字典序依次排序，只加入获选割。其他结果以精确 `(x, power)` 元组缓存，后续相同参数复用；不对浮点坐标四舍五入。SOCP 后的支撑平面 LP 目标不作为评分。活动全局见证仍按主线的同方案支撑顺序处理。全局检查间隔按实际新求解的 SP 次数累计，结束必须取得原来的覆盖证书，绝不使用评分阈值代替。
+
+| 数学量 / 定义 | 固定代码映射 | 单位、形状与用途 |
+|---|---|---|
+| eta*(x,p)，原始 SOCP 最优违反量 | [ScoredSubProblem.solve:eta](../experiments/fourbus_vertex_priority.py) | 原 SP 残差尺度；在替换锥为支撑平面前保存，用于候选排序 |
+| 已计算的固定参数 SP 结果 | [ScoredSubProblem.cache](../experiments/fourbus_vertex_priority.py) | 精确 `(tuple(x), tuple(power))` 为键，值含 eta/feasible/state/cut；割布局、运行状态及可行标准不变 |
+| 缓存命中次数 | [ScoredSubProblem.cache_hits](../experiments/fourbus_vertex_priority.py) | 整数；不计入实际 SP 求解次数 `calls` |
+| 候选评分轮次 | [build_vertex_priority_region.scoring_rounds](../experiments/fourbus_vertex_priority.py) | 一次固定普通候选集的批量评分算一轮 |
+| 全局剩余域调用次数 | [build_vertex_priority_region.global_search](../experiments/fourbus_vertex_priority.py) | 次；仍使用 light 模式、原 tau 和 GEOMETRY_TOL |
+| 每轮待评分候选数 | [build_vertex_priority_region:candidate_count](../experiments/fourbus_vertex_priority.py) | 次；包括复用缓存的候选，不能当成新 SP 次数 |
+| 实验联合割与计算轨迹 | [build_vertex_priority_region:cuts](../experiments/fourbus_vertex_priority.py)、[build_vertex_priority_region:trace](../experiments/fourbus_vertex_priority.py) | 割保持 `[alpha,*beta,*delta]`；轨迹保存选点/评分/全局覆盖检查，不保存运行状态向量 |
+
+对照直接调用原主线；两方法均为 FourBus、预算 20,000 元、tau=0.002、求解器 4 线程、数值库 1 线程，独立初始化、重复 3 次。含初始化总耗时只统计算法，不含事后参考射线核验与绘图。比较实际返回的认证内域与最终外包络；第 30 节的逐射线容量、内域低估和外域高估定义不变。全部 861 条 SOCP 参考射线仅用于事后评价，不参与候选评分或停止。
+
+## 32. 全局搜索间隔与低违反量触发实验
+
+仅为第 31 节独立实验增加调度参数；默认值保持原算法及证书。`experiments/fourbus_global_schedule.py` 对比间隔 96、32、16，以及每个间隔叠加低违反量触发的配置。全部配置仍须取得原来的全局覆盖证书，eta 阈值只决定何时重新搜索，不接受 eta<0.01 为物理可行或构域完成。
+
+| 数学量 / 定义 | 固定代码映射 | 单位、形状与用途 |
+|---|---|---|
+| 两次全局搜索之间的实际新增 SP 次数阈值 | [build_vertex_priority_region.refinement_checks](../experiments/fourbus_vertex_priority.py) | 默认 `REFINEMENT_CHECKS=96`；实验取 96/32/16；检查发生于评分批次或当前见证支撑处理结束后，不是逐个 SP 的强制中断 |
+| 普通候选最大 eta 的全局搜索触发阈值 | [build_vertex_priority_region.eta_trigger](../experiments/fourbus_vertex_priority.py) | 默认 `None` 禁用；启用为 0.01，使用原始 SP 残差尺度，不是 kW 或几何误差 |
+| 是否已请求下一轮全局搜索 | [build_vertex_priority_region.global_requested](../experiments/fourbus_vertex_priority.py) | 布尔调度状态；仅普通评分轮选中点的 eta 严格小于 eta_trigger 时设置，全局搜索后清除 |
+| 全局搜索本次触发原因 | [build_vertex_priority_region:trigger](../experiments/fourbus_vertex_priority.py) | 字符串列表：`empty` 为普通候选空，`interval` 为新增 SP 达阈值，`eta` 为低违反量请求；允许多个原因同时成立 |
+| 首次全局搜索前的实际 SP 数 | [run_global_schedule_comparison:first_global_sp](../experiments/fourbus_global_schedule.py) | 次；来自首条全局轨迹的累计 sp，用于核实批处理后的实际触发时刻 |
+| 各原因实际出现次数 | [run_global_schedule_comparison:trigger_counts](../experiments/fourbus_global_schedule.py) | 按 empty/interval/eta 计数；原因非互斥，不能相加替代 global_search |
+
+低违反量判定为：先收入本批全部可行证书，再在仍未覆盖的不可行候选集合上取最大 eta；这个最大值小于阈值时，先应用已经取得的获选有效割，然后下一轮请求全局搜索。不能因某一个非最大候选 eta 很小而跳过其他严重违反者；活动全局见证的支撑 SP 也不单独触发该规则，避免打断同网架覆盖进展。无剩余不可行候选时沿用候选空触发。
+
+迁移范围：`build_vertex_priority_region` 只增加可选参数及结果元数据 `refinement_checks/eta_trigger`、轨迹 `trigger`；原有字段含义、默认选点、数值容差、联合割和最终包络不变。旧实验记录不补写未知触发原因。比较继续采用第 30、31 节的耗时和逐射线误差字段，普通候选最大 eta 不命名为全局 R_k 上界。
+
+## 33. 主线顶点评分与原生窗口迁移（2026-09-27）
+
+本节覆盖前述历史版本的入口、记录与展示约定，历史实验数据不改写。
+
+- `build_continuous_region` 的普通候选按原始 SP 最优违反量 `eta` 降序选割；先收入该批全部可行点，再移除已被任一内域覆盖的候选。内部见证仍补同一网架支撑，不能跨网架取凸包。
+- [REFINEMENT_CHECKS](../main.py) 改为 32，计数仅含实际新增 SP 求解，缓存命中不计数；评分批次及活动见证完成后检查。生产算法没有 `eta_trigger`，没有 0.01 调度或停止阈值；终止仍须全局覆盖证书。
+- [SubProblem.solve:eta](../model.py) 新增为原始 SP（替换锥之前）的最优违反量，无量纲；已有 `feasible/state/cut` 不改名。主线以 `(tuple(x), tuple(power))` 为精确缓存键，不对负荷取整；缓存属于本次构域，不落盘。
+- [FourBus.__init__.load_nodes](../Network/four_bus_five_corridor.py) 新增可选负荷节点参数，类默认仍为 `(1,2,3)`，以保留既有三维实验。`main.main` 显式传 `(1,2)`；节点 3 的有功、无功均固定为原始值 0，仍是必须连接的节点。这是二维切片，不是将第三负荷投影消去。
+- `main.run` 改为单预算 SOCP 入口；旧 `budgets/recompute/keep_ui/step_by_step`、多网络选择常量与 `BenchmarkResult` 结果入口退役。`build_continuous_region` 保留物理模型入口和历史调用所需的 `method/residual_mode/cuts/progress/clock`，默认主线只传 `socp/light`。旧勘察仍可单独调用 `survey.py`。
+- `max_point/max_choice/max_cost` 退役：初始化点、网架与费用已经保存在监视器的几何帧中，不再在最终结果重复保留。`max_total/max_total_bound/axis_bounds/coverage_bound/status/counts/timing/inner/outer` 名称与单位不变。
+- [RunMonitor](../monitor.py) 接管计时、精简阶段帧、原生窗口和回放。构域通过 `begin/initializing/seed/selecting/global_start/global_end/sp_start/sp_end/updated/finish` 跟踪。`progress` 函数回调仍由监视器桥接，算法不组装文字报告。
+- 新运行只保存一个 `monitor.json.gz`：基础坐标信息和增量 `history` 帧；最终帧含结果和扫描数组。退出或失败由监视器保存同一文件，不生成 HTML、JSONL、报告或单独结果副本。旧 HTML 回放不作为新窗口输入。
+- 橙色点附其实际 SP 调用序号 `number`；采用缓存割时仍显示原序号，顶部 `sp` 仅表示累计新增求解次数，两者不能混淆。
+- 总图内域是已认证网架内域的几何并集。全局认证前，安全全局外包络仍为 MP2 的轴向及总量界；不能把已知网架外域并集误称为全体网架的外域。每网架面板显示自身联合割条件外域；全局认证后总图外包络采用 `RegionState.finish(True)`。
+
+| 新增量 | 代码映射 | 定义 |
+|---|---|---|
+| 单次运行预算 | [BUDGET](../main.py)、[run.budget](../main.py) | FourBus 默认 20000 元 |
+| 独立 SOCP 扫描 | [validate_socp_region](../vertify.py) | 固定每个二维网格中心的 `p`，完整 MISOCP 自由选择全部合法 `x,y`；不用构域割或已知方案列表 |
+| 扫描标签 | [validate_socp_region:states](../vertify.py) | `(divisions, divisions)`，1 可行，-1 不可行；不是 AC 真值 |
+| 多余 / 遗漏百分比 | [RunMonitor.validation:fr_percent](../monitor.py)、[RunMonitor.validation:mr_percent](../monitor.py) | 保留原分母：FR = 多余格点/算法内域格点；MR = 遗漏格点/扫描可行格点，均乘 100；空分母为 None |
+| 全局 / SP 点 | [RunMonitor.global_end](../monitor.py)、[RunMonitor.sp_start](../monitor.py) | 实际 kW 坐标分别记录，不互相覆盖；红色菱形 / 橙色圆点；SP 支撑点可不同于全局见证 |
+
+扫描精度由 `DIVISIONS` 决定；网格百分比是离散估计，不能把 0% 解读为连续域完全无误差。最终仍保留径向精度 `tau` 与全局覆盖上界。
+
+几何数值迁移：`polytope_vertices/clip_polytope/halfspaces/polytope_volume` 在仿射独立方向上用坐标列范数作一次确定的缩放后调用 Qhull；没有失败后重试。顶点仍返回原始坐标，体积乘回缩放行列式，半空间法向量换回原坐标后重新归一化为单位向量。原 `GEOMETRY_TOL` 的归一化坐标含义、维数判定和联合割符号保持不变。此预条件化保留凸包的仿射结构，不把极薄非零体积抹成零。
+
+## 34. 二维割线回放与独立校验面板（2026-09-27）
+
+- 联合割仍为 `[alpha,*beta,*delta]`，保留侧为 `alpha+beta@p+delta@x >= 0`。二维网架截线为 `beta@p+(alpha+delta@x)=0`，p 的单位仍为 kW；同一条割在各网架中分别代入该网架 x。负荷系数为零时不存在二维直线，不虚构切割线。
+- [RunMonitor._geometry:x](../monitor.py) 在网架记录中增加二进制型号向量，顺序、长度与 `Network.type_keys` 相同，仅用于准确代入联合割。
+- [RunMonitor.updated:cut_history](../monitor.py) 按割序号增量记录 `cut` 原始系数及来源 `scheme`，每条割只记录一次。初始化传入的割由 `begin` 记录，来源未知记为 None。绘图函数 [_cut_segment](../monitor.py) 只将该条件直线裁到当前显示框，不改变算法几何或容差。
+- 当前割在网架子图为紫色实线，历史割为淡紫虚线；加割帧中浅紫色表示该网架前后条件外域之差。总图只叠加当前割在来源网架下的截线，明确注明网架，绝不把该直线用作全局负荷半空间。已知网架条件外域并集与安全全局外包络分别显示。
+- 回放格式迁移到 version=4：`history` 只包含构域帧；[RunMonitor.validation_state](../monitor.py) 单独保存当前扫描进度和最终校验结果，仍写在同一个 `monitor.json.gz`。扫描和完成回调不增加时间轴帧，最终对比不随回放位置变化。旧 version=3 回放读取时分离扫描帧；旧文件未记录的割系数不补造。
+- [main.case](../main.py) 支持 `fourbus` / `case33`。Case33 使用既有 `Case33(load_nodes=(18,25))`，默认 4 个升级候选、预算 2 相对投资单位；节点 33 及其余非动态负荷保持原始有功/无功。独立扫描默认 20×20，FourBus 仍为 80×80。两入口仅计算二维切片，沿用 SOCP、32 次新增 SP 调度及相同全局覆盖证书。
+- 入口迁移（2026-09-28）：恢复单一案例选择项 [NETWORK](../main.py)，取类 `FourBus` 或 `Case33`，默认 `FourBus`。`main(case=None)` 及未指定 `--case` 的脚本启动使用 `NETWORK`；显式 `case` / `--case` 覆盖它，沿用上条的二维配置与结果路径。
+- 初始化 MP2 使用本次构域的剩余时限，不再额外受 20 秒的单次 MP 默认上限截断。FourBus 总构域时限仍为 300 秒，Case33 为 900 秒；SP 和全局搜索仍受原单次上限及剩余总时限约束。超时仍直接报告失败，不接收超时解、不重试、不降低求解精度。
+- 网架子图按每页 4 个显示，并复用最多 4 个绘图区；改变选中网架时自动定位页面。分页只影响界面，不删减记录中的网架、割或历史帧。未取得构域证书的运行保留完整切割轨迹，校验面板明确显示未完成，不填造百分比。
+
+## 35. 径向精度默认值调整（2026-09-28）
+
+`REGION_TAU` 从 0.002 调到 0.005，含义仍为径向收缩比例，不增加距离参数或修改 SP 的 eta / 物理接受容差。普通候选外域顶点 p 满足 `(1-tau)*p` 落入某个已认证内域时跳过 SP；全局剩余域模型及最终 `RegionState.finish` 外包络继续使用同一 tau。终止仍须全局上界证书，不能仅凭所有已知顶点被跳过就结束。
+
+被跳过的薄层没有获得运行可行性证书，不加入 `inner`；最终 `outer` 按原公式包含径向精度及几何数值容差。结果中的 `tau` 保留实际使用值，旧回放和历史实验中的 0.002 不改写。该调整以降低边界分辨率减少 SP 次数，不宣称同精度加速，也不把 0.5% 解释为面积遗漏率。
+
+## 36. FourBus 已有网架优先实验（2026-09-28）
+
+`experiments/fourbus_known_first.py` 独立实现二维 SOCP 调度，不修改生产主线。令 `I` 为已有网架认证内域的并集，`I_tol` 为每个内域逐面按既有 `GEOMETRY_TOL` 放宽后再取并集。进入全局搜索前要求每个已有网架满足 `(1-tau)O_x ⊆ I_tol`。普通候选仍为未覆盖的收缩外域顶点；顶点全部被覆盖后，用半空间逐次相减，把剩余域分解为凸块，以凸块顶点均值选取内部未覆盖见证。该均值只作几何见证，SP 复用 `RegionState.witness_support` 选择尚未被当前网架自身认证的最大总负荷支撑点，避免逐次认证中心点只能渐进填补孔洞。不能仅以顶点覆盖、剩余面积较小或 SP 次数判定已有网架完成。
+
+局部 SP 固定 x,p，复用原 SOCP、eta 判据及联合割；每批先收入全部可行点，再应用 eta 最大的一条割。普通顶点已被并集覆盖时跳过该候选；内部见证的支撑点按当前网架自身内域判断，不能把其他网架的认证点直接纳入当前网架凸包，因此其失败割也仍须更新条件外域。几何相减只负责选点及局部覆盖判断，不产生物理可行证书。全局搜索固定采用 `physical`，允许全部合法 x,p,y 自由变化；返回的完整可行点立即加入其自身网架内域，再恢复局部探索。终止仍使用 `RemainingRegionModel` 的全局覆盖上界，tau、GEOMETRY_TOL、PLANNING_TOL 和割布局均保持不变。
+
+| 数学量 / 定义 | 固定代码映射 | 单位、形状及用途 |
+|---|---|---|
+| 一个凸候选域减去内域并集后的凸块 | [remaining_cells](../experiments/fourbus_known_first.py) | 归一化二维顶点数组列表；逐个内域、逐个面分割，保留低维剩余块，不用面积阈值删除 |
+| 已有网架下一批待认证候选 | [known_candidates](../experiments/fourbus_known_first.py) | `(x, point)` 列表；point 为归一化坐标，SP 前乘 bounds；返回的 `interior` 区分顶点批次和内部剩余块批次 |
+| 已有网架完整剩余检查次数 | [build_known_first_region:known_checks](../experiments/fourbus_known_first.py) | 次；顶点批次为空后执行一次全域几何检查，不是全局优化次数 |
+| 内部剩余候选的实际新增 SP 数 | [build_known_first_region:hole_checks](../experiments/fourbus_known_first.py) | 次；包含孔洞或顶点之间的缺口，缓存命中不计数 |
+| 构域期间登记的网架数 | [build_known_first_region:schemes](../experiments/fourbus_known_first.py) | 整数；包括所有登记记录，不按非空内域反推 |
+| 重复运行的最简比较记录 | [run_comparison.comparison](../experiments/fourbus_known_first.py) | 保存每次运行的 `total_seconds/counts/coverage_bound/fr_percent/mr_percent/volume_gap`；volume_gap 在二维使用面积测度，仍是比例 |
+
+对照直接调用当前 `main.build_continuous_region`：32 次 SP 调度、相同 physical 全局模型、预算 20000 元、负荷节点 (1,2)、tau=0.005、每种方法独立初始化、4 个求解器线程、数值库 1 线程，默认交替顺序重复 3 次。构域时间含初始化和监视记录，不含独立扫描、事后审计或绘图。双方共同使用一次 80×80 完整 SOCP 扫描，不限制参考网架、不使用构域割。每种方法仅保存耗时中位数对应的一份原生 monitor 回放；比较记录写入其 validation_state，不另建报告或逐轮日志。

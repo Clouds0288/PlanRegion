@@ -298,9 +298,10 @@ class SubProblem:
                 raise RuntimeError(f'SP {equations.method}: status={model.Status}, x={np.asarray(x).tolist()}, p={np.asarray(power).tolist()}')
             if model.MaxVio > PLANNING_TOL:
                 raise RuntimeError(f'SP {equations.method}: MaxVio={model.MaxVio:g} > {PLANNING_TOL:g}, p={np.asarray(power).tolist()}')
-            # 3. eta=0 对应原约束；松弛量与求解误差共用容差，返回原始状态
+            # 3. 保存原始最小违反量供顶点评分；不能用后续切平面 LP 的值替代。
+            value = float(eta.X)
             if np.maximum(0., eta.X)+model.MaxVio <= PLANNING_TOL:
-                return dict(cut=None, state=operation.state.X, feasible=True)
+                return dict(cut=None, state=operation.state.X, feasible=True, eta=value)
             if eta.X <= PLANNING_TOL:
                 raise RuntimeError(f'SP {equations.method}: eta={eta.X:g}, MaxVio={model.MaxVio:g}; certificate exceeds tolerance')
             # 4. 正 eta 对应不可行候选；建立锥支撑平面 LP 以取得对偶割。
@@ -321,7 +322,7 @@ class SubProblem:
                 raise RuntimeError(f'SP cut LP: objective={model.ObjVal:g}, MaxVio={model.MaxVio:g}')
             # 5. 组合 LP 乘子，返回能分离该候选点的联合割
             cut = self._separating_cut(model, operation, choice, p, [*fixed_x.values(), *fixed_p.values()], x, power)
-            return dict(cut=cut, state=None, feasible=False)
+            return dict(cut=cut, state=None, feasible=False, eta=value)
 
     def _separating_cut(self, model, operation, choice, power_vars, fixed, x, power):
         """按行方向组合必要约束，以运行变量全局盒消去 y，得到 α+βᵀp+δᵀx>=0。"""

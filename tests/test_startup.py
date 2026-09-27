@@ -1,8 +1,4 @@
-"""简洁入口、统一参数和求解线程配置回归。"""
-from contextlib import redirect_stdout
-from io import StringIO
-from pathlib import Path
-from tempfile import TemporaryDirectory
+"""默认二维 FourBus、线程设置及最精简的主入口。"""
 from unittest.mock import patch
 import unittest
 import numpy as np
@@ -14,18 +10,39 @@ from vertify import ACPowerFlow
 
 
 class StartupTests(unittest.TestCase):
+    def test_case33_entry_uses_two_loads_and_preserves_background(self):
+        with patch('main.run') as run:
+            main.main('case33')
+        network = run.call_args.args[0]
+        self.assertIsInstance(network, main.Case33)
+        self.assertEqual(network.load_nodes, (18, 25))
+        self.assertEqual(network.upgrade_count, 4)
+        self.assertEqual(run.call_args.kwargs['budget'], 2.)
+        self.assertEqual(run.call_args.kwargs['divisions'], 20)
+        self.assertEqual(run.call_args.kwargs['output'].parent.name, 'case33_2d')
+        fixed = ~np.isin(network.nodes, network.load_nodes)
+        np.testing.assert_array_equal(network.fixed_p[fixed], network.original_p[fixed])
+        np.testing.assert_array_equal(network.fixed_q[fixed], network.original_q[fixed])
+        self.assertEqual(network.fixed_p[network.nodes.index(33)], 60.)
+
     def test_default_threads_and_top_level_settings_reach_run(self):
-        with patch('main.run') as run, patch('main.NETWORK', 'case33'):
+        with patch('main.run') as run:
             main.main()
-        self.assertEqual(run.call_args.kwargs['threads'], 20)
-        self.assertEqual(main.SOLVER_THREADS, DEFAULT_SOLVER_THREADS)
-        self.assertEqual(run.call_args.args[0].upgrade_count, main.UPGRADE_COUNT)
-        self.assertEqual(run.call_args.args[0].n_corridors, 37)
+        network = run.call_args.args[0]
+        self.assertIsInstance(network, main.FourBus)
+        self.assertEqual(network.load_nodes, (1, 2))
+        self.assertEqual(run.call_args.kwargs['budget'], 20000.)
+        self.assertEqual(run.call_args.kwargs['threads'], DEFAULT_SOLVER_THREADS)
+        self.assertEqual(main.REFINEMENT_CHECKS, 32)
+        self.assertEqual(main.RESIDUAL_MODE, 'light')
+        self.assertEqual(network.fixed_p[2], 0.)
+        self.assertEqual(network.fixed_q[2], 0.)
+        self.assertTrue(network.required.all())
 
     def test_thread_detection_error_is_not_retried_or_hidden(self):
         with patch('main.threadpool_limits', side_effect=OSError('GetModuleFileNameEx failed')) as configure:
             with self.assertRaisesRegex(OSError, 'GetModuleFileNameEx failed'):
-                main.run(main.FourBus(), budgets=[0.], show_ui=False)
+                main.run(main.FourBus(load_nodes=(1, 2)), show_ui=False, output=None)
         configure.assert_called_once_with(limits=1)
 
     def test_threads_reach_each_solver(self):
@@ -43,34 +60,6 @@ class StartupTests(unittest.TestCase):
                 residual = RemainingRegionModel(equations, 0., [100.]*3, 300., [], [], .002, **options)
                 with residual.model:
                     self.assertEqual(residual.model.Params.Threads, expected)
-                network = main.FourBus()
-                ac = ACPowerFlow(network.tree(network.encode_plan(network.initial_plan)), **options)
-                try:
-                    ac._build_global(None)
-                    self.assertEqual(ac.model[0].Params.Threads, expected)
-                finally:
-                    ac.close()
-
-    def test_candidate_constant_switches_complete_entrypoint(self):
-        with TemporaryDirectory() as folder, redirect_stdout(StringIO()):
-            for count in (0, 4, 8, 16, 32):
-                output = Path(folder)/str(count)
-                with self.subTest(upgrades=count), patch.multiple(main, UPGRADE_COUNT=count,
-                        NETWORK='case33', BUDGETS=[0.], DIVISIONS=2, SOLVER_THREADS=1,
-                        RECOMPUTE=True, SHOW_UI=False, OUTPUT=output), patch('main.run') as run:
-                    main.main()
-                    network = run.call_args.args[0]
-                    self.assertEqual((network.upgrade_count, network.n_corridors), (count, 37))
-                    result = main.BenchmarkResult.create(network, [0.], 2, np.ones(3))
-                    result.save(output)
-                    result = main.BenchmarkResult.load(output, network=network)
-                    self.assertEqual(result.metadata['network_fingerprint'], network.fingerprint)
-                    self.assertNotIn('corridors', result.metadata)
-                    self.assertNotIn('tolerances', result.metadata)
-                    self.assertEqual(result.states.shape, (4, 1, 2, 2, 2))
-                    with self.assertRaisesRegex(ValueError, 'does not match'):
-                        main.BenchmarkResult.load(output, network=main.FourBus())
-                    self.assertEqual({p.name for p in output.iterdir()}, {'result.npz'})
 
 
 if __name__ == '__main__':

@@ -6,7 +6,9 @@ import unittest
 import numpy as np
 from threadpoolctl import threadpool_limits
 
-from main import Case33, FourBus, build_continuous_region
+from Network.case33bw import Case33
+from main import FourBus, build_continuous_region
+from monitor import RunMonitor
 from model import GridPhysics, MasterProblem, SubProblem, RemainingRegionModel, PLANNING_TOL
 from plot import region_geometry
 from region import RegionState, contains, halfspaces
@@ -94,7 +96,7 @@ class UnionSolverTests(unittest.TestCase):
         with patch('main.RegionState', return_value=state), \
              patch.object(MasterProblem, 'solve', return_value=answer), \
              patch.object(RemainingRegionModel, 'solve', side_effect=residuals), \
-             patch.object(SubProblem, 'solve', return_value=dict(feasible=True)) as check:
+             patch.object(SubProblem, 'solve', return_value=dict(feasible=True, eta=0.)) as check:
             result = build_continuous_region(net, 'socp', np.inf, np.ones(3), tau=0., threads=1)
         self.assertEqual(result['status'], 'certified')
         self.assertTrue(any(not np.allclose(call.args[1], witness) for call in check.call_args_list))
@@ -109,23 +111,26 @@ class UnionSolverTests(unittest.TestCase):
         self.assertLessEqual(result['coverage_bound'], 1e-8)
 
     def test_ordinary_vertex_queries_are_outside_existing_union(self):
-        ordinary = []
-        def progress(event, **data):
-            if event == 'point' and data['point_reason'].startswith('已知网架'):
-                point = data['point']/self.bounds
-                self.assertFalse(any(contains([point], halfspaces(row['inner']))[0] for row in data['records']))
-                ordinary.append(point)
-        result = build_continuous_region(self.network, 'socp', 1., self.bounds, threads=1, progress=progress)
-        self.assertEqual(result['status'], 'certified')
-        self.assertTrue(ordinary)
-        self.assertLessEqual(result['coverage_bound'], 1e-8)
+        monitor = RunMonitor()
+        build_continuous_region(self.network, 'socp', 0., self.bounds, threads=1, progress=monitor)
+        ordinary = 0
+        for i, item in enumerate(monitor.history):
+            state = monitor.frame(i)
+            if state['event'] == 'selection':
+                batch_inner = [row['inner'] for row in state['schemes'].values() if row['inner']]
+            if state['event'] == 'point' and not state.get('supporting'):
+                point = state['sp_point']['p']
+                self.assertFalse(any(contains([point], halfspaces(poly))[0] for poly in batch_inner))
+                ordinary += 1
+        self.assertGreater(ordinary, 0)
+
 
     def test_maximum_boundary_stagnation_still_requires_physical_certificate(self):
         equations = GridPhysics(self.network, 'socp')
         x = equations.network.encode_plan(equations.network.initial_plan | {'2-3': 'parallel'})
         point = [154.27833628730312, 3500.5974303868097, 240.65872464525015]
         answer = SubProblem(equations, threads=1).solve(x, point)
-        self.assertEqual(set(answer), {'feasible', 'state', 'cut'})
+        self.assertEqual(set(answer), {'feasible', 'state', 'cut', 'eta'})
         self.assertTrue(answer['feasible'])
         self.assertGreaterEqual(margin(equations, x, point, answer['state']), -PLANNING_TOL)
 

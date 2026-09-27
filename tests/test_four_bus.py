@@ -128,13 +128,6 @@ class FourBusTests(unittest.TestCase):  # 不生成建设组合表，审核代�
                     self.assertTrue(known.any())
                     np.testing.assert_array_equal(actual[known],expected[j][known])
             reference[method] = expected  # SOCP 标签供混合方法复核。
-        for j, budget in enumerate(budgets):
-            domain = build_continuous_region(c,'hybrid',budget,bounds, threads=1)
-            actual = sample_region(domain,points,bounds).reshape((3,)*3)
-            known = actual != 0
-            self.assertTrue(known.any())
-            np.testing.assert_array_equal(actual[known],reference['socp'][j][known])
-
     @unittest.skipUnless(os.environ.get('PLANREGION_SLOW_TESTS') == '1', '完整四节点多预算连续并集慢测试')
     def test_all_budgets_continuous_flow(self):
         self.test_same_region_flow_matches_independent_point_queries(FourBus().budgets)

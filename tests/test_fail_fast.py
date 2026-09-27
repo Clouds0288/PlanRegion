@@ -82,12 +82,15 @@ def test_ac_nonconvergence_does_not_start_global_solver():
 
 
 def test_main_records_failure_and_does_not_publish_result(tmp_path):
-    with redirect_stdout(StringIO()), patch('survey.run_survey', side_effect=RuntimeError('solver probe')) as solve:
+    from monitor import RunMonitor
+    output = tmp_path/'monitor.json.gz'
+    with patch('main.build_continuous_region', side_effect=RuntimeError('solver probe')) as solve:
         with pytest.raises(RuntimeError, match='solver probe'):
-            main.run(main.Concept5(), output=tmp_path, show_ui=False, threads=1)
+            main.run(main.FourBus(load_nodes=(1, 2)), output=output, show_ui=False, threads=1)
     solve.assert_called_once()
-    frames = [json.loads(line) for line in (tmp_path/'steps.jsonl').read_text(encoding='utf-8').splitlines()]
-    assert frames[-1]['patch']['status'] == 'failed'
-    assert 'solver probe' in frames[-1]['patch']['message']
-    assert (tmp_path/'live_view.html').exists()
-    assert not (tmp_path/'results.json').exists()
+    monitor = RunMonitor()
+    monitor.load_recording(output)
+    assert monitor.state['status'] == 'failed'
+    assert 'solver probe' in monitor.state['error']
+    assert 'result' not in monitor.state
+    assert [p.name for p in tmp_path.iterdir()] == ['monitor.json.gz']
