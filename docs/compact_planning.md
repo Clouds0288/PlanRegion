@@ -6,7 +6,7 @@
 
 ## 数据流与索引
 
-`Network` 保存物理参数及唯一索引；`PlanningEquations.add_operation` 添加逐节点、逐走廊的具名 Gurobi 物理约束，MP 与 SP 共用该入口；`PlanningModel` 添加拓扑、预算及查询目标。选定的 `x` 直接生成 `OperatingTree`，供状态恢复和独立 AC 校验使用。
+`Network` 保存物理参数及唯一索引；`GridPhysics.add_operation` 添加逐节点、逐走廊的具名 Gurobi 物理约束，MP 与 SP 共用该入口；`MasterProblem` 添加拓扑、预算及查询目标。选定的 `x` 直接生成 `OperatingTree`，供状态恢复和独立 AC 校验使用。
 
 | 索引 | 对象 | 数据与变量 |
 |---|---|---|
@@ -128,11 +128,11 @@ Ax+By+Cp\preceq_{\mathcal K}b,\qquad
 l_0+Lx\le y\le u_0+Ux.
 \]
 
-上述 A/B/C、L/U 是整体数学表达；当前 `PlanningEquations` 不提供这些同名属性。Gurobi 建模使用 `P[e,k]`、`Q[e,k]`、`ell[e,k]`、`v[i]`、`plus[e]`、`minus[e]`；`P_slice/Q_slice/ell_slice/v_slice/slack_slice` 仅描述同一运行状态的扁平布局。
+上述 A/B/C、L/U 是整体数学表达；当前 `GridPhysics` 不提供这些同名属性。Gurobi 建模使用 `P[e,k]`、`Q[e,k]`、`ell[e,k]`、`v[i]`、`plus[e]`、`minus[e]`；`P_slice/Q_slice/ell_slice/v_slice/slack_slice` 仅描述同一运行状态的扁平布局。
 
 当前 SP 固定 x/p，以 `eta`（求解器名称 `violation`）度量功率平衡与压降等式的违反量：仅这些等式允许 ±eta，选型容量、电压界、开断余量、电源限额和锥约束保持严格。未选型号保持零潮流，Gurobi 可直接消去其退化锥。取零潮流、限值内电压和足够大的 eta 即可满足辅助问题，eta=0 恢复原物理约束。不能用旧实现“仿射盒严格、SOC 首分量松弛”的行顺序或乘子解释当前 SP。
 
-SP 存在解且 `max(0, eta.X) + model.MaxVio <= PLANNING_TOL` 时直接返回求解器状态，松弛量和求解误差共用接受容差；不再沿树重建状态或固定 eta=0 后追加损耗最小化。其余情况仍用锥支撑平面构造 LP，读取线性行乘子生成联合割；正 eta 的中间解本身不充当不可行证书。eta 目标乘 1000 改善数值尺度，取割共用原 SP 时限；没有运行证书或有效割则返回未确定。Gurobi 二次约束违反量与旧 SOC 范数残差的尺度区别，以及测试检查器的迁移，见 [规范第 12 节](notation.md#12-11-迁移记录直接返回求解器结果)。
+SP 求解达到 `OPTIMAL` 后，若 `max(0, eta.X) + model.MaxVio <= PLANNING_TOL`，直接返回求解器状态，松弛量和求解误差共用接受容差。精度合格且 eta 为正时，用锥支撑平面构造 LP，读取线性行乘子生成联合割；这是正常的取割步骤，正 eta 的中间解本身不充当不可行证书。eta 目标乘 1000 改善数值尺度，取割共用原 SP 时限。求解异常、精度不足或无法生成有效割均报错，不追加求解。Gurobi 二次约束违反量与旧 SOC 范数残差的尺度区别，以及测试检查器的迁移，见 [规范第 12 节](notation.md#12-11-迁移记录直接返回求解器结果)；失败处理变更见规范第 23 节。
 
 ## 联合割的有效性
 
@@ -167,7 +167,7 @@ SP 存在解且 `max(0, eta.X) + model.MaxVio <= PLANNING_TOL` 时直接返回�
 
 ## 查询、验证与历史数据
 
-MP2 在预算内最大化总负荷，MP1 在固定负荷或最低总负荷条件下最小化 \(c^Tx\)。主流程直接调用 `PlanningModel.solve`，以建模参数 `power/min_total` 区分目标；连续域流程见 [连续构域说明](continuous_region.md)。
+MP2 在预算内最大化总负荷，MP1 在固定负荷或最低总负荷条件下最小化 \(c^Tx\)。主流程直接调用 `MasterProblem.solve`，以建模参数 `power/min_total` 区分目标；连续域流程见 [连续构域说明](continuous_region.md)。
 
 固定原拓扑、交错升级和全升级的 Case33 方案使用独立消元 LP/SOCP 对照。FourBus 的 8 棵树、216 个型号组合可完整枚举核对。反向容量、零负荷孤岛、可选节点、全域割最小余量和独立节点 AC 潮流另有回归测试。
 

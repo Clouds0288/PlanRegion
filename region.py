@@ -1,31 +1,11 @@
-"""连续域状态、候选点筛选、裁剪与并集；不跨建设方案取凸包。"""
+"""连续域几何：凸包、裁剪和并集；选点与模型调度在 main.py。"""
 from itertools import combinations, product
-from types import SimpleNamespace
 
 import numpy as np
-from scipy.spatial import ConvexHull, QhullError
+from scipy.spatial import ConvexHull
 
 # 连续几何在公共评价箱归一化后的坐标中计算；与采样网格无关。
 GEOMETRY_TOL = 1e-8
-REFINEMENT_CHECKS = 96
-
-
-def _convex_hull(points):
-    """近共面输入失败时用可逆坐标变换重算，保留原始点、半空间和体积。"""
-    try:
-        return ConvexHull(points)
-    except QhullError:
-        center = points[0]
-        _, scales, basis = np.linalg.svd(points-center, full_matrices=False)
-        if np.any(scales <= 0.):
-            raise
-        hull = ConvexHull(((points-center)@basis.T)/scales)
-        normal = (hull.equations[:, :-1]/scales)@basis
-        lengths = np.linalg.norm(normal, axis=1)
-        equations = np.c_[normal/lengths[:, None],
-                           (hull.equations[:, -1]-normal@center)/lengths]
-        return SimpleNamespace(vertices=hull.vertices, simplices=hull.simplices,
-                               equations=equations, volume=float(hull.volume*np.prod(scales)))
 
 
 def polytope_vertices(points):
@@ -45,7 +25,7 @@ def polytope_vertices(points):
     coordinates = delta@basis.T
     if rank == 1:
         return points[np.unique([coordinates[:, 0].argmin(), coordinates[:, 0].argmax()])]
-    return points[np.sort(_convex_hull(coordinates).vertices)]
+    return points[np.sort(ConvexHull(coordinates).vertices)]
 
 
 def halfspaces(points):
@@ -59,7 +39,7 @@ def halfspaces(points):
     basis = np.linalg.svd(delta, full_matrices=True)[2]
     coordinates = delta@basis[:rank].T
     if rank >= 2:
-        hull = _convex_hull(coordinates)
+        hull = ConvexHull(coordinates)
         normal = hull.equations[:, :rank]@basis[:rank]
         eq = np.c_[normal, hull.equations[:, rank]-normal@center]
     elif rank == 1:
@@ -94,7 +74,7 @@ def clip_polytope(vertices, constant, coefficient):
         return np.empty((0, d))
     points = list(vertices[values >= -1e-11])
     if len(vertices) >= d+1 and np.linalg.matrix_rank(vertices-vertices[0], tol=1e-10) == d:
-        edges = {tuple(sorted(edge)) for face in _convex_hull(vertices).simplices
+        edges = {tuple(sorted(edge)) for face in ConvexHull(vertices).simplices
                  for edge in combinations(face, 2)}
     else:
         edges = combinations(range(len(vertices)), 2)
@@ -104,8 +84,9 @@ def clip_polytope(vertices, constant, coefficient):
     return polytope_vertices(points)
 
 
-def initial_polytope(bounds, total):
-    return clip_polytope(np.array(list(product((0., 1.), repeat=len(bounds)))), total, -np.asarray(bounds))
+def initial_polytope(bounds, total, axis_bounds):
+    vertices = np.array(list(product((0., 1.), repeat=len(bounds))))*axis_bounds/bounds
+    return clip_polytope(vertices, total, -np.asarray(bounds))
 
 
 def polytope_volume(poly):
@@ -114,14 +95,15 @@ def polytope_volume(poly):
     poly = poly.reshape(-1, d)
     if len(poly) < d+1 or np.linalg.matrix_rank(poly-poly[0], tol=1e-10) < d:
         return 0.
-    return float(_convex_hull(poly).volume)
+    return float(ConvexHull(poly).volume)
 
 
 class RegionState:
-    """固定方案内外多面体、候选点筛选与连续并集；坐标归一化到评价箱。"""
+    """固定方案内外多面体与连续并集；坐标归一化到公共评价箱。"""
 
     def __init__(self, bounds, total_bound, tau, cuts=()):
         self.bounds = np.asarray(bounds, dtype=float)
+        self.axis_bounds = self.bounds.copy()
         self.total_bound, self.tau = float(total_bound), float(tau)
         self.cuts = [np.asarray(c) for c in cuts]
         self.records = {}
@@ -131,7 +113,7 @@ class RegionState:
         key = tuple(x)
         if key in self.records:
             return False
-        outer = initial_polytope(self.bounds, self.total_bound)
+        outer = initial_polytope(self.bounds, self.total_bound, self.axis_bounds)
         d = len(self.bounds)
         for cut in self.cuts:
             outer = clip_polytope(outer, cut[0]+cut[1+d:]@x, cut[1:1+d]*self.bounds)
@@ -153,6 +135,16 @@ class RegionState:
         row['inner_equations'] = row['inner_box'] = None
         self.revision += 1
         return True
+
+    def tighten_bounds(self, axis_bounds, total_bound):
+        """MP2 上界以 kW 输入；同步裁剪已登记网架，供新网架复用。"""
+        self.axis_bounds = np.minimum(self.axis_bounds, axis_bounds)
+        self.total_bound = min(self.total_bound, total_bound)
+        for row in self.records.values():
+            outer = clip_polytope(row['outer'], self.total_bound, -self.bounds)
+            for axis, limit in zip(np.eye(len(self.bounds)), self.axis_bounds/self.bounds):
+                outer = clip_polytope(outer, limit, -axis)
+            row['outer'] = outer
 
     def inner_equations(self, key):
         row = self.records[tuple(key)]
@@ -187,16 +179,6 @@ class RegionState:
                 owners[i] = key
         return owners
 
-    def next_point(self, x):
-        row = self.records[tuple(x)]
-        targets = (1-self.tau)*row['outer']
-        owners = self.covering_schemes(targets, preferred=x)
-        indices = [i for i, owner in enumerate(owners) if owner is None]
-        if not len(indices):
-            return None
-        choose = min if not len(row['inner']) else max
-        return targets[choose(indices, key=lambda j: float(targets[j].sum()))]
-
     def witness_support(self, x, point):
         """用同方案收缩外域内的至多四个点支撑未覆盖见证，不跨方案取凸包。
 
@@ -213,17 +195,14 @@ class RegionState:
         coordinates, target = (poly-center)@basis.T, (point-center)@basis.T
         if rank == 1:
             return poly[[coordinates[:, 0].argmin(), coordinates[:, 0].argmax()]]
-        for face in _convex_hull(coordinates).simplices:
-            try:
-                weights = np.linalg.solve(coordinates[face].T, target)
-            except np.linalg.LinAlgError:
-                continue
+        for face in ConvexHull(coordinates).simplices:
+            weights = np.linalg.solve(coordinates[face].T, target)
             if weights.min() >= -1e-9 and weights.sum() <= 1+1e-9:
                 weights = np.r_[1-weights.sum(), weights]
                 points = np.vstack([center, poly[face]])
                 order = np.argsort(-weights)
                 return points[order[weights[order] > 1e-12]]
-        return []
+        raise RuntimeError(f'No simplex supports the witness: x={np.asarray(x).tolist()}, point={np.asarray(point).tolist()}')
 
     def apply_cut(self, cut):
         self.cuts.append(np.asarray(cut))
@@ -252,17 +231,17 @@ class RegionState:
                 if radius > 1e-10:
                     # 仿射外扩包含每个面外移 GEOMETRY_TOL 的集合，避免近共面裁剪交点。
                     envelope = (center+(1+GEOMETRY_TOL/radius)*(poly-center))/(1-self.tau)
-                    for axis in np.eye(len(self.bounds)):
+                    for axis, limit in zip(np.eye(len(self.bounds)), self.axis_bounds/self.bounds):
                         envelope = clip_polytope(envelope, 0., axis)
-                        envelope = clip_polytope(envelope, 1., -axis)
+                        envelope = clip_polytope(envelope, limit, -axis)
                     envelope = clip_polytope(envelope, self.total_bound, -self.bounds)
                 else:
-                    envelope = initial_polytope(self.bounds, self.total_bound)
+                    envelope = initial_polytope(self.bounds, self.total_bound, self.axis_bounds)
                     for face in eq:
                         envelope = clip_polytope(envelope, (GEOMETRY_TOL-face[-1])/(1-self.tau), -face[:-1])
                 outer.append(envelope)
         else:
-            outer = [initial_polytope(self.bounds, self.total_bound)]
+            outer = [initial_polytope(self.bounds, self.total_bound, self.axis_bounds)]
         return dict(inner=[dict(choice=r['choice'].copy(), cost=r['cost'],
                                 vertices=r['inner']*self.bounds) for r in records if len(r['inner'])],
                     outer=[dict(vertices=p*self.bounds) for p in outer])

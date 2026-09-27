@@ -14,6 +14,7 @@ from shapely.geometry import shape
 import main
 import survey
 from Network.concept5 import ROUTES
+from region import GEOMETRY_TOL
 
 
 ROOT = Path(__file__).resolve().parents[1]
@@ -53,15 +54,15 @@ class SurveyTests(unittest.TestCase):
                                    self.reference['result']['trace'][0]['marginal_information_value'])
 
     def test_default_main_dispatches_to_formal_survey(self):
-        with patch.object(survey, 'run_survey', return_value='finished') as run:
+        with patch.object(main, 'run', return_value='finished') as run:
             with patch.object(main, 'NETWORK', 'concept5'):
                 self.assertEqual(main.main(), 'finished')
-        run.assert_called_once_with(output=main.OUTPUT, threads=main.SOLVER_THREADS,
-                                    time_limit=main.CASE_TIME_LIMIT)
+        self.assertIsInstance(run.call_args.args[0], main.Concept5)
+        self.assertEqual(run.call_args.kwargs['step_by_step'], main.STEP_BY_STEP and main.SHOW_UI)
 
     def test_production_modules_do_not_import_experiments_or_tests(self):
         paths = [ROOT/name for name in ('main.py', 'model.py', 'region.py', 'plot.py', 'vertify.py',
-                                       'survey.py')]
+                                       'survey.py', 'monitor.py')]
         paths.extend((ROOT/'Network').glob('*.py'))
         for path in paths:
             tree = ast.parse(path.read_text(encoding='utf-8-sig'))
@@ -78,12 +79,19 @@ class SurveyTests(unittest.TestCase):
     def test_standalone_run_matches_frozen_reference(self):
         with TemporaryDirectory() as directory:
             output = Path(directory)/'fresh'
-            cache = survey.DomainCache(threads=1, time_limit=60.)
-            with redirect_stdout(StringIO()), patch.object(survey, 'DomainCache', return_value=cache):
-                result = survey.run_survey(output=output, threads=1, time_limit=60.)
+            original, caches = survey.DomainCache, []
+            def create_cache(**settings):
+                caches.append(original(**settings))
+                return caches[-1]
+            with redirect_stdout(StringIO()), patch.object(survey, 'DomainCache', side_effect=create_cache):
+                result = main.run(main.Concept5(), output=output, threads=1, time_limit=60., show_ui=False)
+            cache = caches[0]
             saved = json.loads((output/'results.json').read_text(encoding='utf-8'))
-            self.assertEqual(saved, survey.json_value(result))
-            self.assertEqual([path.name for path in output.iterdir()], ['results.json'])
+            self.assertEqual(saved, main.json_value(result))
+            self.assertEqual({path.name for path in output.iterdir()}, {'results.json', 'steps.jsonl', 'live_view.html'})
+            events = [json.loads(line)['patch'].get('event') for line in (output/'steps.jsonl').read_text(encoding='utf-8').splitlines()]
+            for event in ('point', 'sp_end', 'cut', 'domain_end', 'survey_scores', 'survey_observation', 'completed'):
+                self.assertIn(event, events)
             expected = self.reference['result']
             self.assertEqual([(r['route'], r['survey_observation']) for r in result['trace']],
                              [(r['route'], r['survey_observation']) for r in expected['trace']])
@@ -98,8 +106,10 @@ class SurveyTests(unittest.TestCase):
             for allowed, row in cache.items():
                 old = self.domains[allowed]
                 inner, outer = row['inner'], row['outer']
-                self.assertLess(inner.difference(old['outer']).area, 1e-6)
-                self.assertLess(old['inner'].difference(outer).area, 1e-6)
+                # 归一化几何容差换回 kW；方向上界会改变微小的边界舍入。
+                tolerance = 135.*GEOMETRY_TOL
+                self.assertLess(inner.difference(old['outer'].buffer(tolerance)).area, 1e-6)
+                self.assertLess(old['inner'].difference(outer.buffer(tolerance)).area, 1e-6)
                 self.assertLess(inner.symmetric_difference(old['inner']).area, .5)
                 for subset, smaller in cache.items():
                     if subset < allowed:

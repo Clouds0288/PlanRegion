@@ -2,7 +2,7 @@
 import unittest  # 标准回归测试。
 import numpy as np  # 物理数组和可复现查询。
 from Network.case33bw import Case33, network  # 唯一物理数据输入。
-from model import PlanningEquations, PlanningSP
+from model import GridPhysics, SubProblem
 from vertify import ACPowerFlow
 from tests.reference import fixed_topology, upgrade_plan, validate_power_flow
 from tests.planning_checks import margin
@@ -70,11 +70,11 @@ class Case33Tests(unittest.TestCase):  # 检查模型共享的数据和物理证
         np.testing.assert_array_equal(upgraded.reactance, baseline.reactance/2)
         np.testing.assert_array_equal(upgraded.fixed_p, case.fixed_p)
 
-    def test_socp_certificates_against_independent_ac(self):  # 固定基础网架时仍使用同一套 PlanningSP。
+    def test_socp_certificates_against_independent_ac(self):  # 固定基础网架时仍使用同一套 SubProblem。
         x = network.encode_plan(network.initial_plan)
         reference = ACPowerFlow(network.tree(x), threads=1)
-        equations = PlanningEquations(network, 'socp')
-        oracle = PlanningSP(equations, threads=1)  # 所有查询共享方程。
+        equations = GridPhysics(network, 'socp')
+        oracle = SubProblem(equations, threads=1)  # 所有查询共享方程。
         samples = np.random.default_rng(20260922).random((120,3))*[350.,1500.,600.]  # 固定背景下的不同负荷。
         valid = samples[reference.classify(samples)==1]  # 用独立 AC 选出已知可行样本。
         cuts = 0  # 保证实际覆盖分离割。
@@ -94,15 +94,15 @@ class Case33Tests(unittest.TestCase):  # 检查模型共享的数据和物理证
     def test_boundary_refinement_keeps_the_requested_power(self):
         case = fixed_topology(Case33(upgrade_count=8))
         x = case.encode_plan(upgrade_plan(case, np.ones(8)))
-        e = PlanningEquations(case, 'socp')
+        e = GridPhysics(case, 'socp')
         power = np.array([241.18, 5387.83, 395.69])
         original = power.copy()
-        answer = PlanningSP(e, threads=1).solve(x, power)
+        answer = SubProblem(e, threads=1).solve(x, power)
         self.assertTrue(answer['feasible'])
         self.assertGreaterEqual(margin(e, x, power, answer['state']), -1e-8)
         np.testing.assert_array_equal(power, original)
         outside = np.array([241.45047366, 5389.44569774, 393.81480695])
-        cut = PlanningSP(e, threads=1).solve(x, outside)['cut']
+        cut = SubProblem(e, threads=1).solve(x, outside)['cut']
         self.assertIsNotNone(cut)
         self.assertLess(cut[0]+cut[1:4]@outside+cut[4:]@x, -1e-9)
 

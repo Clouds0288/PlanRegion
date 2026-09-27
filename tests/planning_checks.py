@@ -1,6 +1,6 @@
 """生产运行状态的离线审核；不参与 MP/SP 的可行性分支。"""
 from time import perf_counter
-from model import PlanningModel, PlanningSP
+from model import MasterProblem, SubProblem
 from vertify import ACPowerFlow
 import numpy as np
 
@@ -69,9 +69,9 @@ def joint_benders(equations, *, power=None, budget=np.inf,
                   cuts=(), start=None, radial_gap_kw=1e-3,
                   min_total=None, fixed_plan=None, incumbent=None, deadline=np.inf, threads=1, oracle=None):
     """供独立对照使用的 MP1/MP2 与 SP 联合割迭代。"""
-    problem = PlanningModel(equations, power=power, budget=budget,
+    problem = MasterProblem(equations, power=power, budget=budget,
                             cuts_only=True, min_total=min_total, fixed_plan=fixed_plan, threads=threads)
-    oracle, generated = oracle or PlanningSP(equations, threads=threads), []
+    oracle, generated = oracle or SubProblem(equations, threads=threads), []
     minimizing = power is not None or min_total is not None
     bound = -np.inf if minimizing else np.inf
     with problem.model:
@@ -83,8 +83,7 @@ def joint_benders(equations, *, power=None, budget=np.inf,
             incumbent_cost = problem.use_incumbent(incumbent)
         while True:
             if perf_counter() >= deadline:
-                return dict(feasible=False, x=None, p=None, state=None, objective=None,
-                            bound=bound, status='unknown', termination='case_time_limit'), generated
+                raise RuntimeError('Reference Benders: deadline exceeded')
             answer = problem.solve(time_limit=min(20., max(0., deadline-perf_counter())))
             if answer is None:
                 return None, generated
@@ -93,19 +92,11 @@ def joint_benders(equations, *, power=None, budget=np.inf,
             if incumbent is not None and bound >= incumbent_cost-1e-7:
                 answer = dict(incumbent, objective=incumbent_cost, bound=bound, status='optimal')
                 return answer, generated
-            if answer['x'] is None:
-                return answer, generated
             point = answer['p']
             if not minimizing and point.sum() > 0.:
                 point = point * max(0., 1. - radial_gap_kw / point.sum())
             checked = oracle.solve(answer['x'], point, time_limit=min(
                 5. if equations.method == 'linear' else 10., max(0., deadline-perf_counter())))
-            if not checked['feasible'] and checked['cut'] is None and not minimizing:
-                # 缩入点数值未决时，在 MP 原点分离；只复用全局有效割，不把未知点判为可行。
-                separated = oracle.solve(answer['x'], answer['p'], time_limit=min(
-                    5. if equations.method == 'linear' else 10., max(0., deadline-perf_counter())))
-                if separated['cut'] is not None:
-                    checked = separated
             if checked['feasible']:
                 value = answer['objective'] if minimizing else point.sum()
                 gap = value-bound if minimizing else bound-value
@@ -114,8 +105,7 @@ def joint_benders(equations, *, power=None, budget=np.inf,
                               status='optimal' if gap <= tolerance else 'feasible')
                 return answer, generated
             if checked['cut'] is None:
-                answer.update(status='unknown', feasible=False, objective=None)
-                return answer, generated
+                raise RuntimeError('Reference Benders: no feasible certificate or separating cut')
             generated.append(checked['cut'])
             problem.add_cut(checked['cut'])
 

@@ -3,8 +3,6 @@ from __future__ import annotations
 
 import argparse
 from dataclasses import asdict
-from datetime import datetime
-import json
 from pathlib import Path
 from time import perf_counter
 
@@ -15,8 +13,7 @@ from threadpoolctl import threadpool_limits
 
 from Network.concept5 import Concept5, ROUTES
 from main import build_continuous_region
-from model import PlanningEquations, PlanningModel
-from plot import json_value
+from model import GridPhysics, MasterProblem
 from vertify import ACPowerFlow
 
 ROOT = Path(__file__).resolve().parent
@@ -34,10 +31,11 @@ def polygon_union(rows):
 class DomainCache(dict):
     """按道路集合缓存认证域，共享物理联合割；计算期间不写文件。"""
 
-    def __init__(self, *, threads=1, time_limit=60., share_cuts=True):
+    def __init__(self, *, threads=1, time_limit=60., share_cuts=True, progress=None, clock=perf_counter):
         super().__init__()
         self.threads, self.time_limit, self.share_cuts = threads, time_limit, share_cuts
         self.cuts, self.regions = [], {}
+        self.progress, self.clock = progress, clock
 
     def __missing__(self, allowed):
         # 1. 设置本次允许的道路，继承同一物理模型的有效割
@@ -48,18 +46,17 @@ class DomainCache(dict):
         def progress(event, **data):
             if event == 'cut':
                 local_cuts.append(np.asarray(data['cut']).copy())
+            if self.progress is not None:
+                self.progress(event, query=len(self)+1, attempt=1, allowed_roads=sorted(allowed), **data)
 
-        # 2. 对偶构域；light 未达到认证精度时用 physical 继续，保留有效割
-        for mode in ('light', 'physical'):
-            result = build_continuous_region(
-                network, 'socp', BUDGET, np.array([135., 135.]), tau=1e-5,
-                residual_mode=mode, time_limit=self.time_limit, threads=self.threads,
-                progress=progress, cuts=local_cuts,
-            )
-            inner, outer = (polygon_union(result[key]) for key in ('inner', 'outer'))
-            if result['status'] == 'certified' and outer.area-inner.area <= DOMAIN_AREA_TOLERANCE:
-                break
-        else:
+        # 2. 只执行一次 light 构域；未认证或精度不足直接报错
+        result = build_continuous_region(
+            network, 'socp', BUDGET, np.array([135., 135.]), tau=1e-5,
+            residual_mode='light', time_limit=self.time_limit, threads=self.threads,
+            progress=progress, cuts=local_cuts, clock=self.clock,
+        )
+        inner, outer = (polygon_union(result[key]) for key in ('inner', 'outer'))
+        if result['status'] != 'certified' or outer.area-inner.area > DOMAIN_AREA_TOLERANCE:
             raise RuntimeError(f'Roads {sorted(allowed)}: {result["status"]}, area gap {outer.area-inner.area:g}')
 
         # 3. 用已认证的子集/超集维持道路域包含关系，不修改此前评分的域
@@ -79,6 +76,9 @@ class DomainCache(dict):
         self.regions[allowed] = result
         domain = {'inner': inner, 'outer': outer, 'plan_ids': None}
         self[allowed] = domain
+        if self.progress is not None:
+            self.progress('domain_end', checkpoint=True, message=f'道路集合 {"".join(sorted(allowed)) or "既有网架"}：构域完成',
+                          domain=dict(allowed_roads=sorted(allowed), inner=mapping(inner), outer=mapping(outer)))
         return domain
 
 
@@ -128,7 +128,7 @@ def information_state(domains, known_usable, known_unusable):
             'information_gap_upper': optimistic['outer'].difference(confirmed['inner']).area}
 
 
-def simulate_surveys(domains, survey_realization):
+def simulate_surveys(domains, survey_realization, progress=None):
     """逐轮评分、观测、更新；仅记录决策所需的状态和候选评分。"""
     known_usable, known_unusable = frozenset(), frozenset()
     states, trace, all_candidates, total_cost = [], [], [], 0.
@@ -137,8 +137,14 @@ def simulate_surveys(domains, survey_realization):
         before = information_state(domains, known_usable, known_unusable)
         before.update(step=step, survey_total_cost=total_cost)
         states.append(before)
+        if progress is not None:
+            progress('survey_state', checkpoint=True, message=f'勘察第 {step} 轮：确认域与乐观域',
+                     survey=before, all_candidates=[], point=None, latest_cut=None, answer=None)
         scores = candidate_values(domains, known_usable, known_unusable)
         all_candidates.extend({'step': step, **row} for row in scores)
+        if progress is not None:
+            progress('survey_scores', checkpoint=True, message=f'勘察第 {step} 轮：按单位费用信息价值排序',
+                     survey=before, all_candidates=[dict(step=step, **row) for row in scores], point=None, latest_cut=None)
         # 2. 同时检查单路边际值和整个剩余信息间隙的停止证书
         maximum_upper = max((row['marginal_information_value_upper'] for row in scores), default=0.)
         if maximum_upper <= STOPPING_AREA_TOLERANCE and before['information_gap_upper'] <= STOPPING_AREA_TOLERANCE:
@@ -152,6 +158,9 @@ def simulate_surveys(domains, survey_realization):
         choice = scores[0]
         certified = all(choice['information_efficiency_lower'] >= row['information_efficiency_upper']-1e-10
                         for row in scores[1:])
+        if progress is not None:
+            progress('survey_choice', checkpoint=True, message=f'选择道路 {choice["route"]}，下一步读取观测',
+                     route=choice['route'], survey_observation=None)
         observation = bool(survey_realization[choice['route']])
         if observation:
             known_usable |= {choice['route']}
@@ -166,6 +175,11 @@ def simulate_surveys(domains, survey_realization):
                       'ranking_certified': certified, 'realized_gain': gain, 'realized_removal': removal,
                       'confirmed_area_after': after['confirmed_area'], 'optimistic_area_after': after['optimistic_area'],
                       'information_gap_after': after['information_gap'], 'survey_total_cost': total_cost})
+        if progress is not None:
+            progress('survey_observation', checkpoint=True,
+                     message=f'道路 {choice["route"]}：{"可用" if observation else "不可用"}，更新信息域',
+                     survey=dict(after, step=step+1, survey_total_cost=total_cost),
+                     route=choice['route'], survey_observation=observation, point=None, latest_cut=None)
     raise RuntimeError('No stopping certificate')
 
 
@@ -192,7 +206,7 @@ def nonconvexity_witness(equations, solved, allowed, domain):
     if best is None or best['midpoint_distance_lower'] < 1.:
         raise RuntimeError('No clearly certified nonconvexity witness')
     # 3. 用完整整数模型独立证明中点不可行
-    problem = PlanningModel(equations, power=np.asarray(best['p_mid']), budget=BUDGET, threads=1)
+    problem = MasterProblem(equations, power=np.asarray(best['p_mid']), budget=BUDGET, threads=1)
     for route in ROUTES:
         if route not in allowed:
             problem.choices[route, 'new'].UB = 0.
@@ -230,11 +244,9 @@ def audit_results(cache):
             'max_domain_area_uncertainty': max(row['outer'].area-row['inner'].area for row in cache.values())}
 
 
-def run_survey(*, output=None, threads=1, time_limit=60.):
-    """计算、核查、保存；全部科研结果集中在一个 results.json。"""
+def run_survey(*, threads=1, time_limit=60., progress=None, clock=perf_counter):
+    """计算并核查勘察结果，记录与保存由 main.run 统一管理。"""
     # 1. 设置案例与复现参数
-    output = Path(output) if output is not None else ROOT/'results'/'concept5'/datetime.now().strftime('%Y-%m-%d_%H%M%S')
-    output.mkdir(parents=True, exist_ok=True)
     network = Concept5()
     protocol = dict(schema='survey-v2', algorithm='dual_SP_with_shared_cuts', model='SOCP',
                     budget=BUDGET, cost_unit=network.cost_unit, survey_cost_unit='relative survey unit',
@@ -245,12 +257,15 @@ def run_survey(*, output=None, threads=1, time_limit=60.):
                     stopping_area_tolerance=STOPPING_AREA_TOLERANCE,
                     domain_area_tolerance=DOMAIN_AREA_TOLERANCE, tau=1e-5,
                     threads=threads, time_limit_per_attempt=time_limit)
+    if progress is not None:
+        progress('survey_start', checkpoint=True, message='五节点勘察：初始化信息状态', protocol=protocol,
+                 bounds=[135., 135.], budgets=[BUDGET], budget=BUDGET, budget_index=0, load_nodes=network.load_nodes)
     with threadpool_limits(limits=1):
         # 2. 按需求域并完成逐轮勘察；缓存及割只驻留内存
-        cache = DomainCache(threads=threads, time_limit=time_limit)
-        started = perf_counter()
-        result = simulate_surveys(cache, SURVEY_REALIZATION)
-        elapsed = perf_counter()-started
+        cache = DomainCache(threads=threads, time_limit=time_limit, progress=progress, clock=clock)
+        started = clock()
+        result = simulate_surveys(cache, SURVEY_REALIZATION, progress=progress)
+        elapsed = clock()-started
         result.update(baseline_area=result['states'][0]['confirmed_area'],
                       baseline_share=result['states'][0]['confirmed_area']/result['states'][0]['optimistic_area'],
                       seconds=elapsed, query_count=len(cache), joint_cut_count=len(cache.cuts))
@@ -260,23 +275,21 @@ def run_survey(*, output=None, threads=1, time_limit=60.):
                        routes=[route for route in ROUTES if row['choice'][route] is not None],
                        answers=[{'p': point} for point in row['vertices']])
                   for index, row in enumerate(cache.regions[allowed]['inner'])]
-        audit_started = perf_counter()
+        # 4. 独立 AC 顶点核查与非凸见证认证
+        if progress is not None:
+            progress('audit_start', checkpoint=True, message='独立核查已认证顶点与非凸见证')
+        audit_started = clock()
         result['nonconvexity_witness'] = nonconvexity_witness(
-            PlanningEquations(network, 'socp'), solved, allowed, cache[allowed])
+            GridPhysics(network, 'socp'), solved, allowed, cache[allowed])
         audit = audit_results(cache)
-        audit.update(seconds=perf_counter()-audit_started,
+        audit.update(seconds=clock()-audit_started,
                      midpoint_infeasible=result['nonconvexity_witness']['midpoint_full_model_status'] == 3,
                      all_rankings_certified=all(row['ranking_certified'] for row in result['trace']))
         audit['passed'] = (audit['ac_inner_vertices'] == audit['ac_feasible_vertices']
                            and audit['midpoint_infeasible'] and audit['all_rankings_certified']
                            and audit['max_domain_area_uncertainty'] <= DOMAIN_AREA_TOLERANCE)
-    # 4. 统一保存一次；绘图只需读取这个文件
+    # 5. 返回同一份科研结果；主入口负责保存和展示
     result.update(protocol=protocol, schemes=solved, audit=audit)
-    (output/'results.json').write_text(
-        json.dumps(json_value(result), ensure_ascii=False, indent=2, allow_nan=False), encoding='utf-8')
-    print(f'勘察完成：{elapsed:.3f}s，{len(cache)} 个道路集合，{len(cache.cuts)} 条共享割；结果：{output}', flush=True)
-    if not audit['passed']:
-        raise RuntimeError('Survey validation failed; see results.json audit')
     return result
 
 
@@ -285,8 +298,12 @@ def main():
     parser.add_argument('--output', type=Path)
     parser.add_argument('--threads', type=int, default=1)
     parser.add_argument('--time-limit', type=float, default=60.)
+    parser.add_argument('--show-ui', action='store_true')
+    parser.add_argument('--step', action='store_true')
     args = parser.parse_args()
-    run_survey(output=args.output, threads=args.threads, time_limit=args.time_limit)
+    from main import run
+    run(Concept5(), output=args.output, threads=args.threads, time_limit=args.time_limit,
+        show_ui=args.show_ui or args.step, step_by_step=args.step, keep_ui=args.show_ui or args.step)
 
 
 if __name__ == '__main__':

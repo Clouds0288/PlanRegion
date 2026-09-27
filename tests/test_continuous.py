@@ -13,12 +13,13 @@ import unittest
 import numpy as np
 from threadpoolctl import threadpool_limits
 
-from main import Case33, build_continuous_region
-from model import evaluation_bounds, RemainingRegionModel
+from main import Case33, RegionTimeout, build_continuous_region
+from model import RemainingRegionModel
 from tests.planning_checks import margin
-from model import PlanningEquations, PlanningModel
+from model import GridPhysics, MasterProblem
 from plot import sample_region
-from plot import RunMonitor, json_value, region_metrics
+from monitor import RunMonitor
+from plot import json_value, region_metrics
 from region import halfspaces, contains
 from plot import union_volume
 from region import polytope_volume, clip_polytope
@@ -30,20 +31,17 @@ class ContinuousTests(unittest.TestCase):
     def setUpClass(cls):
         cls.threads = threadpool_limits(limits=1)
         cls.network = fixed_topology(Case33(upgrade_count=4))
-        cls.bounds = evaluation_bounds(cls.network, threads=1)
+        cls.bounds = np.array([400., 4670., 630.])
 
 
     def test_deadline_preserves_unknown_domain(self):
-        result = build_continuous_region(self.network, 'socp', 0., self.bounds, time_limit=0., threads=1)
-        self.assertEqual(result['status'], 'time_limit')
-        self.assertEqual(result['inner'], [])
-        self.assertGreater(region_metrics(result, self.bounds)['outer_volume'], 0.)
-        self.assertEqual(result['counts']['sp'], 0)
+        with self.assertRaisesRegex(RegionTimeout, 'exceeded'):
+            build_continuous_region(self.network, 'socp', 0., self.bounds, time_limit=0., threads=1)
 
     def test_complete_query_reuses_verified_state_without_sp(self):
-        e = PlanningEquations(self.network, 'socp')
-        with patch('model.PlanningSP.solve', side_effect=AssertionError('Redundant SP')):
-            problem = PlanningModel(e, budget=0., threads=1)
+        e = GridPhysics(self.network, 'socp')
+        with patch('model.SubProblem.solve', side_effect=AssertionError('Redundant SP')):
+            problem = MasterProblem(e, budget=0., threads=1)
             with problem.model:
                 answer = problem.solve()
         self.assertTrue(answer['feasible'])
@@ -99,14 +97,14 @@ class ContinuousTests(unittest.TestCase):
         self.assertTrue(contains(points, halfspaces(points)).all())
 
     def test_mp1_total_allows_load_redistribution(self):
-        equations = PlanningEquations(self.network, 'linear')
-        problem = PlanningModel(equations, min_total=3800., threads=1)
+        equations = GridPhysics(self.network, 'linear')
+        problem = MasterProblem(equations, min_total=3800., threads=1)
         with problem.model:
             answer = problem.solve()
         self.assertTrue(answer['feasible'])
         self.assertEqual(answer['objective'], 1.)
         self.assertGreaterEqual(sum(answer['p']), 3800.-1e-6)
-        direct = PlanningModel(equations, min_total=3800., threads=1)
+        direct = MasterProblem(equations, min_total=3800., threads=1)
         with direct.model:
             reference = direct.solve()
         self.assertEqual(answer['objective'], reference['objective'])
@@ -131,10 +129,9 @@ class ContinuousTests(unittest.TestCase):
         self.assertTrue(np.all(sample_region(result, points, self.bounds) != -1))
 
     def test_unfinished_global_search_does_not_certify_domain(self):
-        with patch.object(RemainingRegionModel, 'solve', return_value=dict(complete=False, bound=1., x=None, p=None)):
-            result = build_continuous_region(self.network, 'linear', 0., self.bounds, threads=1)
-        self.assertEqual(result['status'], 'unknown')
-        self.assertGreater(region_metrics(result, self.bounds)['outer_volume'], region_metrics(result, self.bounds)['inner_volume'])
+        with patch.object(RemainingRegionModel, 'solve', side_effect=RuntimeError('No coverage certificate')):
+            with self.assertRaisesRegex(RuntimeError, 'No coverage certificate'):
+                build_continuous_region(self.network, 'linear', 0., self.bounds, threads=1)
 
     def test_complete_replay_round_trip_beyond_old_limit(self):
         with TemporaryDirectory() as directory:
@@ -158,7 +155,7 @@ class ContinuousTests(unittest.TestCase):
                 self.assertEqual(len(saved['history']), 704)
                 self.assertEqual(saved['history'], monitor.history)
                 self.assertEqual(saved['geometry'], [])
-                self.assertEqual([path.name for path in Path(directory).iterdir()], ['live_view.html'])
+                self.assertEqual({path.name for path in Path(directory).iterdir()}, {'steps.jsonl', 'live_view.html'})
                 with RunMonitor(record=False, stream=StringIO()) as restored:
                     restored.load_recording(Path(directory)/'live_view.html')
                     self.assertEqual(restored.history, monitor.history)

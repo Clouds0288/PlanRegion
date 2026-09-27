@@ -1,9 +1,9 @@
-"""独立 AC 潮流、建设方案认证与网格校核；未确定点保留为 0。"""
+"""独立 AC 潮流、建设方案认证与网格校核；求解失败直接报错。"""
 import gurobipy as gp
 from gurobipy import GRB
 import numpy as np
 
-from model import DEFAULT_SOLVER_THREADS, PlanningEquations, PlanningModel
+from model import DEFAULT_SOLVER_THREADS, GridPhysics, MasterProblem
 
 AC_TOL = 1e-9
 FIXED_POINT_TOL = 1e-12
@@ -16,7 +16,7 @@ class ACPowerFlow:
     """独立完整 AC；仅读取网架数据，不使用 LP/SOCP 的方程矩阵或乘子。
 
     适用于非负 P/Q 负荷、正阻抗、根电压固定为 1 p.u. 的径向网络。
-    不读取 PlanningEquations 的矩阵；以支路递推独立实现 AC 电流等式。
+    不读取 GridPhysics 的矩阵；以支路递推独立实现 AC 电流等式。
     """
 
     def __init__(self, network, *, threads=DEFAULT_SOLVER_THREADS):
@@ -55,7 +55,7 @@ class ACPowerFlow:
             np.hypot(ps, qs)-c.source_smax])
 
     def classify(self, power, return_currents=False):
-        """1 可行，-1 已证不可行，0 未确定；不把迭代失败当作不可行。"""
+        """1 可行，-1 已证不可行；迭代未收敛直接报错。"""
         c = self.network
         power = np.asarray(power).reshape(-1, len(c.load_nodes))
         p, q = c.loads(power)
@@ -78,11 +78,13 @@ class ACPowerFlow:
             keep = ~(bad | good)
             ell[active[keep]] = (P[keep]**2+Q[keep]**2)/u[keep]
             active = active[keep]
+        if len(active):
+            raise RuntimeError(f'AC power flow did not converge in {AC_ITERATIONS} iterations: p={power[active].tolist()}')
         return (status, ell) if return_currents else status
 
 
     def _build_global(self, environment):
-        """显式非凸 AC 等式模型，用于未确定点和独立交叉核验。"""
+        """显式非凸 AC 等式模型，仅供主动调用的独立交叉核验。"""
         c = self.network
         m = gp.Model('independent_AC_reference', env=environment)
         m.Params.OutputFlag = 0
@@ -124,13 +126,16 @@ class ACPowerFlow:
         m.setAttr('RHS', bp, p[0])
         m.setAttr('RHS', bq, q[0])
         m.optimize()
-        if m.SolCount:
-            current = np.array([ell[i].X for i in ell])
-            P, Q, v, u = self.state(power, current)
-            if (np.max(np.abs(P*P+Q*Q-u*current)) <= GLOBAL_AC_TOL
-                    and self.violation(P, Q, v).max() <= GLOBAL_AC_TOL):
-                return 1
-        return -1 if m.Status == GRB.INFEASIBLE else 0
+        if m.Status == GRB.INFEASIBLE:
+            return -1
+        if m.Status != GRB.OPTIMAL:
+            raise RuntimeError(f'Global AC: status={m.Status}, p={list(power)}')
+        current = np.array([ell[i].X for i in ell])
+        P, Q, v, u = self.state(power, current)
+        if (np.max(np.abs(P*P+Q*Q-u*current)) > GLOBAL_AC_TOL
+                or self.violation(P, Q, v).max() > GLOBAL_AC_TOL):
+            raise RuntimeError(f'Global AC certificate exceeds {GLOBAL_AC_TOL:g}: p={list(power)}')
+        return 1
 
     def close(self):
         if self.model is not None:
@@ -138,7 +143,7 @@ class ACPowerFlow:
 
 def ac_planning_query(equations, power, *, threads=DEFAULT_SOLVER_THREADS):
     """SOCP 搜索建设方案；完整 AC 等式负责认证。"""
-    problem = PlanningModel(equations, power=power, threads=threads)
+    problem = MasterProblem(equations, power=power, threads=threads)
     bound = -np.inf
     with problem.model:
         while True:
@@ -148,20 +153,10 @@ def ac_planning_query(equations, power, *, threads=DEFAULT_SOLVER_THREADS):
             answer.pop('state')  # SOCP 状态不能作为独立 AC 证书返回。
             bound = max(bound, answer['bound'])
             answer['bound'] = bound
-            if answer['x'] is None:
-                return answer
             oracle = ACPowerFlow(equations.network.tree(answer['x']), threads=threads)
-            try:
-                status = int(oracle.classify(power)[0])
-                if status == 0:
-                    status = oracle.global_status(power, None)
-            finally:
-                oracle.close()
+            status = int(oracle.classify(power)[0])
             if status == 1:
                 answer.update(feasible=True, status='optimal' if answer['objective']-bound <= 1e-7 else 'feasible')
-                return answer
-            if status == 0:
-                answer.update(status='unknown', feasible=False, objective=None)
                 return answer
             problem.exclude(answer['x'])
 
@@ -189,7 +184,7 @@ def validate_ac_region(network, budgets, divisions, bounds, *, threads=DEFAULT_S
             and np.all(network.q_ratio >= 0.) and np.all(network.vmax >= 1.))
     bounds, budgets = np.asarray(bounds), np.asarray(budgets)
     states = np.zeros((len(budgets),)+(divisions,)*3, dtype=np.int8)
-    equations = PlanningEquations(network, 'socp')
+    equations = GridPhysics(network, 'socp')
     visited = set()
     pending = [(j, np.zeros(3, dtype=int), np.full(3, divisions-1, dtype=int))
                for j in reversed(range(len(budgets)))]
@@ -209,14 +204,14 @@ def validate_ac_region(network, budgets, divisions, bounds, *, threads=DEFAULT_S
             if answer is None:
                 labels[:] = -1
             else:
-                if answer['bound'] is not None:
-                    labels[budgets < answer['bound']-1e-7] = -1
-                if answer['feasible']:
-                    labels[budgets >= answer['objective']] = 1
+                labels[budgets < answer['bound']-1e-7] = -1
+                labels[budgets >= answer['objective']] = 1
             for k, status in enumerate(labels):
                 classify_orthant(states[k], index, status)
             if np.all(states[block] != 0):
                 break
         if np.any(states[block] == 0) and np.any(upper > lower):
             pending.extend((j, a, b) for a, b in split_grid_box(lower, upper))
+    if np.any(states == 0):
+        raise RuntimeError(f'AC grid has {np.count_nonzero(states == 0)} unclassified cells')
     return states

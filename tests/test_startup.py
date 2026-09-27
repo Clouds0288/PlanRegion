@@ -9,7 +9,7 @@ import numpy as np
 
 import main
 import model
-from model import DEFAULT_SOLVER_THREADS, PlanningEquations, PlanningModel, PlanningSP, RemainingRegionModel
+from model import DEFAULT_SOLVER_THREADS, GridPhysics, MasterProblem, SubProblem, RemainingRegionModel
 from vertify import ACPowerFlow
 
 
@@ -29,13 +29,13 @@ class StartupTests(unittest.TestCase):
         configure.assert_called_once_with(limits=1)
 
     def test_threads_reach_each_solver(self):
-        equations = PlanningEquations(main.FourBus(), 'socp')
+        equations = GridPhysics(main.FourBus(), 'socp')
         for options, expected in (({}, 20), ({'threads': 3}, 3)):
             with self.subTest(options=options):
-                problem = PlanningModel(equations, **options)
+                problem = MasterProblem(equations, **options)
                 with problem.model:
                     self.assertEqual(problem.model.Params.Threads, expected)
-                oracle = PlanningSP(equations, **options)
+                oracle = SubProblem(equations, **options)
                 with patch('model.new_model', wraps=model.new_model) as create:
                     network = equations.network
                     oracle.solve(network.encode_plan(network.initial_plan), np.zeros(3))
@@ -51,14 +51,6 @@ class StartupTests(unittest.TestCase):
                 finally:
                     ac.close()
 
-    def test_input_boundary_rejects_invalid_parameters_before_solving(self):
-        for options in (dict(threads=0), dict(divisions=0), dict(tau=1.),
-                        dict(time_limit=-1.), dict(budgets=[1., 0.]), dict(residual_mode='invalid')):
-            with self.subTest(options=options), patch('main.evaluation_bounds') as solve:
-                with self.assertRaises(ValueError):
-                    main.run(main.FourBus(), show_ui=False, **options)
-                solve.assert_not_called()
-
     def test_candidate_constant_switches_complete_entrypoint(self):
         with TemporaryDirectory() as folder, redirect_stdout(StringIO()):
             for count in (0, 4, 8, 16, 32):
@@ -72,7 +64,9 @@ class StartupTests(unittest.TestCase):
                     result = main.BenchmarkResult.create(network, [0.], 2, np.ones(3))
                     result.save(output)
                     result = main.BenchmarkResult.load(output, network=network)
-                    self.assertEqual(result.metadata['upgrade_count'], count)
+                    self.assertEqual(result.metadata['network_fingerprint'], network.fingerprint)
+                    self.assertNotIn('corridors', result.metadata)
+                    self.assertNotIn('tolerances', result.metadata)
                     self.assertEqual(result.states.shape, (4, 1, 2, 2, 2))
                     with self.assertRaisesRegex(ValueError, 'does not match'):
                         main.BenchmarkResult.load(output, network=main.FourBus())

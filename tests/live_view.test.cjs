@@ -20,7 +20,10 @@ const Plotly = {
   async react(id, data, layout) { Object.assign(get(id), {data, layout}); },
   async relayout(id, update) { get(id).layout.scene.camera = update['scene.camera']; await get(id).handlers?.plotly_relayout(update); }
 };
-const context = vm.createContext({document, Plotly, window: {Plotly}, location: {protocol: 'file:'}, Option: function(text, value) { return {text, value}; }, setTimeout, clearTimeout, console});
+const requests = [];
+const context = vm.createContext({document, Plotly, window: {Plotly}, location: {protocol: 'file:'},
+  fetch: async (url, options) => { requests.push({url, ...options}); return {ok:true,status:204}; },
+  Option: function(text, value) { return {text, value}; }, setTimeout, clearTimeout, console});
 const html = fs.readFileSync(path.join(__dirname, '..', 'live_view.html'), 'utf8');
 for (const script of html.matchAll(/<script>([\s\S]*?)<\/script>/g)) vm.runInContext(script[1], context);
 const run = code => vm.runInContext(code, context);
@@ -87,5 +90,28 @@ const plain = value => JSON.parse(JSON.stringify(value));
   await run('seek(2)');
   assert.equal(run('cutHistory(state)'), null);
   assert.equal(get('scheme-list').children.length, 0);
-  console.log('Viewer geometry, evidence states, replay, selection and camera tests passed.');
+  // 二维割按实际方案代入，非等尺度坐标保持 kW。
+  run('var cut2={joint_coefficients:[-3,1,0,2],constant:-1,normal:[1,0],number:1,choice:{e:"a"}}');
+  assert.equal(run('conditionCut(cut2,{x:[1]}).constant'), -1);
+  assert.equal(run('conditionCut(cut2,{x:[0]}).constant'), -3);
+  assert(run('line2D({constant:-1,normal:[1,0]},[2,3]).every(p=>p[0]===1)'));
+  assert(run('clipPolygon([[0,0],[2,0],[2,3],[0,3]],{constant:1,normal:[-1,0]},[2,3]).every(p=>p[0]<=1+1e-10)'));
+  run(`var square={vertices:[[0,0],[2,0],[2,3],[0,3]],faces:[]};
+       var step2={...frame0,bounds:[2,3],load_nodes:[1,2],query:1,geometry:[{...first,outer:square}],point:[1.5,1]};
+       var step3={event:'cut',latest_cut:cut2,geometry:[{...first,outer:{vertices:clipPolygon(square.vertices,{constant:-1,normal:[1,0]},[2,3]),faces:[]}}]};
+       ingest({...step2,...step3,history:[{id:0,elapsed:0,patch:step2},{id:1,elapsed:1,patch:step3}]},true)`);
+  await run('seek(1)');
+  assert(get('detail-chart').data.every(t=>t.type==='scatter'&&!('z' in t)));
+  assert(get('detail-chart').data.some(t=>t.name==='本次切除部分'));
+  run(`ingest({...step2,query:2,history:[{id:2,elapsed:2,patch:{event:'phase_start',query:2,latest_cut:null,geometry:[]}}]})`);
+  await run('seek(2)');
+  assert.equal(run('cutHistory(state)'), null);
+  // 执行按钮发送实时 revision；回看历史不会改变控制对象。
+  run("latest={status:'running',waiting:true,step_by_step:true,revision:47};offline=false;executionControls()");
+  assert.equal(get('execute-next').disabled, false);
+  await get('execute-next').onclick();
+  assert.deepEqual(JSON.parse(requests.at(-1).body), {action:'next',revision:47});
+  run('offline=true;executionControls()');
+  assert.equal(get('execute-next').disabled, true);
+  console.log('2D/3D geometry, replay, evidence, control and camera tests passed.');
 })().catch(error => { console.error(error); process.exitCode = 1; });

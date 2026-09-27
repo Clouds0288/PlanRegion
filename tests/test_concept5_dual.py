@@ -11,7 +11,7 @@ from shapely.geometry import box
 from Network import Network, TypeParameters
 from Network.concept5 import Concept5, ROUTES
 from main import build_continuous_region
-from model import PlanningEquations, PlanningModel, PlanningSP
+from model import GridPhysics, MasterProblem, SubProblem
 from region import clip_polytope, halfspaces, contains, polytope_volume
 from survey import increase_bounds
 
@@ -29,7 +29,7 @@ class ConceptFiveDualTests(unittest.TestCase):
         with self.assertRaises(ValueError):
             Concept5(['G'])
         initial = whole.initial_plan | {'31': None, 'A': 'new'}
-        problem = PlanningModel(PlanningEquations(Concept5([]), 'socp'), fixed_plan=initial, budget=4., threads=1)
+        problem = MasterProblem(GridPhysics(Concept5([]), 'socp'), fixed_plan=initial, budget=4., threads=1)
         with problem.model:
             self.assertIsNone(problem.solve())
 
@@ -48,7 +48,7 @@ class ConceptFiveDualTests(unittest.TestCase):
         result = build_continuous_region(Concept5([]), 'socp', 4., np.array([135.,135.]),
                                          tau=1e-5, threads=1, time_limit=15.)
         self.assertEqual(result['status'], 'certified')
-        self.assertGreater(result['counts']['cuts'], 0)
+        self.assertLessEqual(result['coverage_bound'], 1e-8)
         self.assertEqual(len(result['inner']), 1)
         self.assertAlmostEqual(polytope_volume(result['inner'][0]['vertices']), 3023.2, delta=.15)
 
@@ -61,8 +61,8 @@ class ConceptFiveDualTests(unittest.TestCase):
         corridors[index] = replace(corridors[index], types=(small, large))
         values = {name: getattr(base, name) for name in base.__dataclass_fields__}
         network = Network(**(values | {'corridors': tuple(corridors)}))
-        equations = PlanningEquations(network, 'socp')
-        oracle = PlanningSP(equations, threads=1)
+        equations = GridPhysics(network, 'socp')
+        oracle = SubProblem(equations, threads=1)
         plan = network.initial_plan | {'31': None, 'A': 'small'}
         x, power = network.encode_plan(plan), np.array([80., 20.])
         answer = oracle.solve(x, power)
@@ -72,7 +72,7 @@ class ConceptFiveDualTests(unittest.TestCase):
         self.assertLess(cut[0]+cut[1:3]@power+cut[3:]@x, -1e-8)
         larger = network.encode_plan(plan | {'A': 'new'})
         self.assertTrue(oracle.solve(larger, power)['feasible'])
-        problem = PlanningModel(equations, budget=4., threads=1)
+        problem = MasterProblem(equations, budget=4., threads=1)
         with problem.model:
             problem.model.setObjective(cut[0]+cut[1:3]@problem.power+cut[3:]@problem.x, GRB.MINIMIZE)
             problem.model.Params.TimeLimit = 30.

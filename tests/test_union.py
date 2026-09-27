@@ -7,7 +7,7 @@ import numpy as np
 from threadpoolctl import threadpool_limits
 
 from main import Case33, FourBus, build_continuous_region
-from model import PlanningEquations, PlanningModel, PlanningSP, RemainingRegionModel, PLANNING_TOL, evaluation_bounds
+from model import GridPhysics, MasterProblem, SubProblem, RemainingRegionModel, PLANNING_TOL
 from plot import region_geometry
 from region import RegionState, contains, halfspaces
 from tests.reference import fixed_topology
@@ -28,7 +28,7 @@ class UnionGeometryTests(unittest.TestCase):
         # 合成几何夹具只检验归属规则，不用作物理模型证书。
         state.add_point(a, CUBE)
         state.add_scheme(b, network.decode_plan(b), network.cost@b)
-        self.assertIsNone(state.next_point(b))
+        self.assertTrue(all(owner is not None for owner in state.covering_schemes(state.records[tuple(b)]['outer'])))
         self.assertEqual(len(state.records[tuple(b)]['inner']), 0)
 
     def test_vertices_covered_does_not_hide_interior_gap(self):
@@ -37,9 +37,9 @@ class UnionGeometryTests(unittest.TestCase):
             state.add_scheme(x, {'line': str(x[0])}, 0.)
         state.add_point([0], CUBE*[.4, 1., 1.])
         state.add_point([1], CUBE*[.4, 1., 1.]+[.6, 0., 0.])
-        self.assertIsNone(state.next_point([2]))
+        self.assertTrue(all(owner is not None for owner in state.covering_schemes(CUBE)))
         self.assertIsNone(state.covering_schemes([[.5, .5, .5]])[0])
-        e = PlanningEquations(Case33(upgrade_count=4), 'linear')
+        e = GridPhysics(Case33(upgrade_count=4), 'socp')
         problem = RemainingRegionModel(e, 0., np.ones(3), 3., [], state.inner_halfspaces(), 0., threads=1)
         with problem.model:
             answer = problem.solve(1e-8)
@@ -92,42 +92,39 @@ class UnionSolverTests(unittest.TestCase):
         residuals = [dict(complete=False, bound=1., x=filling, p=witness, feasible=True),
                      dict(complete=True, bound=0., x=None, p=None)]
         with patch('main.RegionState', return_value=state), \
-             patch.object(PlanningModel, 'solve', return_value=answer), \
+             patch.object(MasterProblem, 'solve', return_value=answer), \
              patch.object(RemainingRegionModel, 'solve', side_effect=residuals), \
-             patch.object(PlanningSP, 'solve', return_value=dict(feasible=True)) as check:
-            result = build_continuous_region(net, 'linear', np.inf, np.ones(3), threads=1)
+             patch.object(SubProblem, 'solve', return_value=dict(feasible=True)) as check:
+            result = build_continuous_region(net, 'socp', np.inf, np.ones(3), tau=0., threads=1)
         self.assertEqual(result['status'], 'certified')
         self.assertTrue(any(not np.allclose(call.args[1], witness) for call in check.call_args_list))
         self.assertTrue(contains([witness], state.inner_equations(filling))[0])
 
     def test_fourbus_physical_search_completes_coverage(self):
         net = FourBus()
-        bounds = evaluation_bounds(net, threads=1)
+        bounds = np.full(3, net.power_limit)
         result = build_continuous_region(net, 'linear', np.inf, bounds,
                                          residual_mode='physical', time_limit=20., threads=1)
         self.assertEqual(result['status'], 'certified')
         self.assertLessEqual(result['coverage_bound'], 1e-8)
 
     def test_ordinary_vertex_queries_are_outside_existing_union(self):
-        next_point = RegionState.next_point
         ordinary = []
-        def candidate(state, x):
-            point = next_point(state, x)
-            if point is not None:
-                self.assertIsNone(state.covering_schemes([point])[0])
+        def progress(event, **data):
+            if event == 'point' and data['point_reason'].startswith('已知网架'):
+                point = data['point']/self.bounds
+                self.assertFalse(any(contains([point], halfspaces(row['inner']))[0] for row in data['records']))
                 ordinary.append(point)
-            return point
-        with patch.object(RegionState, 'next_point', new=candidate):
-            result = build_continuous_region(self.network, 'linear', 1., self.bounds, threads=1)
+        result = build_continuous_region(self.network, 'socp', 1., self.bounds, threads=1, progress=progress)
         self.assertEqual(result['status'], 'certified')
         self.assertTrue(ordinary)
         self.assertLessEqual(result['coverage_bound'], 1e-8)
 
     def test_maximum_boundary_stagnation_still_requires_physical_certificate(self):
-        equations = PlanningEquations(self.network, 'socp')
+        equations = GridPhysics(self.network, 'socp')
         x = equations.network.encode_plan(equations.network.initial_plan | {'2-3': 'parallel'})
         point = [154.27833628730312, 3500.5974303868097, 240.65872464525015]
-        answer = PlanningSP(equations, threads=1).solve(x, point)
+        answer = SubProblem(equations, threads=1).solve(x, point)
         self.assertEqual(set(answer), {'feasible', 'state', 'cut'})
         self.assertTrue(answer['feasible'])
         self.assertGreaterEqual(margin(equations, x, point, answer['state']), -PLANNING_TOL)

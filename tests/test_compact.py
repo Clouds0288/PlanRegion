@@ -4,7 +4,7 @@ import numpy as np  # 构造固定查询和型号向量。
 from threadpoolctl import threadpool_limits  # 所有比较保持单线程。
 from Network.case33bw import Case33  # 四、八、十六条候选使用同一网架定义。
 from Network.four_bus_five_corridor import FourBus
-from model import PlanningEquations, PlanningModel, PlanningSP  # 正式方程、主问题和连续 SP。
+from model import GridPhysics, MasterProblem, SubProblem  # 正式方程、主问题和连续 SP。
 from tests.reference import dispatch_support, fixed_topology, upgrade_plan
 from tests.planning_checks import margin
 from tests.planning_checks import joint_benders  # 冻结的旧算法，与完整模型对照。
@@ -24,16 +24,16 @@ class CompactPlanningTests(unittest.TestCase):  # 核对物理映射、最优值
                  (4, {'2-3': 'parallel'}, [154.2787946320288, 3500.597509354904, 240.65860001331868]))
         for count, upgrades, point in cases:
             network = fixed_topology(Case33(upgrade_count=count))
-            equations = PlanningEquations(network, 'socp')
+            equations = GridPhysics(network, 'socp')
             x, power = network.encode_plan(network.initial_plan | upgrades), np.array(point)
-            checked = PlanningSP(equations, threads=1).solve(x, power)
+            checked = SubProblem(equations, threads=1).solve(x, power)
             self.assertTrue(checked['feasible'] or checked['cut'] is not None)
             if checked['feasible']:
                 self.assertGreaterEqual(margin(equations, x, power, checked['state']), -1e-8)
             else:
                 cut = checked['cut']
                 self.assertLess(cut[0]+cut[1:4]@power+cut[4:]@x, -1e-9)
-                problem = PlanningModel(equations, threads=1)
+                problem = MasterProblem(equations, threads=1)
                 with problem.model:
                     problem.model.setObjective(cut[0]+cut[1:4]@problem.power+cut[4:]@problem.x, 1)
                     problem.model.optimize()
@@ -42,14 +42,14 @@ class CompactPlanningTests(unittest.TestCase):  # 核对物理映射、最优值
 
     def test_sp_handles_zero_flow_cones_of_unselected_types(self):
         network = FourBus()
-        equations = PlanningEquations(network, 'socp')
+        equations = GridPhysics(network, 'socp')
         cases = (({'01': 'H', '12': None, '13': None, '02': 'L', '23': 'M'},
                   [47.47692657884853, 14.400743716323246, 7.840840158490067], True),
                  ({'01': 'H', '12': None, '13': 'L', '02': 'H', '23': None},
                   [82.83826215331091, 41.51433150869895, 11.864741576952936], False))
         for plan, point, feasible in cases:
             x, power = network.encode_plan(plan), np.array(point)
-            checked = PlanningSP(equations, threads=1).solve(x, power)
+            checked = SubProblem(equations, threads=1).solve(x, power)
             self.assertEqual(checked['feasible'], feasible)
             if feasible:
                 self.assertGreaterEqual(margin(equations, x, power, checked['state']), -1e-8)
@@ -65,10 +65,10 @@ class CompactPlanningTests(unittest.TestCase):  # 核对物理映射、最优值
                 choice = upgrade_plan(network, choice)
                 design = network.tree(network.encode_plan(choice))  # 独立固定网架直接由型号表生成。
                 for method in ('linear','socp'):  # LP 和 SOCP 分别对照。
-                    equations = PlanningEquations(network,method)  # 按模型内部顺序展开型号。
+                    equations = GridPhysics(network,method)  # 按模型内部顺序展开型号。
                     x = equations.network.encode_plan(choice)  # Network 顺序转内部变量顺序。
                     self.assertEqual(equations.network.decode_plan(x),choice)
-                    problem = PlanningModel(equations, threads=1)  # 紧凑模型保留同一物理方程。
+                    problem = MasterProblem(equations, threads=1)  # 紧凑模型保留同一物理方程。
                     with problem.model:  # 求解结束后释放优化器。
                         problem.x.LB = problem.x.UB = x  # 固定本次指定型号。
                         actual = problem.solve()  # 求固定方案的最大总负荷。
@@ -80,14 +80,14 @@ class CompactPlanningTests(unittest.TestCase):  # 核对物理映射、最优值
     def test_joint_queries_match_direct_models_and_reuse_cuts(self):  # 审核从 Notebook 移到测试，不进入正式构域。
         for count in (4,8,16):  # 三种规模共用同一算法。
             for method in ('linear','socp'):  # 两套物理假设分别比较。
-                equations,cuts = PlanningEquations(fixed_topology(Case33(upgrade_count=count)),method),[]
+                equations,cuts = GridPhysics(fixed_topology(Case33(upgrade_count=count)),method),[]
                 queries = [dict(power=p) for p in ([100.,800.,150.],[250.,1800.,350.],[300.,3000.,500.])]  # 含基础、升级和高负荷点。
                 budgets = (0.,1.,2.) if count==16 and method=='socp' else (0.,1.,2.,np.inf)
                 queries += [dict(budget=b) for b in budgets]  # 覆盖各预算下的自由最大总负荷查询。
                 for query in queries:  # 每次使用完全相同的输入。
                     actual,new = joint_benders(equations,cuts=cuts,**query)  # 正式 MP/SP 查询。
                     cuts.extend(new)  # 后续查询复用同一批有效割。
-                    direct = PlanningModel(equations,**query)  # 完整 MILP/MISOCP 独立求解路径。
+                    direct = MasterProblem(equations,**query)  # 完整 MILP/MISOCP 独立求解路径。
                     with direct.model:  # 不把直接模型加入联合割池。
                         reference = direct.solve()  # 取得可行目标及有效全局界。
                     self.assertEqual(actual is None,reference is None)  # 可行性结论必须相同。
@@ -99,12 +99,12 @@ class CompactPlanningTests(unittest.TestCase):  # 核对物理映射、最优值
     def test_joint_cut_is_valid_on_the_full_compact_domain(self):  # 对全部整数选型的可行域直接优化，检验联合割没有误切。
         for count in (4,8,16):  # 同一检查覆盖全部三档候选集。
             for method in ('linear','socp'):  # 两类对偶割都需通过。
-                equations = PlanningEquations(Case33(upgrade_count=count),method)  # 生成被审核方程。
+                equations = GridPhysics(Case33(upgrade_count=count),method)  # 生成被审核方程。
                 x,power = equations.network.encode_plan(equations.network.initial_plan),np.array([300.,3000.,500.])
-                cut = PlanningSP(equations, threads=1).solve(x,power)['cut']  # 获得真实 SP 分离割。
+                cut = SubProblem(equations, threads=1).solve(x,power)['cut']  # 获得真实 SP 分离割。
                 self.assertIsNotNone(cut)  # 测试必须实际产生割。
                 self.assertLess(cut[0]+cut[1:4]@power+cut[4:]@x,-1e-5)  # 必须排除生成点。
-                problem = PlanningModel(equations, threads=1)  # 全部原始物理约束，不能加入被审核的割。
+                problem = MasterProblem(equations, threads=1)  # 全部原始物理约束，不能加入被审核的割。
                 with problem.model:  # 全局审核与正式求解隔离。
                     problem.model.setObjective(cut[0]+cut[1:4]@problem.power+cut[4:]@problem.x,1)  # 最小化割余量。
                     problem.model.Params.TimeLimit = 20.  # 测试单次求解上限。

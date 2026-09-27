@@ -1,8 +1,8 @@
 # 数学符号与代码变量规范
 
-版本：1.6，2026-09-25。勘察绘图合并至 plot.py，保留单一入口；MP1 / MP2 / 对偶 SP、单位、索引及联合割布局保持不变。
+版本：2.0，2026-09-27。方向 MP2 初始化、主循环统一选点，默认仅运行 SOCP；联合割布局及公共归一化坐标保持不变。
 
-本文是本项目数学符号、代码名称、单位、数组顺序和结果字段的统一约定。正式代码为 `Network/`、`model.py`、`region.py`、`vertify.py`、`plot.py`、`main.py`、`survey.py`；测试、注释和新文档使用同一约定。项目外归档的源码、已有结果和固定方案历史推导保留原口径，其局部记号须通过附录（原第 10 节）换算。
+本文是本项目数学符号、代码名称、单位、数组顺序和结果字段的统一约定。正式代码为 `Network/`、`model.py`、`region.py`、`vertify.py`、`plot.py`、`main.py`、`survey.py`、`monitor.py`；测试、注释和新文档使用同一约定。项目外归档的源码、已有结果和固定方案历史推导保留原口径，其局部记号须通过附录（原第 10 节）换算。
 
 **同一个量的含义、单位和索引没有改变，就保持原代码名。** 性能优化、拆函数、改求解器、整理代码都不是重新命名数学量的理由。本文登记当前名称，不要求为追求字面一致再做一次全库改名。新增量和迁移按第 11 节办理。
 
@@ -36,17 +36,17 @@
 | \(\mathcal N,n\)；\(i,j\) | 全部候选非根节点及其索引 | [Network.nodes](../Network/__init__.py)、[Network.n](../Network/__init__.py)、[Network.node_index](../Network/__init__.py)、[Network.root](../Network/__init__.py) |
 | \(\mathcal E,m\)；\(e\) | 候选走廊，按输入顺序 | [Network.corridors](../Network/__init__.py)、[Network.n_corridors](../Network/__init__.py) |
 | \(\mathcal T,t\)；\(\nu\) | 各走廊内型号连续展开；\(\nu\) 是扁平数组位置，总数 t | [Network.type_keys](../Network/__init__.py)、[Network.n_types](../Network/__init__.py) |
-| \((e,k)\) | Gurobi 建模键：走廊 ID 与该走廊内型号 ID；k 不要求全图唯一 | [PlanningEquations.keys](../model.py)、[PlanningEquations.types](../model.py) |
+| \((e,k)\) | Gurobi 建模键：走廊 ID 与该走廊内型号 ID；k 不要求全图唯一 | [GridPhysics.keys](../model.py)、[GridPhysics.types](../model.py) |
 | \(\mathcal T_e\) | 走廊 e 的型号区间；型号到走廊的映射 | [Network.type_slices](../Network/__init__.py)、[Network.type_corridor](../Network/__init__.py) |
 | \(\mathcal L,d\)；\(h\) | 独立负荷节点，`d = len(network.load_nodes)` | [Network.load_nodes](../Network/__init__.py)、[Network.selected](../Network/__init__.py) |
 | \(\mathcal N_{\rm req}\) | 必须接入节点的布尔掩码，`(n,)` | [Network.required](../Network/__init__.py) |
-| \(n_y=3t+n+2m\) | 标准运行向量长度 | [PlanningEquations.slack_slice](../model.py) 的 `.stop` |
-| \(n_{\rm row}\) | 割生成 LP 的线性约束数，随支撑平面变化 | [PlanningSP._separating_cut.rows](../model.py) |
+| \(n_y=3t+n+2m\) | 标准运行向量长度 | [GridPhysics.slack_slice](../model.py) 的 `.stop` |
+| \(n_{\rm row}\) | 割生成 LP 的线性约束数，随支撑平面变化 | [SubProblem._separating_cut.rows](../model.py) |
 | \(n_{\rm tree}\) | 当前方案实际接入的非根节点数，也是树的支路数 | [OperatingTree.n](../Network/__init__.py) |
 
 `network.type_keys[nu] == (e,k)` 是具名键与扁平位置的唯一桥梁。求解器内 `p[i]` 用真实负荷节点 ID；数组 `power[h]` 用 `load_nodes[h]` 的位置。`n/m/t/d` 在数学文档中固定为上表维数；`m = model`、`e = equations` 等既有局部对象别名不重定义这些数学符号。
 
-模型装配可处理 `d` 个负荷坐标；正式 `region.py` 和剩余域几何支持 `d=2` 或 `3`，原 AC 网格输出和实时查看器仍固定三维。二维勘察由 `survey.py` 计算，`plot.py` 绘图。不得仅把文档写成任意维，就声称几何实现已经支持任意维。
+模型装配可处理 `d` 个负荷坐标；正式 `region.py`、剩余域几何和实时查看器支持 `d=2` 或 `3`，AC 网格输出仍固定三维。二维勘察由 `survey.py` 计算，`plot.py` 绘图。
 
 ## 3. 网架参数、量纲和数据入口
 
@@ -54,10 +54,10 @@
 |---|---|---|
 | \(S_{\mathrm b}\)，功率基值 | [Network.base](../Network/__init__.py) | kVA，标量；不是自动等于电源容量 |
 | \(V_{\mathrm b}\)，线电压基值 | [Network.voltage_kv](../Network/__init__.py) | kV，标量 |
-| \(r_{e,k}\)，数组 \(r_\nu\) | [TypeParameters.r](../Network/__init__.py) → [Network.r](../Network/__init__.py)；具名 [PlanningEquations.r](../model.py) | p.u.，标量 → `(t,)` / 按键字典 |
-| \(\chi_{e,k}\)，数组 \(\chi_\nu\) | [TypeParameters.reactance](../Network/__init__.py) → [Network.reactance](../Network/__init__.py)；具名 [PlanningEquations.reactance](../model.py) | p.u.，标量 → `(t,)` / 按键字典 |
+| \(r_{e,k}\)，数组 \(r_\nu\) | [TypeParameters.r](../Network/__init__.py) → [Network.r](../Network/__init__.py)；具名 [GridPhysics.r](../model.py) | p.u.，标量 → `(t,)` / 按键字典 |
+| \(\chi_{e,k}\)，数组 \(\chi_\nu\) | [TypeParameters.reactance](../Network/__init__.py) → [Network.reactance](../Network/__init__.py)；具名 [GridPhysics.reactance](../model.py) | p.u.，标量 → `(t,)` / 按键字典 |
 | \(P_{e,k}^{\max}\)，输入的送端有功上限 | [TypeParameters.capacity](../Network/__init__.py) → [Network.capacity](../Network/__init__.py) | p.u.，标量 → `(t,)`；不是电流或视在功率 |
-| \(c_{e,k}\)，增量投资 | [TypeParameters.investment_cost](../Network/__init__.py) → [Network.cost](../Network/__init__.py)；具名 [PlanningEquations.cost](../model.py) | `cost_unit`，标量 → `(t,)` / 按键字典 |
+| \(c_{e,k}\)，增量投资 | [TypeParameters.investment_cost](../Network/__init__.py) → [Network.cost](../Network/__init__.py)；具名 [GridPhysics.cost](../model.py) | `cost_unit`，标量 → `(t,)` / 按键字典 |
 | 费用单位、默认预算列表 | [Network.cost_unit](../Network/__init__.py)、[Network.budgets](../Network/__init__.py) | FourBus / 江口为元；Case33 为相对投资单位 |
 | \(p^{\rm original},q^{\rm original}\) | [Network.original_p](../Network/__init__.py)、[Network.original_q](../Network/__init__.py) | kW / kvar，`(n,)` |
 | \(p^{\rm fixed},q^{\rm fixed}\) | [Network.fixed_p](../Network/__init__.py)、[Network.fixed_q](../Network/__init__.py) | kW / kvar，`(n,)`；独立负荷节点置零 |
@@ -89,11 +89,11 @@ d^Q(p)=(q^{\rm fixed}+E(\kappa\odot p))/S_{\mathrm b}.
 | \(G=R_{\rm recv}-R_{\rm send}\) | [Network.incidence](../Network/__init__.py) | `(n,m)`；流入为正 |
 | \(E\) | [Network.E](../Network/__init__.py) | `(n,d)`；独立负荷嵌入全部节点 |
 | \(T=R_{\rm recv}H\)、\(J=(R_{\rm send}H)^T\) | 数学推导量；当前具名建模不存储 T/J | `(n,t)` / `(t,n)`；受端关联 / 送端电压提取 |
-| \(\rho_\nu\) | 数学推导量，对应参考送端是否为根 | `(t,)`；根出线集合由 [PlanningEquations.outgoing](../model.py) 给出 |
-| 参考端点、节点入边 / 出边 | [PlanningEquations.ends](../model.py)、[PlanningEquations.incoming](../model.py)、[PlanningEquations.outgoing](../model.py) | 按走廊 / 节点 ID 的字典 |
-| \(a\) | [PlanningModel.active_nodes](../model.py)，局部 `a` | `(n,)`，二进制；根恒接入 |
-| \(f\) | [PlanningModel.__init__.f](../model.py) | `(m,)`；连通虚拟流，不是电功率 |
-| \(x\) | [PlanningModel.x](../model.py) | `(t,)`，完整型号顺序；无第二套压缩选型 |
+| \(\rho_\nu\) | 数学推导量，对应参考送端是否为根 | `(t,)`；根出线集合由 [GridPhysics.outgoing](../model.py) 给出 |
+| 参考端点、节点入边 / 出边 | [GridPhysics.ends](../model.py)、[GridPhysics.incoming](../model.py)、[GridPhysics.outgoing](../model.py) | 按走廊 / 节点 ID 的字典 |
+| \(a\) | [MasterProblem.active_nodes](../model.py)，局部 `a` | `(n,)`，二进制；根恒接入 |
+| \(f\) | [MasterProblem.__init__.f](../model.py) | `(m,)`；连通虚拟流，不是电功率 |
+| \(x\) | [MasterProblem.x](../model.py) | `(t,)`，完整型号顺序；无第二套压缩选型 |
 
 参考端点数组为 [Network.senders](../Network/__init__.py)、[Network.receivers](../Network/__init__.py)，形状 `(m,)`。接根走廊参考方向朝外，其余按输入端点顺序。拓扑约束统一记为
 
@@ -122,30 +122,30 @@ Q_\nu=-Q^{\rm tree}_j+\chi_\nu\ell_\nu\quad(\sigma_j=-1).
 
 ## 5. 具名运行变量、扁平向量和数学标准式
 
-[PlanningEquations](../model.py) 固定状态布局为
+[GridPhysics](../model.py) 固定状态布局为
 
 \[
 y=(P,Q,\ell,v,s^+,s^-),\qquad n_y=3t+n+2m.
 \]
 
-建模使用 [PlanningEquations.add_operation](../model.py) 中的 `P[e,k]`、`Q[e,k]`、`ell[e,k]`、`v[i]`、`plus[e]`、`minus[e]`。它们返回为 `problem.operation` 的同名字段；`state` 是同一批变量的扁平视图，没有第二批运行变量。
+建模使用 [GridPhysics.add_operation](../model.py) 中的 `P[e,k]`、`Q[e,k]`、`ell[e,k]`、`v[i]`、`plus[e]`、`minus[e]`。它们返回为 `problem.operation` 的同名字段；`state` 是同一批变量的扁平视图，没有第二批运行变量。
 
 | 具名对象 | 固定代码定义 | 与向量的关系 |
 |---|---|---|
-| 建设选型、负荷 | [PlanningModel.choices](../model.py)、[PlanningModel.loads](../model.py) | `[e,k]` / `[i]`；[PlanningModel.x](../model.py)、[PlanningModel.power](../model.py) 是共享变量的 MVar 视图 |
-| 有功、无功、电流平方、电压平方 | [PlanningEquations.add_operation.P](../model.py)、[PlanningEquations.add_operation.Q](../model.py)、[PlanningEquations.add_operation.ell](../model.py)、[PlanningEquations.add_operation.v](../model.py) | 根电压 `v[network.root] = 1` 是常数，不进入状态向量 |
-| 正、负开断压降余量 | [PlanningEquations.add_operation.plus](../model.py)、[PlanningEquations.add_operation.minus](../model.py) | 求解器名称 `drop_plus/drop_minus`；数学符号 \(s^+/s^-\) |
-| 完整运行对象、状态 | [PlanningModel.operation](../model.py)、[PlanningModel.state](../model.py) | `cuts_only=True` 时均为 `None` |
+| 建设选型、负荷 | [MasterProblem.choices](../model.py)、[MasterProblem.loads](../model.py) | `[e,k]` / `[i]`；[MasterProblem.x](../model.py)、[MasterProblem.power](../model.py) 是共享变量的 MVar 视图 |
+| 有功、无功、电流平方、电压平方 | [GridPhysics.add_operation.P](../model.py)、[GridPhysics.add_operation.Q](../model.py)、[GridPhysics.add_operation.ell](../model.py)、[GridPhysics.add_operation.v](../model.py) | 根电压 `v[network.root] = 1` 是常数，不进入状态向量 |
+| 正、负开断压降余量 | [GridPhysics.add_operation.plus](../model.py)、[GridPhysics.add_operation.minus](../model.py) | 求解器名称 `drop_plus/drop_minus`；数学符号 \(s^+/s^-\) |
+| 完整运行对象、状态 | [MasterProblem.operation](../model.py)、[MasterProblem.state](../model.py) | `cuts_only=True` 时均为 `None` |
 
 不要因采用 `tupledict`、`MVar` 或 NumPy 就改数学量名称；转换严格使用 `type_keys`、`nodes`、`load_nodes`、`corridors` 顺序。
 
 | 分块 | 唯一切片 | Python 范围 | 含义 |
 |---|---|---|---|
-| \(P\) | [PlanningEquations.P_slice](../model.py) | `[0:t]` | 参考送端有功，p.u. |
-| \(Q\) | [PlanningEquations.Q_slice](../model.py) | `[t:2*t]` | 参考送端无功，p.u. |
-| \(\ell\) | [PlanningEquations.ell_slice](../model.py) | `[2*t:3*t]` | 电流幅值平方，p.u.² |
-| \(v\) | [PlanningEquations.v_slice](../model.py) | `[3*t:3*t+n]` | 非根电压幅值平方，p.u.² |
-| \(s^+,s^-\) | [PlanningEquations.slack_slice](../model.py) | `[3*t+n:3*t+n+2*m]` | 前 m 为正、后 m 为负；开断压降余量，p.u.² |
+| \(P\) | [GridPhysics.P_slice](../model.py) | `[0:t]` | 参考送端有功，p.u. |
+| \(Q\) | [GridPhysics.Q_slice](../model.py) | `[t:2*t]` | 参考送端无功，p.u. |
+| \(\ell\) | [GridPhysics.ell_slice](../model.py) | `[2*t:3*t]` | 电流幅值平方，p.u.² |
+| \(v\) | [GridPhysics.v_slice](../model.py) | `[3*t:3*t+n]` | 非根电压幅值平方，p.u.² |
+| \(s^+,s^-\) | [GridPhysics.slack_slice](../model.py) | `[3*t+n:3*t+n+2*m]` | 前 m 为正、后 m 为负；开断压降余量，p.u.² |
 
 读取使用 `state[equations.P_slice]` 等切片，不在调用方另写一套偏移。接根型号 `P/Q` 下界为零；非根型号允许带符号。未选型号的 `P/Q/ell` 归零；linear 固定全部 `ell=0`。未接入节点的电压是辅助量，不能作为运行电压导出。
 
@@ -169,11 +169,11 @@ l_0+Lx\le y\le u_0+Ux.
 
 | 数学量 | 代码定义 | 形状 / 说明 |
 |---|---|---|
-| \(l^{\rm glob},u^{\rm glob}\)，全局变量盒 | [PlanningEquations.y_lb_global](../model.py)、[PlanningEquations.y_ub_global](../model.py) | `(n_y,)`；保留全部型号，与 x 无关 |
-| \(\overline P,\overline Q,\overline\ell\) | [PlanningEquations.pmax](../model.py)、[PlanningEquations.qmax](../model.py)、[PlanningEquations.ellmax](../model.py) | 按 `(e,k)` 的派生有效界 |
-| \(\underline P,\underline Q\) | [PlanningEquations.pmin](../model.py)、[PlanningEquations.qmin](../model.py) | 根出线为 0，其余为负的有效上界 |
-| \(\underline v,\overline v\) 的具名视图 | [PlanningEquations.vmin](../model.py)、[PlanningEquations.vmax](../model.py) | 节点 ID 字典，含根节点常数 1 |
-| \(M_e\)，开断压降界 | [PlanningEquations.drop_max](../model.py) | 走廊 ID 字典；\(0\le s_e^\pm\le M_e(1-z_e)\) |
+| \(l^{\rm glob},u^{\rm glob}\)，全局变量盒 | [GridPhysics.y_lb_global](../model.py)、[GridPhysics.y_ub_global](../model.py) | `(n_y,)`；保留全部型号，与 x 无关 |
+| \(\overline P,\overline Q,\overline\ell\) | [GridPhysics.pmax](../model.py)、[GridPhysics.qmax](../model.py)、[GridPhysics.ellmax](../model.py) | 按 `(e,k)` 的派生有效界 |
+| \(\underline P,\underline Q\) | [GridPhysics.pmin](../model.py)、[GridPhysics.qmin](../model.py) | 根出线为 0，其余为负的有效上界 |
+| \(\underline v,\overline v\) 的具名视图 | [GridPhysics.vmin](../model.py)、[GridPhysics.vmax](../model.py) | 节点 ID 字典，含根节点常数 1 |
+| \(M_e\)，开断压降界 | [GridPhysics.drop_max](../model.py) | 走廊 ID 字典；\(0\le s_e^\pm\le M_e(1-z_e)\) |
 | 求解结果最大违反量 | Gurobi `model.MaxVio` | 直接读取所建模型的数值质量；MP 接受条件为 `<= PLANNING_TOL` |
 | 测试用原约束最小余量 | [margin](../tests/planning_checks.py) | 保留独立代入检查，仅用于测试和审核，不参与生产求解 |
 
@@ -183,21 +183,21 @@ l_0+Lx\le y\le u_0+Ux.
 
 ## 6. SP、对偶乘子和联合割
 
-固定 \((\hat x,\hat p)\) 后，SP 最小化 \(1000\eta\)、\(\eta\ge0\)，当前 [PlanningSP.solve.eta](../model.py) 的求解器名称为 `violation`。仅功率平衡与压降等式允许 ±eta；选型容量、电压界、开断余量、电源限额和二阶锥保持严格。目标的正比例缩放不改变可行域或认证容差，`state` 不包含 eta。此辅助问题替代旧式“锥首分量也松弛”，不直接比较两者目标或乘子数值；eta=0 对应的物理约束、输出字段和数组布局不变。
+固定 \((\hat x,\hat p)\) 后，SP 最小化 \(\eta\)、\(\eta\ge0\)，当前 [SubProblem.solve.eta](../model.py) 的求解器名称为 `violation`。仅功率平衡与压降等式允许 ±eta；选型容量、电压界、开断余量、电源限额和二阶锥保持严格。`state` 不包含 eta。此辅助问题替代旧式“锥首分量也松弛”，不直接比较两者目标或乘子数值；eta=0 对应的物理约束、输出字段和数组布局不变。
 
-SP 只先求上述带 eta 的问题。存在解且 `max(0, eta.X) + model.MaxVio <= PLANNING_TOL` 时，直接返回求解器的完整运行状态；两项共用误差预算，避免松弛量和求解误差分别达标、相加却超标。不重建状态，也不追加固定 eta=0 的损耗最小化。正 eta 的未完成求解不能单独证明不可行，仍须有效割；无解或无有效证书时保持未确定。
+SP 先求上述带 eta 的问题；求解必须正常结束，且 `MaxVio <= PLANNING_TOL`。`max(0, eta.X) + model.MaxVio <= PLANNING_TOL` 时直接返回原始运行状态；两项共用误差预算。正常求解得到正 eta 超限时，继续执行算法规定的支撑平面 LP 取割。超时、异常终止、证书精度不足或无法分离候选点均报错，不重建状态、不重求、不返回未确定结果继续运行。
 
-SP 设置 `NumericFocus=2`，提高边界与零潮流锥的数值稳定性；它作用于同一次求解，不改变 eta 的定义、物理约束、接受容差或取割代数。[Gurobi 数值参数说明](https://docs.gurobi.com/projects/optimizer/en/current/concepts/numericguide/numeric_parameters.html)
+SP 直接使用 `eta` 目标、`Aggregate=0`、`ScaleFlag=0`、`BarQCPConvTol=1e-9`。前两项避免预处理聚合及额外缩放，最后一项是内点法目标收敛设置。原始可行证书仍须通过 `eta + MaxVio <= PLANNING_TOL=1e-8`，割仍须通过 LP 和候选分离检查。数值设置固定用于所有点，不按失败结果重试或切换。
 
 当前割仍由锥的有效支撑平面 LP 产生。令该 LP 在 eta=0 的线性行系数为 \((M_x,M_p,M_y)\)，右端为 \(b_{\rm row}\)。乘子方向采用 Gurobi 行约定：`>=` 行非负、`<=` 行非正、等式自由；固定 x/p 的等式乘子先置零。
 
 | 数学量 | 代码定义 / 布局 | 说明 |
 |---|---|---|
-| \(\lambda\) | [PlanningSP._separating_cut.dual](../model.py) | `(n_row,)`，对应 `rows`，不是旧锥标准式的行序 |
-| \(M^T\lambda\) | [PlanningSP._separating_cut.coefficients](../model.py) | 按求解器变量索引，不能按猜测切分 |
-| \(h=M_y^T\lambda\) | [PlanningSP._separating_cut.h](../model.py) | `(n_y,)`，通过 `state_ids` 提取全部状态列 |
+| \(\lambda\) | [SubProblem._separating_cut.dual](../model.py) | `(n_row,)`，对应 `rows`，不是旧锥标准式的行序 |
+| \(M^T\lambda\) | [SubProblem._separating_cut.coefficients](../model.py) | 按求解器变量索引，不能按猜测切分 |
+| \(h=M_y^T\lambda\) | [SubProblem._separating_cut.h](../model.py) | `(n_y,)`，通过 `state_ids` 提取全部状态列 |
 | \(h_+,h_-\) | `maximum(h,0)`、`minimum(h,0)` | 内联派生式，没有公开字段 |
-| \(\alpha,\beta,\delta\) | [PlanningSP._separating_cut.cut](../model.py) | `cut[0]`、`cut[1:1+d]`、`cut[1+d:]` |
+| \(\alpha,\beta,\delta\) | [SubProblem._separating_cut.cut](../model.py) | `cut[0]`、`cut[1:1+d]`、`cut[1+d:]` |
 
 唯一割方向是
 
@@ -211,13 +211,15 @@ SP 设置 `NumericFocus=2`，提高边界与零潮流锥的数值稳定性；它
 
 `p` 仍为 kW，`beta` 必须作用于 kW 坐标。实现先作正比例归一化，再给截距加 `1e-10` 的保守补偿；不得把数值割系数直接解释成未经缩放的原始乘子。符号方向必须与上述行约定同时检查，不能搬用旧式 `-B.T @ dual`。`cut` 的布局、正负号、作用范围都属于契约。
 
-[PlanningSP.solve](../model.py) 返回键 [PlanningSP.solve:feasible](../model.py)、[PlanningSP.solve:state](../model.py)、[PlanningSP.solve:cut](../model.py)。`feasible=True` 表示已获原始可行证书；`feasible=False, cut=None` 表示未确定，不能当作已证不可行。
+[SubProblem.solve](../model.py) 返回键 [SubProblem.solve:feasible](../model.py)、[SubProblem.solve:state](../model.py)、[SubProblem.solve:cut](../model.py)。`feasible=True` 表示已获原始可行证书；否则必须返回有效割。旧版 `feasible=False, cut=None` 的未确定返回改为异常，见第 23 节。
 
 ## 7. 连续域、几何坐标和覆盖证书
 
 | 数学量 | 固定映射 | 单位 / 形状 |
 |---|---|---|
-| \(b^{\rm box}\) | [RegionState.bounds](../region.py)，由 [evaluation_bounds](../model.py) 产生或由算例给定有效盒界 | kW，`(d,)`，各轴正上界 |
+| \(b^{\rm box}\) | [RegionState.bounds](../region.py)，由总负荷上界构造或由算例给定有效盒界 | kW，`(d,)`，公共正数坐标尺度 |
+| \(b^{\rm axis}(\mathcal B)\) | [RegionState.axis_bounds](../region.py)、[RemainingRegionModel.__init__.axis_bounds](../model.py)、[build_continuous_region:axis_bounds](../main.py) | kW，`(d,)`；方向 MP2 全局上界，限制本预算的搜索域 |
+| \(w\)，方向目标 \(w^Tp\) | [MasterProblem.direction](../model.py)、[MasterProblem.__init__.direction](../model.py) | 无量纲，`(d,)`；默认全 1，轴向初始化取单位向量 |
 | \(p_\Sigma^{\rm ub}\) | [RegionState.total_bound](../region.py) | kW；由输入总量上界和 MP2 全局上界收紧 |
 | \(\tau\)、\(s_\tau=1-\tau\) | [RegionState.tau](../region.py)、[build_continuous_region.tau](../main.py) | 无量纲；linear 为 0 |
 | \(I_x,O_x\) | [RegionState.add_scheme:inner](../region.py)、[RegionState.add_scheme:outer](../region.py)，存在 `records[tuple(x)]` | 归一化顶点 `(n_vertices,d)`，分别为认证内域、候选外域 |
@@ -232,10 +234,10 @@ SP 设置 `NumericFocus=2`，提高边界与零潮流锥的数值稳定性；它
 
 | 接口 / 数据 | 输入或存储坐标 |
 |---|---|
-| `PlanningSP.solve(..., power)`、`PlanningModel(..., power=...)` | kW |
-| `RegionState.add_point(..., point)`、`next_point`、`covering_schemes`、`witness_support` | \(\xi\)，无量纲 |
-| `build_continuous_region` 中的 `point/pending` | \(\xi\)，直接调用 SP 前乘 `bounds` |
-| `build_continuous_region` 中的 `seed/witness['p']` | kW；见证转成 `pending` 时除以 `bounds` 并乘 `1-tau` |
+| `SubProblem.solve(..., power)`、`MasterProblem(..., power=...)` | kW |
+| `RegionState.add_point(..., point)`、`covering_schemes`、`witness_support` | \(\xi\)，无量纲 |
+| `build_continuous_region` 中的 `point` | \(\xi\)，直接调用 SP 前乘 `bounds` |
+| `build_continuous_region` 中的 `witness['p']` | kW；见证转成 `point` 时除以 `bounds` 并乘 `1-tau` |
 | `RegionState.finish` 导出的 `inner/outer[*]['vertices']` | kW，已乘 `bounds` |
 | `plot.sample_region(..., points, bounds)` | 输入 `points` 为 kW，内部归一化 |
 | `halfspaces`、`contains`、`clip_polytope` | 不自动换算；输入必须处于同一坐标系，主流程使用 \(\xi\) |
@@ -260,16 +262,16 @@ SP 设置 `NumericFocus=2`，提高边界与零潮流锥的数值稳定性；它
 
 ### 8.1 MP1 / MP2 的答案
 
-[PlanningModel.__init__.power](../model.py)、[PlanningModel.__init__.min_total](../model.py)、[PlanningModel.solve.radial_gap_kw](../model.py) 均用 kW；[PlanningModel.__init__.budget](../model.py) 用投资单位。没有固定负荷和最低总量时是 MP2（最大总负荷）；有任一条件时是 MP1（最低投资）。割作为 [PlanningModel.__init__.cuts](../model.py) 传入；[PlanningModel.solve.incumbent](../model.py) 与 [PlanningModel.solve.start](../model.py) 延续原有初始解语义，前者优先。
+[MasterProblem.__init__.power](../model.py)、[MasterProblem.__init__.min_total](../model.py)、[MasterProblem.solve.radial_gap_kw](../model.py) 均用 kW；[MasterProblem.__init__.budget](../model.py) 用投资单位。没有固定负荷和最低总量时是 MP2（最大化 `direction @ p`，默认总负荷）；有任一条件时是 MP1（最低投资）。割作为 [MasterProblem.__init__.cuts](../model.py) 传入；[MasterProblem.solve.incumbent](../model.py) 与 [MasterProblem.solve.start](../model.py) 延续原有初始解语义，前者优先。方向初始化不传 `incumbent`，避免其成本上界限制另一方向的合法网架。
 
-主流程直接创建模型并调用 `solve`，不保留 `planning_query`。MP 的运行证书和目标间隙在 `PlanningModel.solve` 中判断；数值质量不足且仍有候选时，由构域入口显式调用 SP。补救成功只补充 `state/feasible` 并标记 `status='feasible'`，不额外宣称 MP 最优。
+主流程直接创建模型并调用 `solve`，不保留 `planning_query`。MP 的运行证书和目标间隙在 `MasterProblem.solve` 中判断；超时、无候选、异常终止或精度超限直接报错，不再调用 SP 补救或改写答案。明确不可行仍返回 `None`，主动设置的目标停止允许返回已获证候选。`cuts_only=True` 仍不包含运行证书。
 
 | 字段 | 定义位置 | 固定语义 |
 |---|---|---|
-| `x`、`p`、`state` | [PlanningModel.solve:x](../model.py)、[PlanningModel.solve:p](../model.py)、[PlanningModel.solve:state](../model.py) | 型号向量、kW 负荷、完整运行向量；未找到候选时可为 `None` |
-| `objective` | [PlanningModel.solve:objective](../model.py) | MP2 为可行总负荷 kW；MP1 为投资；须结合 `feasible` 解读 |
-| `bound` | [PlanningModel.solve:bound](../model.py) | MP2 为全局上界，MP1 为全局下界；单位随目标变化 |
-| `feasible`、`status` | [PlanningModel.solve:feasible](../model.py)、[PlanningModel.solve:status](../model.py) | `optimal/feasible/unknown`；由是否有运行解、求解器质量及目标界共同判断，不等同于独立 AC 认证 |
+| `x`、`p`、`state` | [MasterProblem.solve:x](../model.py)、[MasterProblem.solve:p](../model.py)、[MasterProblem.solve:state](../model.py) | 型号向量、kW 负荷、完整运行向量；`cuts_only` 的 `state=None`；未找到候选改为异常 |
+| `objective` | [MasterProblem.solve:objective](../model.py) | MP2 为 `direction @ p`，kW；默认全 1 时仍为总负荷；MP1 为投资 |
+| `bound` | [MasterProblem.solve:bound](../model.py) | MP2 为全局上界，MP1 为全局下界；单位随目标变化 |
+| `feasible`、`status` | [MasterProblem.solve:feasible](../model.py)、[MasterProblem.solve:status](../model.py) | `optimal/feasible`；质量不合格改为异常，旧 `unknown` 记录保留；不等同于独立 AC 认证 |
 
 `None` 答案表示已证不可行。剩余模型的 [RemainingRegionModel.solve:bound](../model.py) 是 \(\overline\gamma\)，[RemainingRegionModel.solve:complete](../model.py) 是覆盖结论，不能按 MP1 / MP2 的目标值解释。
 
@@ -277,7 +279,7 @@ SP 设置 `NumericFocus=2`，提高边界与零潮流锥的数值稳定性；它
 
 [ACPowerFlow](../vertify.py) 接收选定的 `OperatingTree`；其属性虽然叫 `network`，索引是树局部索引。`state(power, ell)` 返回 `(P,Q,v,u)`：均为 `(batch,n_tree)`，功率朝根向外；`v/u` 分别为受端 / 送端电压平方。内部 [ACPowerFlow._state.p](../vertify.py)、[ACPowerFlow._state.q](../vertify.py) 表示标幺节点负荷 \(d^P,d^Q\)，不作为 kW 接口传播。
 
-`ell` 是电流平方，AC 残差为 \(P^2+Q^2-u\ell\)。[ACPowerFlow.classify](../vertify.py) 输出 `1/-1/0`（可行 / 已证不可行 / 未确定）；[ac_planning_query](../vertify.py) 返回经过 AC 校核的方案答案，并删除 SOCP 的 `'state'`，避免充作 AC 证书。
+`ell` 是电流平方，AC 残差为 \(P^2+Q^2-u\ell\)。[ACPowerFlow.classify](../vertify.py) 输出 `1/-1`（可行 / 已证不可行），未收敛直接报错，不转用全局模型；[ac_planning_query](../vertify.py) 返回经过 AC 校核的方案答案，并删除 SOCP 的 `'state'`，避免充作 AC 证书。`global_status` 仅供显式交叉核验，未获证同样报错。
 
 ### 8.3 连续域结果和网格
 
@@ -286,7 +288,7 @@ SP 设置 `NumericFocus=2`，提高边界与零潮流锥的数值稳定性；它
 | `max_total`、`max_total_bound` | [build_continuous_region:max_total](../main.py)、[build_continuous_region:max_total_bound](../main.py) | 最大总负荷的可行值、全局上界，kW；未获值可为 `None` |
 | `max_point`、`max_choice`、`max_cost` | [build_continuous_region:max_point](../main.py)、[build_continuous_region:max_choice](../main.py)、[build_continuous_region:max_cost](../main.py) | kW 向量、具名方案、投资 |
 | `inner`、`outer`、`vertices` | [RegionState.finish:inner](../region.py)、[RegionState.finish:outer](../region.py)、[RegionState.finish:vertices](../region.py) | 最终顶点为 kW；`inner` 各项另含 `choice/cost`；`outer` 为全局外包络 |
-| `status`、`counts`、`timing` | [build_continuous_region:status](../main.py)、[build_continuous_region:counts](../main.py)、[build_continuous_region:timing](../main.py) | `certified/unknown/time_limit`；`sp/cuts` 次数；`total_seconds` 秒 |
+| `status`、`counts`、`timing` | [build_continuous_region:status](../main.py)、[build_continuous_region:counts](../main.py)、[build_continuous_region:timing](../main.py) | 成功返回 `certified`，未完成改为异常；旧 `unknown/time_limit` 记录保留；`sp/cuts` 次数；`total_seconds` 秒 |
 | 三态网格 | [BenchmarkResult.states](../plot.py) | `(len(METHODS), n_budgets, N_g, N_g, N_g)`，`-1/0/1` |
 | 方法轴顺序 | [METHODS](../plot.py) | `('socp','hybrid','ac','linear')`；不要猜下标 |
 | 配置及元数据 | [BenchmarkResult.metadata](../plot.py) | `schema_version`、`network_fingerprint`、`load_nodes`、`bounds`、`budgets` 等 |
@@ -305,7 +307,7 @@ SP 设置 `NumericFocus=2`，提高边界与零潮流锥的数值稳定性；它
 | MR | [disagreement:mr_percent](../plot.py) | \(100\mu(\mathcal A\setminus\mathcal R)/\mu(\mathcal A)\)，百分数 |
 | 区域误差 | [disagreement:region_error_percent](../plot.py) | \(100\mu(\mathcal R\triangle\mathcal A)/\mu(\mathcal R\cup\mathcal A)\)，百分数 |
 
-网格估计不等于连续几何证明；AC 未确定点由 `disagreement_interval` 保留区间。FR/MR 的空分母返回 `None`，空并集的区域误差返回 0。不要把 `volume_gap` 比例值直接按 `*_percent` 显示。
+网格估计不等于连续几何证明；历史 AC 未确定点由 `disagreement_interval` 保留区间，新运行的 AC 未收敛则报错。FR/MR 的空分母返回 `None`，空并集的区域误差返回 0。不要把 `volume_gap` 比例值直接按 `*_percent` 显示。
 
 ## 9. 容差和运行参数
 
@@ -315,12 +317,12 @@ SP 设置 `NumericFocus=2`，提高边界与零潮流锥的数值稳定性；它
 | \(\varepsilon_{\rm geom}\)，归一化覆盖 | [GEOMETRY_TOL](../region.py) | `1e-8`，无量纲；与物理容差独立 |
 | AC 运行限值容差 | [AC_TOL](../vertify.py) | `1e-9`，标幺尺度 |
 | AC 电流等式迭代容差 | [FIXED_POINT_TOL](../vertify.py) | `1e-12`，\(P^2+Q^2-u\ell\) 残差尺度 |
-| AC 后备全局模型认证容差 | [GLOBAL_AC_TOL](../vertify.py) | `1e-7`，用于残差与运行违反量 |
+| AC 显式全局参照模型认证容差 | [GLOBAL_AC_TOL](../vertify.py) | `1e-7`，用于残差与运行违反量 |
 | 径向收缩 \(\tau\) | [REGION_TAU](../main.py) | `0.002`，`0 <= tau < 1` |
-| MP2 目标间隙容差 | [PlanningModel.solve.radial_gap_kw](../model.py) | `1e-3` kW；保留既有参数名，仅用于目标间隙判定，不再修改负荷，不是 `tau` |
+| MP2 目标间隙容差 | [MasterProblem.solve.radial_gap_kw](../model.py) | `1e-3` kW；保留既有参数名，仅用于目标间隙判定，不再修改负荷，不是 `tau` |
 | 单次 MP / SP / 剩余域 / AC 时限 | [MP_TIME_LIMIT](../model.py)、[SP_TIME_LIMIT](../model.py)、[RESIDUAL_TIME_LIMIT](../model.py)、[AC_TIME_LIMIT](../vertify.py) | 秒；SP 按方法取值 |
 | 整体时限、线程 | [CASE_TIME_LIMIT](../main.py)、[SOLVER_THREADS](../main.py)、[DEFAULT_SOLVER_THREADS](../model.py) | 秒、正整数；混合阶段共享整体时限 |
-| 每批 SP 候选数、AC 迭代上限 | [REFINEMENT_CHECKS](../region.py)、[AC_ITERATIONS](../vertify.py) | 正整数 |
+| 全局搜索间隔、AC 迭代上限 | [REFINEMENT_CHECKS](../main.py)、[AC_ITERATIONS](../vertify.py) | 正整数；前者为自上次全局搜索以来的 SP 次数，活动见证处理完后生效 |
 | 算例 / 升级数 / 预算 / 剩余域模式 | [NETWORK](../main.py)、[UPGRADE_COUNT](../main.py)、[BUDGETS](../main.py)、[RESIDUAL_MODE](../main.py) | 配置，不另创造数学决策变量 |
 
 数值取值以对应代码常量为准；调整时同步本表及结果元数据说明。不得将不同语义的容差合成一个通用 `tol` 后改变认证口径。
@@ -369,7 +371,7 @@ python -m unittest tests.test_notation -v
 
 ## 13. 1.2 迁移记录：主流程直接调用模型
 
-- 删除生产接口 `planning_query`：其 `power/budget/min_total/fixed_plan/cuts/threads` 由 `PlanningModel` 建模接收，`incumbent/start/radial_gap_kw` 由 `PlanningModel.solve` 接收；参数名、单位、初始解优先级和目标间隙容差不变。`deadline` 由构域入口管理，传给各模型的是该次剩余 `time_limit`。
+- 删除生产接口 `planning_query`：其 `power/budget/min_total/fixed_plan/cuts/threads` 由当时的 `PlanningModel` 建模接收，`incumbent/start/radial_gap_kw` 由 `PlanningModel.solve` 接收；参数名、单位、初始解优先级和目标间隙容差不变。`deadline` 由构域入口管理，传给各模型的是该次剩余 `time_limit`。
 - 删除 `solve_region` 和 `ContinuousRegion` 调度层。`build_continuous_region` 直接调用 MP、SP、剩余域模型；`region.py` 只保留几何状态、选点、并集覆盖及裁剪。`RegionTimeout` 移到 `main.py`，不增加新的求解包装函数。
 - `ContinuousRegion.tau` 迁到构域入口的 `tau` 与 `RegionState.tau`；原 `ContinuousRegion.finish` 的所有结果字段迁到 `build_continuous_region`，名称、单位和存储格式不变。`point/pending` 保持归一化坐标，`seed/witness['p']` 保持 kW。
 - MP 可行点立即登记，防止 MP1 超时丢失 MP2 证书；按完整 `x` 合并初始方案，保留同方案的不同可行点。剩余域见证仍先补同方案支撑点，避免物理种子造成自覆盖。每批上限仍为 `REFINEMENT_CHECKS`，全局完成仍只由覆盖证书决定。
@@ -416,7 +418,7 @@ python -m unittest tests.test_notation -v
 ## 17. 1.3 恢复记录：对偶主线、二维几何和五节点候选案例
 
 - 恢复来源为 `d25c070`；恢复前 v2 契约和源码备份已移入项目外清理归档；1.3 登记完整保留在 [历史契约](notation-history.md)。原第 10 节局部记号表改为附录，保留道路研究第 10.1–10.9 节编号。
-- `PlanningSP`、`eta`、`cut=[alpha,*beta,*delta]`、`RemainingRegionModel`、`RegionState` 重新成为活动接口。v2 的 `mode/epsilon_kw/branch_cuts/Cell` 等接口退出主线，历史结果不转换，不把旧 `tau` 和 kW 距离容差混用。
+- `PlanningSP`、`eta`、`cut=[alpha,*beta,*delta]`、`RemainingRegionModel`、`RegionState` 重新成为当时的活动接口。v2 的 `mode/epsilon_kw/branch_cuts/Cell` 等接口退出主线，历史结果不转换，不把旧 `tau` 和 kW 距离容差混用。
 - 几何输入 `points/vertices` 为 `(N,d)`，`bounds` 为 `(d,)`，`d=2` 或 `3`。所有割仍为 `(1+d+t,)`，其中负荷系数始终乘 kW；`RegionState` 内部仍使用 `xi=p/bounds`。二维 `polytope_volume` 是面积，三维是体积，乘 `prod(bounds)` 恢复 kW^d。
 - 原三维 AC 网格和实时查看器保留；二维五节点由专用勘察比较入口导出结果与图，不把二维数组伪装成三维网格。
 
@@ -474,3 +476,161 @@ python -m unittest tests.test_notation -v
 `survey_plot.py` 合并至 `plot.py` 并删除。勘察绘图只对外提供 [render_survey](../plot.py)，原 `concept_figure/history_figure` 的图形组装合并到该函数，几何绘制和曲线绘制仅作为函数内部的共用辅助步骤。原脚本命令改为 `python plot.py --results <结果目录>`。
 
 `render_survey(result, output)` 的参数及 PDF/SVG/PNG 文件名保持不变；输入仍为 `survey-v2` 结果，`p_a/p_b/p_mid`、区域坐标、面积、评分、观测顺序和全部数值字段均不变。保留前两节的历史接口说明用于追溯，不保留旧模块转发或第二套绘图接口。
+
+## 21. 1.7 类名迁移：物理规则、主问题与子问题
+
+按职责将 `PlanningEquations` → `GridPhysics`、`PlanningModel` → `MasterProblem`、`PlanningSP` → `SubProblem`。`GridPhysics.add_operation` 仍向传入的 Gurobi 模型添加运行变量及电气约束；`MasterProblem` 仍建立完整的 MP1/MP2 规划问题（包括物理约束）；`SubProblem` 仍固定 `x,p` 检查运行可行性并生成联合割。只改类名和调用点，不改变 `equations` 等局部对象别名、数学量字段、形参、字典键、单位、状态布局或求解目标。历史源码和结果不改写；前述迁移记录保留其当时使用的类名。
+
+
+## 22. 1.8 迁移：统一运行记录与单步执行
+
+- `RunMonitor` 从 `plot.py` 迁到 `monitor.py`，类名和既有回放字段不改名；调用方直接导入新模块。
+- `main.run` 统一管理二维勘察与三维构域的记录、输出目录和保存；`survey.run_survey` 移除 `output`，只返回既有 `survey-v2` 结果。`survey.py` 命令行委托 `main.run`，不再单独写结果。
+- 每次运行的 `steps.jsonl` 逐事件保存版本 2 的增量帧，可在结束前读取；每 100 帧保存完整状态。`live_view.html` 是同一记录的离线导出，`results.json` / `result.npz` 保留既有科研结果格式。历史文件不转换、不删除。
+- `checkpoint` 表示算法步骤边界；`step_by_step` 控制是否在边界等待。`waiting`、`paused_seconds` 与 `run_id` 是控制和记录字段，不是数学量。`clock` 返回扣除人工等待后的秒数，构域时限、阶段耗时及勘察耗时使用同一时钟；墙钟耗时另存 `wall_seconds`。
+- 事件中的 `answer` 保存模型原返回字典，`point` 仍为展示用 kW，几何内部仍为归一化坐标。`point_reason` 只说明选点来源。`query` 和 `attempt` 区分道路集合构域及其 light / physical 尝试，割必须结合当次方案解释。
+- 事件中的 `survey` 使用现有信息状态字段；`all_candidates` 为当前轮带 `step` 的评分，`route` / `survey_observation` 为实际决策和观测。信息上下域与数值内外域分别展示，不跨方案取凸包。
+- 二维 `surface` 保留按边界排序的顶点，`faces=[]`；三维继续输出三角面。联合割仍按 `[alpha, *beta, *delta]` 切片，二维画条件直线、三维画条件平面。
+
+## 23. 1.9 迁移：失败直接停止，移除自动补救
+
+1. MP 不再接受异常终止、无候选或超容差结果，不再交给 SP 修复 `state/feasible/status`。已证不可行仍返回 `None`；求解器主动目标停止仍可返回合格候选，单位、字段及目标界含义不变。
+2. SP 只保留“正常求解 → 可行证书或正 eta 的 LP 联合割”主线。超时、数值异常、无有效割改为 `RuntimeError`；原 `feasible=False, cut=None` 失败返回退出活动接口，历史记录不改写。
+3. 剩余域无覆盖证书且无有效见证、割不产生进展及构域总时限耗尽均报错。`RegionTimeout` 向上传递，不再转成 `time_limit` 结果继续下一阶段；失败现场由 `RunMonitor` 写入步骤日志和回放，成功结果格式不变。
+4. 道路域只执行一次 light 构域，不再失败后切换 physical；历史回放中的 `attempt` 保留，新记录恒为 1。保留基于已认证子集/超集的数学包含关系收紧，这不是异常补救。
+5. 删除 `_convex_hull` 的异常后坐标变换重算，调用方直接使用 `ConvexHull`；支撑点线性方程奇异或找不到包含见证的单纯形时直接报错。AC 不收敛不再调用全局后备模型；`global_status` 仅作显式参照检查。空集、低维集合、可行/不可行证书、有效割和正常算法迭代均保留。
+
+以上迁移改变失败处理，不放宽任何容差、不改负荷、不修改数学约束。测试侧的未确定点二次 SP 分离也已移除。保留此前各节的迁移历史和旧结果字段，旧回放仍可读取。
+
+
+## 24. 2.0 迁移：方向初始化与单循环 SOCP 主线
+
+1. `MasterProblem.direction` 新增无量纲 `(d,)` 目标向量。MP2 的 `objective/bound` 对应 `direction @ p`，默认全 1 保持原总负荷含义；成本最小化分支不变。
+2. 新增 `axis_bounds`，由本预算方向 MP2 的全局上界产生，作为几何和剩余域约束；`bounds` 仍是公共正数归一化箱。`RegionState.tighten_bounds` 同步已有和后续网架；结果新增同名 kW 字段，旧结果缺少该字段仍按既存顶点显示。
+3. 删除默认 MP1 初始化、`seeds/queue/pending/seed` 调度和 `RegionState.next_point`。所有选点与求解分支在 `main.build_continuous_region`，普通候选取真实总负荷最大，内部见证取缺少当前网架认证的最大负荷支撑点。没有有效支撑时直接失败，不退回另一种选点规则。
+4. `REFINEMENT_CHECKS` 从 `region.py` 移至 `main.py`，从每个方案的批次上限改成全局搜索间隔；活动见证完成后检查。`evaluation_bounds` 退役：公共箱直接来自总负荷上界或算例，本预算紧外域由方向 MP2 产生；旧函数的调用方已迁移，历史记载保留。
+5. 主入口默认仅计算 SOCP，AC 在所有预算构域完成后运行。未计算方法的网格维度仍保留为未知；报表只列实际计算的方法，不改变既有 `METHODS` 索引。
+6. 删除主入口的通用输入检查和构域中重复的无进展诊断，不增加自动重试、重求或答案修复。保留可行证书、有效割、覆盖上界和求解状态的数学接受条件。
+7. 步骤的 `answer` 不再重复存储运行向量 `state` 和联合割 `cut`；割仅在 `cut` 事件保存。结果去掉道路/型号参数副本、容量统计和容差字典，保留网架标识、预算、评价箱、精度、域、认证结论及耗时；已有字段的单位和历史文件不变。
+8. SP 目标由 `1000*eta` 改为原始 `eta`，使用 `Aggregate=0`、`ScaleFlag=0`，不再覆写默认 `NumericFocus`；SP 的 `BarQCPConvTol` 从通用 `1e-10` 改为 `1e-9`。这改变求解器聚合、缩放与目标收敛设置，不改变物理接受阈值 `PLANNING_TOL=1e-8`、最优 eta 或有效割判据。联合割仍作同一正比例归一化；不添加失败后分支。
+
+## 25. 独立 FourBus 外域实验：最大 SP 违反量
+
+`experiments/fourbus_outer.py` 不接入 `main.py`。初始化、拓扑预算约束、物理约束及联合割沿用 `MasterProblem`、`GridPhysics`、`SubProblem`；不改变以上接口。实验外域是满足拓扑、预算、方向上界与所有联合割的 **(x,p) 联合集合**，负荷外域取其在 p 上的投影，不跨方案取凸包。
+
+固定 x,p 的 SP 写为 `sp_y @ y + sp_eta * eta + sp_x @ x + sp_p @ p <= sp_rhs`，并保留 `cone_constant + cone_y @ y` 所属的各个 Lorentz 锥。状态变量的有限上下界也列入线性行；eta >= 0 单独处理。所有系数直接导出现有具名模型，不另写潮流方程。
+
+| 符号 / 定义 | 固定代码映射 | 单位、形状、产生和消费位置 |
+|---|---|---|
+| SP 线性行系数、右端 | [export_sp](../experiments/fourbus_outer.py) 的 `sp_y/sp_eta/sp_x/sp_p/sp_rhs` | 行数为原线性行加 2*len(y)；列序分别为既有 y、eta、x、p；系数沿用原标幺残差与 kW 输入 |
+| 锥仿射映射 | `cone_y/cone_constant/cone_slices` | 各锥依次堆叠头及尾；列按既有 y；由 `operation.cones` 导出，交给完整锥对偶 |
+| μ：线性 <= 行的非负乘子 | [GlobalViolation.row_dual](../experiments/fourbus_outer.py) | `(n_rows,)`，归一化 `-sp_eta @ row_dual <= 1`；不是已有取割 LP 的带符号 `dual` |
+| s：自对偶 Lorentz 锥乘子 | [GlobalViolation.cone_dual](../experiments/fourbus_outer.py) | 堆叠锥维数；头非负，尾自由；满足每个锥约束及 `sp_y.T @ μ = cone_y.T @ s` |
+| 候选点的保守对偶下界 | [GlobalViolation.candidate_lower](../experiments/fourbus_outer.py) | eta 尺度；将 μ 取非负并归一化、将 s 的头提升至不小于尾的范数，再用 y 的有限盒补偿驻点残差，保证 `objective` 是下界而非未经检查的数值目标 |
+| x_j (sp_x.T μ)_j | [GlobalViolation.choice_term](../experiments/fourbus_outer.py) | `(t,)`；用二元指示约束精确表示，不人为截断无界乘子 |
+| R：全局最大最小违反量 | [GlobalViolation.violation](../experiments/fourbus_outer.py) | 标量，沿用 SP 原始 eta 尺度；目标为 max R，R <= μᵀ(sp_x x+sp_p p-sp_rhs)−sᵀcone_constant；不能解释为 kW 或几何距离 |
+| G 候选下界与全局上界 | [GlobalViolation.solve:objective](../experiments/fourbus_outer.py)、[GlobalViolation.solve:bound](../experiments/fourbus_outer.py) | 同 R；objective 由 `candidate_lower` 计算，bound 取本轮求解器界、历史有效界和解析界的最小值，并约束后续 G。外域只收缩，故旧上界仍有效；候选下界不能用来判断停止 |
+| 总负荷方向上界 | [run_experiment.total_bound](../experiments/fourbus_outer.py) | kW，来自全 1 方向 MP2 的 bound；`axis_bounds` 沿用第 24 节定义 |
+| 外域停止阈值 ε | [run_experiment.epsilon](../experiments/fourbus_outer.py) | 原始 eta 尺度，不是 PLANNING_TOL、tau 或 kW；只认证残差精度，不认证面积误差或 AC 可行性 |
+| 已有有效联合割 | [run_experiment.cuts](../experiments/fourbus_outer.py) | 沿用既有 `(1+d+t,)` 数组列表；仅复用同一 FourBus 物理模型的割，默认空；`initial_cut_count` 记录继承条数，不继承旧 G 的目标或上界 |
+
+FourBus 中零潮流、v=1、压降松弛为零满足全部 SP 硬约束，故 eta* <= max(p)/base（该算例无固定负荷且 q_ratio < 1）。G 使用这条解析上界，不使用任意乘子大 M。固定方案去掉未选型号的零变量和冗余锥后，松弛等式问题有严格可行点；完整锥对偶用于表达最小 SP 值。实验须数值核对固定候选的原始与对偶值、割的全局有效性；求解器上界及结论受数值容差约束。
+
+候选下界使用 h=sp_y.T μ−cone_y.T s，计算 μᵀ(sp_x x+sp_p p−sp_rhs)−sᵀcone_constant + h⁺ᵀy_lb_global + h⁻ᵀy_ub_global，再与 0 取最大。它是有界 y 域上的拉格朗日下界；驻点等式精确成立时补偿项为零。不能只凭平方锥约束的 `MaxVio` 把数值目标当成严格对偶值。早期试验的 `scaled_cone_dual` / `CONE_DUAL_SCALE=1000` 因放大全局求解的数值残差已撤回，实际 s 的名称与含义不变；登记保留在此作为实验迁移说明。
+
+新增方案来自 G 对全部预算内二元组合的隐式搜索。某对 (x,p) 被切除不等于该 p 在其他方案中被排除。实验仅保存初始化、各轮候选/界/割、最终停止状态与耗时到独立结果目录；另导出 `outer.lp`，其中只有拓扑、预算、方向上界和联合割，可固定 p 后搜索是否存在 x，未展开方案或顶点。不更改主线输出格式。
+## 26. FourBus 外域独立扫描与迭代绘图
+
+`experiments/fourbus_outer_scan.py` 只读第 25 节实验结果，调用未加实验割的完整 SOCP 模型获得独立参考；`experiments/fourbus_outer_plot.py` 只读扫描输出。两者不进入主线。参考始终允许全部预算内建设变量 x 与运行变量 y 自由选择，不枚举或限制为已发现方案。此处“参考”指同一 SOCP 模型的有限采样，不是 AC 真值或连续域的完整证书。
+
+| 符号 / 定义 | 固定代码映射 | 单位、形状及含义 |
+|---|---|---|
+| 三维扫描点及间距 | [scan_grid.power](../experiments/fourbus_outer_scan.py)、[scan_grid.grid_step](../experiments/fourbus_outer_scan.py) | kW，`(N,3)` 与标量；均匀体素中心，网格箱向上取整覆盖轴向上界 |
+| 逐点 SOCP 参考标签 | [scan_grid.reference](../experiments/fourbus_outer_scan.py) | `(N,)`；1 表示完整模型可行，-1 表示全局判定不可行；异常或质量不合格直接停止，不计为不可行 |
+| 首次被负荷投影外域排除的轮次 | [scan_grid.first_exclusion](../experiments/fourbus_outer_scan.py) | `(N,)`；0 表示初始化已排除，k 表示第 k 条割后首次排除，K+1 表示最终仍保留；固定 p、放开全部 x 查询联合割投影，利用嵌套性二分查找 |
+| 负荷比例 w 与径向容量 ρ | [scan_rays.weights](../experiments/fourbus_outer_scan.py)、[scan_rays.radial_total](../experiments/fourbus_outer_scan.py) | w 无量纲、非负且和为 1；ρ 为 kW，p=ρw；每条射线分别最大化完整 SOCP 与联合割外域中的总负荷 |
+| 方向扫描参考、外域容量 | [scan_rays.reference_total](../experiments/fourbus_outer_scan.py)、[scan_rays.outer_total](../experiments/fourbus_outer_scan.py) | kW，两个独立优化问题；同时保存各自全局上界。差值是相同负荷比例的总量差，不是欧氏距离 |
+| 候选 SP 最优违反量 | [candidate_eta](../experiments/fourbus_outer_scan.py) | 固定历史 x,p 后重新求原始 SOCP 的最小 eta，沿用原始残差尺度；是事后复核，不能作为原运行时已计算的记录 |
+| 有效历史 G 上界 | [run_scan.effective_bound](../experiments/fourbus_outer_scan.py) | eta 尺度；跨 61+20 轮取已有有效界的累积最小值。续算程序本身未继承此界，图注明确区别原记录和后处理 |
+| 扫描体积估计 | `grid_step**3 * count` | kW³；体素中心分类的数值估计，不是内/外域连续体积证书；跨方案射线边界的连线/曲面也仅用于显示插值 |
+
+完整迭代链须校验续算前缀割与原 61 条逐项一致。图中方案编号 S01… 按初始化及候选首次出现编号，仅表示实际访问的方案；G 候选的方案不等于已通过 SP 认证的方案。不把其他试运行拼接进这条迭代链。
+
+边界射线及历史候选全局可行性复核统一使用 `NumericFocus=3`，历史候选复核另统一设置 `Aggregate=0`，以控制约束残差与边界点的聚合数值问题；不放宽 `PLANNING_TOL=1e-8`，不添加逐点失败后重试或改变参考物理模型。网格参考点沿用标准求解设置。
+
+## 27. FourBus 负荷分块与角点上界实验
+
+`experiments/fourbus_outer_partition.py` 复用第 25 节的完整锥对偶、拓扑预算及 SP 联合割，不修改主线或原双线性实验。固定 x 时 eta*(x,p) 对 p 凸。对负荷块 C=[lower,upper]，以 `X_C={x: 存在 p 属于 C 且 (x,p) 属于当前联合外域}` 筛选网架，计算 `U_C=max_{x in X_C, c in corners(C)} eta*(x,c)`，因此原联合外域在 C 内的最大违反量不超过 U_C。角点 c 可能不在该网架外域内，只能用于上界；实际送入 SP 的 p 必须位于该网架外域与 C 的交集。
+
+| 数学量 / 定义 | 固定代码映射 | 单位、形状与使用位置 |
+|---|---|---|
+| 负荷块上下界 | [CornerViolation.solve_box.box_lower](../experiments/fourbus_outer_partition.py)、[CornerViolation.solve_box.box_upper](../experiments/fourbus_outer_partition.py) | kW，`(d,)`；约束 `problem.power`，保持 p 为外域交集见证的原语义 |
+| theta=sp_p.T mu | [CornerViolation.theta](../experiments/fourbus_outer_partition.py) | `(d,)`，eta/kW；保留全部原始对偶约束和聚合等式；由 eta 归一化推出上下界，不任意截断乘子 |
+| 角点选择位 b | [CornerViolation.corner_bits](../experiments/fourbus_outer_partition.py) | 二元 `(d,)`；c=box_lower+(box_upper-box_lower)*b；一次 MISOCP 隐式选择全部 2**d 个角点 |
+| t_j=b_j theta_j | [CornerViolation.corner_term](../experiments/fourbus_outer_partition.py) | `(d,)`；有有效 theta 界的精确二元乘积线性化；不含连续双线性项 |
+| 实际评估角点 c | [CornerViolation.solve_box:corner](../experiments/fourbus_outer_partition.py) | kW，`(d,)`；与返回键 p 区分，角点本身不要求满足当前割 |
+| 角点下界 / 块上界 | [CornerViolation.solve_box:objective](../experiments/fourbus_outer_partition.py)、[CornerViolation.solve_box:bound](../experiments/fourbus_outer_partition.py) | eta 尺度；objective 只是在角点的对偶下界，不能当作外域反例；bound 取父块有效界、解析界及求解器全局界的最小值 |
+| 块内真实候选 | [CornerViolation.witness](../experiments/fourbus_outer_partition.py) | 固定角点模型返回的 x 和乘子，在同一块与外域内最大化对偶负荷线性项；返回既有 x/p 字段，调用原 SP 检查 |
+| 分块全局上界 | [run_trial:bound](../experiments/fourbus_outer_partition.py) | 所有待处理块及已认证块有效界的最大值；分裂子块继承父界，加割后旧界仍有效；不得跨不相交块传递较小的局部界 |
+| 对照运行时间 | [run_trial:seconds](../experiments/fourbus_outer_partition.py) | 秒；包含本方法建模、求解、SP、切割与保存，不包含两方法共享且单列的 MP2 初始化；形参 seconds 是整体时限 |
+
+原始双线性基线使用既有 GlobalViolation，不更改候选或停止策略。两方法共享初始化、预算、epsilon、线程、单次及整体时限；均只在全局上界不超过 epsilon 时报告认证。达到实验时限保留未认证状态，不作为失败补救。新增割来自同一个原 SP；区域仍为 SOCP 联合外域，不宣称 AC 或几何精度证书。
+
+角点模型固定设置 `NonConvex=0`、`MIPGap=0`、`MIPGapAbs=1e-7`。初始原生 MISOCP 试验尝试过 `PreMIQCPForm=2`（锥分解预处理），首个块可解但后续块仍数值失败，因此不作为正式比较方法。正式循环不含失败后重试。
+
+继续分块时，原生 MISOCP 即使采用上述设置仍出现数值终止。因此比较实验预先选用 [PolyhedralCornerViolation](../experiments/fourbus_outer_partition.py)：用 `s_head >= +/-s_tail[i]` 初始化锥外逼近，反复解 MILP 后补充 `s_head >= direction @ s_tail`，其中 direction 的范数不超过 1。全部平面均对完整对偶锥有效，MILP 的全局界仍是保守上界；候选下界继续用原完整锥投影与状态盒残差修正。这个循环是明确的锥外逼近算法，不是数值失败后切换求解器。`oa_iterations` 记录本次角点查询内部的 MILP 求解数，`oa_planes` 记录累计追加锥切面数。所有角点共享这些有效锥切面；块上界仅在同一块及其子块之间继承。
+
+新增锥切面的整行固定乘 1000，以避免很接近的相邻切面在绝对线性约束容差下失去分辨率；不改变乘子变量或目标尺度。原始锥候选下界仍按未缩放的锥范数修正，`PLANNING_TOL` 不变。
+
+角点模型的 `dual_max_violation` 只记录辅助对偶模型的最大数值残差，不作为原始物理可行性的判据。其候选乘子必须经 `candidate_lower` 的非负化、完整锥投影、eta 归一化及有限状态盒驻点误差补偿后才能用于反例判断；此下界即使原始对偶向量存在残差也有效。构造出的 x 在独立外域见证模型中固定，真实 x,p 的外域可行性和 SP 物理/割检查仍使用 `PLANNING_TOL=1e-8`。这明确改变辅助对偶候选的接受方式，不改变 SP 容差或模型。原生 G 基线保持原实现。
+
+`experiments/fourbus_partition_report.py` 读取两方法的实际运行轨迹，并复用第 26 节独立 SOCP 射线参考。`reference_total/outer_total`、`max_radial_difference/mean_radial_difference/min_radial_difference` 保持原名称和 kW 含义；固定负荷比例下的容量差不等于全局 eta 上界。对全部新割在无预算限制的完整 SOCP 可行域上最小化割余量，逐候选复算原始 min eta，分别检查全局割有效性及候选下界/块上界关系。核查和绘图耗时不计入方法运行时间。
+
+[match_boundary_accuracy](../experiments/fourbus_partition_report.py) 利用加入割后外域嵌套的性质，对两种方法的割前缀分别二分查询，在全部相同 861 条参考射线上寻找最大容量差首次不超过基线最终值的割数量（比较容差 `comparison_tolerance_kw=1e-5` kW）；`accuracy_match` 的 `cut_count/seconds/checked_prefixes` 对应分块法，`baseline_cut_count/baseline_seconds/baseline_checked_prefixes` 对应基线，`target_max_radial_difference` 是共同误差标准。时间取原运行中生成该条割的时刻，不把事后扫描耗时计入，也不把基线首次达标之后的时间算作其达标耗时。`speed_ratio` 是两者首次达标时间之比，仅对应这组有限射线，不是全局连续认证速度。
+
+## 28. FourBus 单次割的外域体积停滞实验
+
+仅独立实验 `run_trial` 增加可选 `volume_threshold`，默认 `None` 保持第 27 节行为。启用时，每次 SP 联合割后计算全部预算内网架外域在负荷空间的并集体积；不建立认证内域，不将各方案体积直接相加，不将并集替换成跨方案凸包。
+
+| 数学量 / 定义 | 固定代码映射 | 单位、形状与使用位置 |
+|---|---|---|
+| 全部预算内合法建设向量 | [budget_schemes](../experiments/fourbus_outer_volume.py)、[ProjectedOuterVolume.schemes](../experiments/fourbus_outer_volume.py) | 二元 `(N,t)`；仅小规模 FourBus 的精确体积测量枚举 x，复用原拓扑预算模型逐方案排除；全局搜索 G 不使用这份列表 |
+| 各方案当前外域顶点 | [ProjectedOuterVolume.polytopes](../experiments/fourbus_outer_volume.py) | 每项 `(n_vertices,3)`，坐标为 p/axis_bounds；逐条联合割裁剪，所有合法方案均保留 |
+| V_k：第 k 条割后的投影外域并集体积 | [ProjectedOuterVolume.outer_volume](../experiments/fourbus_outer_volume.py)、[ProjectedOuterVolume.add_cut:outer_volume](../experiments/fourbus_outer_volume.py) | kW³；复用 `union_volume` 扣除重叠，按 `prod(axis_bounds)` 恢复单位；浮点连续多面体几何，非体素/随机估计 |
+| 单条割减少的体积 | [ProjectedOuterVolume.add_cut:volume_reduction](../experiments/fourbus_outer_volume.py) | V_(k-1)-V_k，kW³ |
+| 单条割的相对体积减少 | [ProjectedOuterVolume.add_cut:volume_reduction_ratio](../experiments/fourbus_outer_volume.py) | (V_(k-1)-V_k)/V_(k-1)，无量纲，以加割前的当前体积为分母 |
+| 体积停滞阈值 | [run_trial.volume_threshold](../experiments/fourbus_outer_partition.py) | 本次实验为 0.001，即 0.1%；首条满足严格小于的割即停止，不额外增加连续次数或预热轮数 |
+| 体积测量时间 | [ProjectedOuterVolume.add_cut:volume_seconds](../experiments/fourbus_outer_volume.py)、[run_trial:volume_seconds](../experiments/fourbus_outer_partition.py) | 秒；逐割量和累计量。累计含本方法的枚举/几何初始化，包含在 run_trial 原有 seconds 中 |
+
+`status='volume_stagnation'` 是用户指定的启发式停止，`certified=False`；不能写成残差认证、真实域体积误差 <0.1% 或连续域无遗漏证书。一条割可能只收紧单个网架的截面，而被其他方案覆盖，导致投影体积没有变化。共享 MP2 初始化时间另列，算法总耗时为 `seconds+initial_seconds`；事后有效割审核与 861 条 SOCP 参考射线核查不计入算法耗时。此精确体积实现的方案枚举只用于小算例比较，不声称可直接扩展到大量建设变量。
+
+## 29. FourBus：残差上界 0.1 停止与相对边界误差
+
+本次只通过既有 `run_trial.epsilon=0.1` 改变残差停止阈值，不启用 `volume_threshold`，不构造认证内域。两方法均从相同方向 MP2 初始化及零条割开始，首次得到可靠全局 `bound <= epsilon` 时停止；候选值不代替全局上界。共享初始化、各自搜索、事后扫描分别计时。
+
+新增 `experiments/fourbus_threshold_report.py` 只做事后比较。全部 861 条射线重新求完整 SOCP 参考边界，x/y 在预算内自由；两个外域使用相同负荷比例。百分比的分母固定为该射线的 `reference_total`，不以外域容量或坐标上界作分母。所有参考容量均须为正。
+
+| 数学量 / 定义 | 固定代码映射 | 单位、形状与边界 |
+|---|---|---|
+| e(w)=100[ρ_outer(w)−ρ_ref(w)]/ρ_ref(w) | [make_threshold_report.radial_difference_percent](../experiments/fourbus_threshold_report.py) | %，每方法 `(861,)`；微小负数保留，不截断数据 |
+| 射线相对误差均值、最大值、95 分位 | [make_threshold_report:mean_radial_difference_percent](../experiments/fourbus_threshold_report.py)、[make_threshold_report:max_radial_difference_percent](../experiments/fourbus_threshold_report.py)、[make_threshold_report:p95_radial_difference_percent](../experiments/fourbus_threshold_report.py) | %；均值为 861 条离散射线等权均值，不声称按球面面积均匀加权 |
+| V_mesh=Σ_T abs(det(p_T0,p_T1,p_T2))/6 | [make_threshold_report.mesh_volume](../experiments/fourbus_threshold_report.py) | kW³；以全部射线前沿点和原点组成三角锥的体积和，仅为插值表面的体积估计 |
+| 三角网格体积相对高估 | [make_threshold_report:mesh_volume_difference_percent](../experiments/fourbus_threshold_report.py) | 100(V_outer,mesh−V_ref,mesh)/V_ref,mesh，%；不是连续真实域体积的精确误差，也不是认证内域或停止判据 |
+| 含共享初始化的总时间 | [make_threshold_report:total_seconds](../experiments/fourbus_threshold_report.py) | `seconds+initial_seconds`，秒；独立扫描、审割和绘图均不计入算法耗时 |
+
+两张图统一坐标范围、视角及百分比色标；a 为三维射线前沿的三角网格插值比较，b 为完整负荷比例三角形上的相对容量误差。跨网架的点只用于明确标注的插值显示，不取凸包、不作为认证区域。原始点、参考求解器界、实际停止轨迹及全部相对误差保存以供复核。
+
+## 30. 主线与角点分块方法的同案例产出比较
+
+`experiments/fourbus_mainline_comparison.py` 直接调用未改动的 `main.build_continuous_region` 与 `run_trial`。预算 20,000 元、4 个求解器线程、数值库 1 线程；主线使用既有 `tau=0.002`、有限预算 `auto -> light`，分块法使用 `epsilon=0.1`。每种方法独立从零初始化，重复 3 次，分别报告含初始化的耗时、停止证书及相同 861 条参考射线的误差。两种停止标准不等价，不能把时间比称为同精度加速比。
+
+主线比较的是 `RegionState.finish` 实际返回的认证内域与全局外包络，不能将已知网架的条件割外域当成全局外包络，也不能仅用全部割重建的较松联合外域代替主线最终输出。分块法仍只报告联合割投影外域。
+
+| 数学量 / 定义 | 固定代码映射 | 单位、形状与用途 |
+|---|---|---|
+| ρ_region(w)=max{ρ>=0:ρw 属于给定多面体并集} | [region_radial_capacity](../experiments/fourbus_mainline_comparison.py) | kW，逐射线先计算各多面体的可行区间，再取最大上端点；保留不同方案并集，不混合顶点取凸包 |
+| 主线认证内域的逐射线总负荷 | [run_mainline_comparison.inner_total](../experiments/fourbus_mainline_comparison.py) | kW，`(861,)`；与已有 `outer_total/reference_total` 的边界总量意义一致 |
+| 100(ρ_ref−ρ_inner)/ρ_ref 的最大、平均值 | [run_mainline_comparison:max_inner_difference_percent](../experiments/fourbus_mainline_comparison.py)、[run_mainline_comparison:mean_inner_difference_percent](../experiments/fourbus_mainline_comparison.py) | %；主线认证内域低估，分块法没有相应内域，不编造该指标 |
+| 实际含初始化算法时间 | [run_mainline_comparison:total_seconds](../experiments/fourbus_mainline_comparison.py) | 秒；主线直接取 `timing.total_seconds`，分块取 `seconds+initial_seconds`；事后几何射线分析不计入 |
+
+其余射线容量差、相对误差、三角网格体积估计继续采用第 26、29 节名称和定义。参考射线复用同一未变化物理模型的第 29 节独立求解数据；所有重复运行均计算误差，保存逐次结果和中位数/范围。图形使用其中耗时位于中位数的实际运行展示三维域，误差曲线保留全部重复运行，耗时图显示全部观测值。

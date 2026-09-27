@@ -9,7 +9,8 @@ import unittest
 
 import numpy as np
 
-from plot import RunMonitor, region_geometry, region_view, surface, json_value, pack_replay
+from monitor import RunMonitor
+from plot import region_geometry, region_view, surface, json_value, pack_replay
 from region import RegionState
 from plot import sample_region
 
@@ -106,15 +107,15 @@ class PresentationTests(unittest.TestCase):
                 monitor('point', point=[1., 2., 3.], query=1)
                 monitor('completed', message='done')
                 monitor.state['padding'] = 'x'*10_000_001
-                with patch('plot.pack_replay', wraps=pack_replay) as packed:
+                with patch('monitor.pack_replay', wraps=pack_replay) as packed:
                     monitor.save_snapshot()
                     packed.assert_called_once()
             with RunMonitor(record=False, stream=StringIO()) as restored:
                 restored.load_recording(Path(folder)/'live_view.html')
                 self.assertEqual(restored.history, monitor.history)
                 self.assertEqual(restored.events, monitor.events)
-                self.assertEqual(restored.state, monitor.state | {
-                    'history_total': len(monitor.history), 'recording_version': 1})
+                self.assertEqual(restored.state, {k:v for k,v in json.loads(monitor.snapshot()).items()
+                                                  if k not in ('history', 'events')})
 
 
 if __name__ == '__main__':

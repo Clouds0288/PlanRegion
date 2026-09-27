@@ -7,7 +7,7 @@ from gurobipy import GRB
 from threadpoolctl import threadpool_limits
 
 from Network.four_bus_five_corridor import FourBus
-from model import PlanningEquations, PlanningModel, PlanningSP
+from model import GridPhysics, MasterProblem, SubProblem
 from tests.reference import dispatch_support
 from tests.test_corridors import modified
 
@@ -29,8 +29,8 @@ def test_reference_orientation_does_not_change_physics(method):
                                                 for c in flipped.corridors))
     answers = []
     for net in (network, flipped):
-        equations = PlanningEquations(net, method)
-        problem = PlanningModel(equations, fixed_plan=REVERSE_PLAN,
+        equations = GridPhysics(net, method)
+        problem = MasterProblem(equations, fixed_plan=REVERSE_PLAN,
                                 power=[3., 4., 5.], threads=1)
         with problem.model:
             answer = problem.solve()
@@ -49,8 +49,8 @@ def test_reference_orientation_does_not_change_physics(method):
 def test_reverse_sending_capacity_includes_losses():
     network = FourBus()
     network.vmin = np.full(network.n, .5)
-    equations = PlanningEquations(network, 'socp')
-    problem = PlanningModel(equations, fixed_plan=REVERSE_PLAN, threads=1)
+    equations = GridPhysics(network, 'socp')
+    problem = MasterProblem(equations, fixed_plan=REVERSE_PLAN, threads=1)
     problem.power.UB = [network.power_limit, 0., 0.]
     with problem.model:
         answer = problem.solve()
@@ -71,9 +71,9 @@ def test_required_single_type_can_carry_reverse_flow(method):
     network = FourBus()
     network = modified(network, corridors=tuple(replace(c, types=c.types[:1])
                          if c.id == '12' else c for c in network.corridors))
-    equations = PlanningEquations(network, method)
+    equations = GridPhysics(network, method)
     assert network.n_types == 13
-    problem = PlanningModel(equations, fixed_plan=REVERSE_PLAN, power=[3., 4., 5.], threads=1)
+    problem = MasterProblem(equations, fixed_plan=REVERSE_PLAN, power=[3., 4., 5.], threads=1)
     with problem.model:
         answer = problem.solve()
     assert answer['status'] == 'optimal'
@@ -82,9 +82,9 @@ def test_required_single_type_can_carry_reverse_flow(method):
 
 
 def test_connected_cycle_is_rejected_even_at_zero_load():
-    equations = PlanningEquations(FourBus(), 'linear')
+    equations = GridPhysics(FourBus(), 'linear')
     plan = {'01': 'L', '12': 'L', '13': 'L', '02': 'L', '23': None}
-    problem = PlanningModel(equations, fixed_plan=plan, power=np.zeros(3),
+    problem = MasterProblem(equations, fixed_plan=plan, power=np.zeros(3),
                             cuts_only=True, threads=1)
     with problem.model:
         assert problem.solve() is None
@@ -92,13 +92,13 @@ def test_connected_cycle_is_rejected_even_at_zero_load():
 
 @pytest.mark.parametrize('method', ['linear', 'socp'])
 def test_reverse_plan_cut_is_valid_for_every_topology(method):
-    equations = PlanningEquations(FourBus(), method)
+    equations = GridPhysics(FourBus(), method)
     x = equations.network.encode_plan(REVERSE_PLAN)
     power = np.full(3, 40.)
-    cut = PlanningSP(equations, threads=1).solve(x, power)['cut']
+    cut = SubProblem(equations, threads=1).solve(x, power)['cut']
     assert cut is not None
     assert cut[0]+cut[1:4]@power+cut[4:]@x < -1e-9
-    problem = PlanningModel(equations, threads=1)
+    problem = MasterProblem(equations, threads=1)
     with problem.model:
         problem.model.setObjective(cut[0]+cut[1:4]@problem.power+cut[4:]@problem.x, GRB.MINIMIZE)
         problem.model.Params.TimeLimit = 60.

@@ -7,7 +7,7 @@ import pytest
 
 from Network.four_bus_five_corridor import FourBus
 from Network.case33bw import Case33
-from model import PLANNING_TOL, PlanningEquations, PlanningModel, PlanningSP
+from model import PLANNING_TOL, GridPhysics, MasterProblem, SubProblem
 from tests.planning_checks import margin
 from tests.reference import fixed_topology
 
@@ -15,8 +15,8 @@ from tests.reference import fixed_topology
 @pytest.mark.parametrize('method', ['linear', 'socp'])
 def test_mp_and_query_keep_the_solver_power_and_state(method):
     network = FourBus()
-    equations = PlanningEquations(network, method)
-    solve = PlanningModel.solve
+    equations = GridPhysics(network, method)
+    solve = MasterProblem.solve
     captured = []
 
     def record(problem, *args, **kwargs):
@@ -26,9 +26,9 @@ def test_mp_and_query_keep_the_solver_power_and_state(method):
         np.testing.assert_array_equal(answer['state'], problem.state.X)
         return answer
 
-    with patch.object(PlanningModel, 'solve', new=record), \
-         patch.object(PlanningSP, 'solve', side_effect=AssertionError('redundant SP')):
-        problem = PlanningModel(equations, fixed_plan=network.initial_plan, threads=1)
+    with patch.object(MasterProblem, 'solve', new=record), \
+         patch.object(SubProblem, 'solve', side_effect=AssertionError('redundant SP')):
+        problem = MasterProblem(equations, fixed_plan=network.initial_plan, threads=1)
         with problem.model:
             answer = problem.solve(radial_gap_kw=1.)
     assert len(captured) == 1 and answer['p'].sum() > 1.
@@ -41,7 +41,7 @@ def test_mp_and_query_keep_the_solver_power_and_state(method):
 @pytest.mark.parametrize('feasible', [True, False])
 def test_sp_uses_eta_and_keeps_the_existing_dual_cut_path(feasible):
     network = FourBus()
-    equations = PlanningEquations(network, 'socp')
+    equations = GridPhysics(network, 'socp')
     if feasible:
         plan = {'01': 'H', '12': None, '13': None, '02': 'L', '23': 'M'}
         power = np.array([47.47692657884853, 14.400743716323246, 7.840840158490067])
@@ -63,7 +63,7 @@ def test_sp_uses_eta_and_keeps_the_existing_dual_cut_path(feasible):
 
     with patch.object(equations, 'add_operation', side_effect=operation), \
          patch.object(gp.Model, 'optimize', new=record):
-        answer = PlanningSP(equations, threads=1).solve(x, power)
+        answer = SubProblem(equations, threads=1).solve(x, power)
 
     assert answer['feasible'] == feasible
     np.testing.assert_array_equal(power, original)
@@ -84,10 +84,9 @@ def test_sp_uses_eta_and_keeps_the_existing_dual_cut_path(feasible):
 
 def test_sp_timeout_without_solution_stays_unknown():
     network = FourBus()
-    equations = PlanningEquations(network, 'socp')
-    answer = PlanningSP(equations, threads=1).solve(
-        network.encode_plan(network.initial_plan), np.zeros(3), time_limit=0.)
-    assert answer == dict(feasible=False, state=None, cut=None)
+    equations = GridPhysics(network, 'socp')
+    with pytest.raises(RuntimeError, match='status=9'):
+        SubProblem(equations, threads=1).solve(network.encode_plan(network.initial_plan), np.zeros(3), time_limit=0.)
 
 
 @pytest.mark.parametrize('upgrades,power', [
@@ -96,7 +95,7 @@ def test_sp_timeout_without_solution_stays_unknown():
 ])
 def test_sp_returns_an_accurate_raw_boundary_state_without_repair(upgrades, power):
     network = fixed_topology(Case33(upgrade_count=4))
-    equations = PlanningEquations(network, 'socp')
+    equations = GridPhysics(network, 'socp')
     x = network.encode_plan(network.initial_plan | upgrades)
     # 默认数值设置曾在这些点返回近零 eta 但超限的原始误差，导致联合割停滞。
     optimize = gp.Model.optimize
@@ -107,7 +106,7 @@ def test_sp_returns_an_accurate_raw_boundary_state_without_repair(upgrades, powe
         return optimize(model, *args, **kwargs)
 
     with patch.object(gp.Model, 'optimize', new=record):
-        answer = PlanningSP(equations, threads=1).solve(x, power)
+        answer = SubProblem(equations, threads=1).solve(x, power)
     assert calls == ['planning_SP']
     assert answer['feasible'] and answer['cut'] is None
     assert margin(equations, x, power, answer['state']) >= -PLANNING_TOL
@@ -115,9 +114,33 @@ def test_sp_returns_an_accurate_raw_boundary_state_without_repair(upgrades, powe
 
 def test_positive_eta_without_a_valid_cut_stays_unknown():
     network = FourBus()
-    equations = PlanningEquations(network, 'socp')
-    with patch.object(PlanningSP, '_separating_cut', return_value=None) as separate:
-        answer = PlanningSP(equations, threads=1).solve(
-            network.encode_plan(network.initial_plan), np.array([10., 10., 10.]))
+    equations = GridPhysics(network, 'socp')
+    with patch.object(SubProblem, '_separating_cut', side_effect=RuntimeError('Invalid separating cut')) as separate:
+        with pytest.raises(RuntimeError, match='Invalid separating cut'):
+            SubProblem(equations, threads=1).solve(
+                network.encode_plan(network.initial_plan), np.array([10., 10., 10.]))
     separate.assert_called_once()
-    assert answer == dict(feasible=False, state=None, cut=None)
+
+
+@pytest.mark.parametrize('x,power,feasible', [
+    ([0,1,0,1,0,0,0,1,0,0,0,0,0,0,0], [15.053118409066482,19.12279604388464,11.165188097835491], False),
+    ([0,1,0,1,0,0,0,1,0,0,0,0,0,0,0], [0.,22.413542764447403,17.558865929406192], True),
+])
+def test_socp_new_vertex_path_needs_no_numeric_retry(x, power, feasible):
+    equations = GridPhysics(FourBus(), 'socp')
+    optimize, calls = gp.Model.optimize, []
+    def solve(model, *args, **kwargs):
+        model.update()
+        calls.append(model.NumQConstrs)
+        return optimize(model, *args, **kwargs)
+    with patch.object(gp.Model, 'optimize', new=solve):
+        answer = SubProblem(equations, threads=1).solve(np.array(x), np.array(power))
+    assert answer['feasible'] == feasible
+    assert len(calls) == (1 if feasible else 2)
+    assert calls[0] > 0
+    if feasible:
+        assert margin(equations, x, power, answer['state']) >= -PLANNING_TOL
+    else:
+        assert calls[1] == 0  # 正常取割 LP，不是重试 SOCP。
+        cut = answer['cut']
+        assert cut[0]+cut[1:4]@power+cut[4:]@x < -1e-9

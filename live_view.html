@@ -10,33 +10,38 @@
 <style>
 .layout{grid-template-columns:minmax(0,1.25fr) minmax(0,1fr)}#chart,#detail-chart{height:470px;width:100%}.view-settings{margin:12px 0}.scheme-list{display:flex;gap:7px;flex-wrap:wrap;max-height:180px;overflow:auto;margin-top:12px}.scheme-list button{text-align:left;min-width:120px}.scheme-list button[aria-pressed="true"]{border-color:#197e99;background:#e0f2f6}.scheme-list small{display:block;margin-top:5px}.scheme-empty{color:#ac3b48}.scheme-covered{color:#725aab}.scheme-feasible{color:#167965}.detail-status{min-height:22px;margin:10px 0}.summary-grid{display:grid;grid-template-columns:repeat(4,1fr);gap:12px}.summary-grid .row{margin:8px 0}details summary{cursor:pointer;font-size:13px}.cutbox{margin-bottom:0}button[aria-pressed="true"]{background:#e0f2f6;border-color:#197e99}
 @media(max-width:1000px){.layout{grid-template-columns:1fr}#chart,#detail-chart{height:420px}.summary-grid{grid-template-columns:repeat(2,1fr)}}@media(max-width:560px){#chart,#detail-chart{height:330px}.summary-grid{grid-template-columns:1fr}.timeline-label{flex-wrap:wrap;gap:7px}}
+body{padding:14px;max-width:1280px}header{margin-bottom:10px}h1{font-size:19px;margin:3px 0}.panel{padding:12px}.timeline{margin-bottom:8px}#slider{margin:8px 0}.cards{margin:8px 0;gap:8px}.card{padding:9px 13px}.value{font-size:19px;margin-top:3px}#chart,#detail-chart{height:310px}.section{margin-top:8px}#step-panel{margin-top:0}#step-panel h2{font-size:12px}#message{font-size:14px;margin:5px 0;min-height:0}#point-reason{margin:3px 0}.summary-grid .row{font-size:11px;margin:3px 0}.view-settings{margin:8px 0}
 </style>
 <script src="/plotly.min.js"></script><script>/*SNAPSHOT*/</script>
 </head>
 <body>
 <header><div><div class="brand">PLANREGION / CONTINUOUS</div><h1>可规划域 · 连续构域与完整回放</h1><small id="network">正在连接本地计算…</small></div><div class="controls"><label class="file-button">载入回放 JSON<input id="file" type="file" accept=".json"></label><span id="status" class="badge">等待数据</span></div></header>
 <section class="panel timeline">
- <div class="toolbar"><div class="controls"><button id="prev" aria-label="上一步">上一帧</button><button id="play" class="primary">播放</button><button id="next" aria-label="下一步">下一帧</button><select id="speed" aria-label="回放速度"><option value="1200">慢速</option><option value="450" selected>正常</option><option value="100">快速</option></select><button id="live">跟随实时</button><button id="final">最终结果</button></div><span class="subtle" id="connection">所有算法事件完整保存</span></div>
+ <div class="toolbar" style="margin-bottom:12px"><div class="controls"><button id="execute-next" class="primary">执行下一步</button><button id="execute-continue">连续运行</button><button id="execute-pause">暂停计算</button></div><span id="execution" class="subtle">正在连接计算</span></div>
+ <div class="toolbar"><div class="controls"><button id="prev" aria-label="上一历史帧">上一帧</button><button id="play" class="primary">播放</button><button id="next" aria-label="下一历史帧">下一帧</button><select id="speed" aria-label="回放速度"><option value="1200">慢速</option><option value="450" selected>正常</option><option value="100">快速</option></select><button id="live">跟随实时</button><button id="final">最终结果</button></div><span class="subtle" id="connection">所有算法事件完整保存</span></div>
  <input id="slider" type="range" min="0" max="0" value="0" aria-label="完整过程时间轴">
  <div class="timeline-label"><span id="position">尚无历史</span><span id="scope">时间轴覆盖所有方法、预算和算法迭代</span></div>
 </section>
-<div class="cards"><div class="card"><small>连续域认证状态</small><div class="value" id="certificate">—</div></div><div class="card"><small>SP 调用 / 发现方案</small><div class="value" id="queries">—</div></div><div class="card"><small>联合割数量</small><div class="value" id="cuts">0</div></div><div class="card"><small>原始计算时间</small><div class="value" id="elapsed">0 s</div></div></div>
+<section id="step-panel" class="panel section"><div class="toolbar"><h2>计算过程 · 当前步骤</h2><span id="stage" class="subtle">—</span></div><div id="message">等待计算记录</div><div id="point-reason" class="hint"></div><div class="summary-grid"><div class="row"><span>剩余域模式</span><strong id="residual-mode">—</strong></div><div class="row"><span>求解阶段</span><strong id="iteration">—</strong></div><div class="row"><span>该步骤耗时</span><strong id="step">—</strong></div><div class="row"><span>全局覆盖上界</span><strong id="coverage">—</strong></div></div></section>
+<div class="cards"><div class="card"><small>连续域认证状态</small><div class="value" id="certificate">—</div></div><div class="card"><small id="queries-label">SP 调用 / 发现方案</small><div class="value" id="queries">—</div></div><div class="card"><small>联合割数量</small><div class="value" id="cuts">0</div></div><div class="card"><small>原始计算时间</small><div class="value" id="elapsed">0 s</div></div></div>
 <div class="layout">
 <section class="panel"><div class="toolbar"><h2>整体可行规划域</h2><div class="controls"><label>方法 <select id="method" aria-label="选择方法"><option value="auto">跟随步骤</option><option value="linear">线性</option><option value="socp">SOCP</option><option value="hybrid">LP → SOCP</option><option value="ac">AC 校核</option></select></label><label>预算 <select id="budget" aria-label="选择预算"><option value="auto">跟随步骤</option></select></label></div></div>
 <div id="chart" aria-label="连续内域、外域、候选点和方案条件切面"></div>
 <div class="legend"><span><i class="dot" style="background:#229d88"></i>认证内域并集</span><span><i class="dot" style="background:#5a91c3"></i>选中方案 / 全局外包络</span><span><i class="dot" style="background:#b6c6d1"></i>公共评价箱</span></div>
-<div class="controls view-settings"><label><input id="inner" type="checkbox" checked>内域</label><label><input id="outer" type="checkbox" checked>外域</label><label><input id="sync-camera" type="checkbox" checked>同步旋转</label><button id="reset-camera">恢复视角</button></div>
+<div class="controls view-settings"><label><input id="inner" type="checkbox" checked>内域</label><label><input id="outer" type="checkbox" checked>外域</label><label id="camera-setting"><input id="sync-camera" type="checkbox" checked>同步旋转</label><button id="reset-camera">恢复视角</button></div>
 <p class="hint" id="geometry-note">内域按同一建设方案形成凸多面体，不同方案取并集。坐标单位 kW；拖动旋转、滚轮缩放。</p></section>
 <section class="panel"><div class="toolbar"><h2 id="detail-title">单方案 · 切割细节</h2><button id="follow-scheme" aria-pressed="true">跟随求解方案</button></div>
 <div class="controls view-settings"><label>切割步骤 <select id="cut-stage"><option value="before">切割前</option><option value="cut" selected>显示切面与切除部分</option><option value="after">切割后</option></select></label><label><input id="plane" type="checkbox" checked>切面</label></div>
-<div id="detail-chart" aria-label="选中方案的三维内外域和条件切割，支持拖动旋转"></div>
+<div id="detail-chart" aria-label="选中方案的内外域和条件切割"></div>
 <div class="legend"><span><i class="dot" style="background:#5a91c3"></i>候选外域</span><span><i class="dot" style="background:#229d88"></i>认证内域</span><span><i class="dot" style="background:#e2ac39"></i>条件切面</span><span><i class="dot" style="background:#dc5963"></i>本次切除</span></div>
 <div id="scheme-status" class="detail-status hint" aria-live="polite">等待方案</div><details><summary>线路选型、负荷与条件割</summary><div id="choice" class="mono">—</div><div id="point" class="mono">—</div><div class="cutbox"><div id="cut-equation" class="mono">尚无联合割</div><p class="hint">α + βᵀp + δᵀx ≥ 0；切面代入当前选中方案 x，保留 ≥ 0 一侧。展示不参与求解。</p></div></details></section>
 </div>
 <section class="panel section"><div class="toolbar"><h2 id="scheme-count">已记录建设方案</h2><span id="cut-impact" class="subtle" aria-live="polite">等待切割记录</span></div><div id="scheme-list" class="scheme-list" aria-label="选择建设方案"></div><p class="hint">仅统计已记录方案，不代表所有整数方案。外域切空才标为不可行；已证覆盖不等于不可行。拖动两图旋转，滚轮缩放；刷新保留视角。</p></section>
-<section class="panel section"><div class="toolbar"><h2>计算过程 · 当前步骤</h2><span id="stage" class="subtle">—</span></div><div id="message">等待计算记录</div><div class="summary-grid"><div class="row"><span>剩余域模式</span><strong id="residual-mode">—</strong></div><div class="row"><span>求解阶段</span><strong id="iteration">—</strong></div><div class="row"><span>该步骤耗时</span><strong id="step">—</strong></div><div class="row"><span>全局覆盖上界</span><strong id="coverage">—</strong></div></div></section>
-<section class="panel section"><div class="toolbar"><h2>构域结果</h2><span class="subtle">点击结果行查看对应三维域</span></div><div class="table-wrap"><table><thead><tr><th>方法</th><th>预算</th><th>认证</th><th>最大总负荷 kW</th><th>总负荷上界 kW</th><th>割 / SP</th><th>构域耗时 s</th></tr></thead><tbody id="results"></tbody></table></div><p id="timing" class="hint">每档预算独立求解；混合方法包含线性和 SOCP 两个阶段。</p></section>
+
+<section id="result-section" class="panel section"><div class="toolbar"><h2>构域结果</h2><span class="subtle">点击结果行查看对应三维域</span></div><div class="table-wrap"><table><thead><tr><th>方法</th><th>预算</th><th>认证</th><th>最大总负荷 kW</th><th>总负荷上界 kW</th><th>割 / SP</th><th>构域耗时 s</th></tr></thead><tbody id="results"></tbody></table></div><p id="timing" class="hint">每档预算独立求解；混合方法包含线性和 SOCP 两个阶段。</p></section>
 <section class="panel section"><div class="toolbar"><h2>完整事件记录</h2><span id="event-count" class="subtle">点击任意事件还原当时的全部状态</span></div><div class="table-wrap"><table><thead><tr><th>帧</th><th>时间</th><th>方法 / 预算</th><th>阶段</th><th>过程</th></tr></thead><tbody id="events"></tbody></table></div><p class="hint">表格显示当前帧附近的事件；全部历史始终保存在时间轴和回放文件中。</p></section>
+<section id="survey-section" class="panel section hidden"><h2 id="survey-title">勘察状态与候选道路</h2><p id="survey-summary" class="hint"></p><div class="table-wrap"><table><thead><tr><th>道路</th><th>可用时扩展 / kW²</th><th>不可用时排除 / kW²</th><th>单位费用信息价值</th><th>数值区间</th></tr></thead><tbody id="candidates"></tbody></table></div></section>
+<section class="panel section"><details><summary>本步求解器返回数据</summary><pre id="answer" class="mono" style="max-height:240px;overflow:auto">—</pre></details></section>
 <script>
 'use strict';
 const $=id=>document.getElementById(id), names={linear:'线性',socp:'SOCP',hybrid:'LP → SOCP',ac:'独立 AC 校核'};
@@ -49,7 +54,7 @@ let selectedScheme=null, schemeScope='', drawQueue=Promise.resolve(), lastFrame=
 const coveredSchemes=new Map(), plotIds=['chart','detail-chart'], cameras={}, defaultCamera={eye:{x:1.45,y:1.45,z:1.15},up:{x:0,y:0,z:1},center:{x:0,y:0,z:0}};
 let cameraSync=false;
 const choiceKey=choice=>JSON.stringify(Object.entries(choice||{}).sort(([a],[b])=>a.localeCompare(b)));
-const scopeKey=s=>JSON.stringify([s.method,s.budget_index,s.phase]);
+const scopeKey=s=>JSON.stringify([s.method,s.budget_index,s.phase,s.query,s.attempt]);
 function td(tr,value){const el=document.createElement('td');el.textContent=value;tr.append(el)}
 function stop(){playing=false;clearTimeout(timer);$('play').textContent='播放'}
 function ingest(data,reset=false){
@@ -63,6 +68,7 @@ function ingest(data,reset=false){
   if(frame.id%100===0)checkpoints.push({id:frame.id,state:{...rolling}});
  }
  latest={...data};delete latest.history;
+ executionControls();
  $('slider').max=Math.max(0,frames.length-1);$('event-count').textContent=`已保存 ${frames.length.toLocaleString()} 条事件，无历史截断`;
 }
 function at(index){
@@ -87,7 +93,8 @@ function boxWire(bounds){const v=boxMesh(bounds).vertices,xyz=[[],[],[]];for(con
 function conditionCut(cut,g){
  if(!cut||!g)return null;
  const c=cut.joint_coefficients;
- if(c&&g.x)return{constant:c[0]+dot(c.slice(4),g.x),normal:c.slice(1,4)};
+ const d=cut.normal.length;
+ if(c&&g.x)return{constant:c[0]+dot(c.slice(1+d),g.x),normal:c.slice(1,1+d)};
  // 旧回放没有各方案 x 时，仅显示已有生成方案的截面，不能猜测型号顺序。
  return choiceKey(cut.choice)===choiceKey(g.choice)?{constant:cut.constant,normal:cut.normal}:null;
 }
@@ -147,6 +154,7 @@ function viewAxes(traces,nodes,bounds){
 }
 async function draw(s,r){
  if(!window.Plotly){$('chart').textContent='请打开结果目录中已保存的 live_view.html，或设置 SHOW_UI=True 后运行 main.py。';return}
+ if((s.bounds||latest?.bounds)?.length===2){await draw2D(s);return}
  const bounds=s.bounds||latest?.bounds||[1,1,1],nodes=s.load_nodes||latest?.load_nodes||[18,25,33],finalGeometry=view==='final'||!!s.region,isAC=view==='final'&&$('method').value==='ac';
  const geometry=view==='final'?r?.geometry||[]:s.geometry||[],scope=scopeKey(r?{...r,phase:'final'}:s);
  if(scope!==schemeScope||cursor<lastFrame){coveredSchemes.clear();if(scope!==schemeScope)selectedScheme=null;schemeScope=scope}lastFrame=cursor;
@@ -181,6 +189,128 @@ async function draw(s,r){
  await Promise.all(plotIds.map((id,i)=>Plotly.react(id,i?detail:global,{autosize:true,width:$(id).clientWidth,height:$(id).clientHeight,margin:{l:0,r:0,t:5,b:0},showlegend:false,paper_bgcolor:'#fff',font:{color:'#466375',size:11},scene:{...viewAxes(i?detail:global,nodes,bounds),aspectmode:'cube',dragmode:'orbit',camera:JSON.parse(JSON.stringify(cameras[id]||defaultCamera))},uirevision:id},{responsive:true,displaylogo:false,scrollZoom:true})));
  plotIds.forEach(bindCamera);
 }
+// 1. 执行按钮控制实时计算；历史游标只控制展示。
+function executionControls(){
+ const active=!offline&&latest?.status==='running';
+ $('execute-next').disabled=!active||!latest.waiting;
+ $('execute-continue').disabled=!active||!latest.step_by_step;
+ $('execute-pause').disabled=!active||latest.step_by_step;
+ $('execution').textContent=offline?'离线回放':!active?'计算已结束':latest.waiting?'等待执行下一步':latest.step_by_step?'正在执行；到下一步骤暂停':'连续计算中';
+}
+async function execute(action){
+ $('execute-next').disabled=true;
+ try{
+  const response=await fetch('/control',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({action,revision:latest.revision})});
+  if(!response.ok&&response.status!==409)throw Error('HTTP '+response.status);
+  stop();view='live';$('method').value='auto';$('budget').value='auto';
+ }catch(error){$('execution').textContent='控制请求失败：'+error.message}
+}
+$('execute-next').onclick=()=>execute('next');
+$('execute-continue').onclick=()=>execute('continue');
+$('execute-pause').onclick=()=>execute('pause');
+
+// 2. 二维几何只作展示，裁剪使用归一化坐标保证量纲一致。
+function clipPolygon(vertices,cut,bounds){
+ const points=vertices.map(p=>p.map((v,i)=>v/bounds[i])),normal=cut.normal.map((v,i)=>v*bounds[i]);
+ const scale=Math.hypot(...normal);
+ if(scale<1e-30)return cut.constant>=0?vertices:[];
+ const value=p=>(cut.constant+dot(normal,p))/scale,out=[];
+ for(let i=0;i<points.length;i++){
+  const a=points[i],b=points[(i+1)%points.length],va=value(a),vb=value(b);
+  if(va>=-1e-10)out.push(a);
+  if((va<0&&vb>0)||(va>0&&vb<0))out.push(a.map((v,j)=>v+va/(va-vb)*(b[j]-v)));
+ }
+ return out.filter((p,i)=>!out.slice(0,i).some(q=>Math.hypot(...sub(p,q))<1e-10)).map(p=>p.map((v,i)=>v*bounds[i]));
+}
+function line2D(cut,bounds){
+ if(Math.hypot(...cut.normal)<1e-30)return [];
+ const box=[[0,0],[bounds[0],0],bounds,[0,bounds[1]]],out=[];
+ for(let i=0;i<4;i++){
+  const a=box[i],b=box[(i+1)%4],va=cut.constant+dot(cut.normal,a),vb=cut.constant+dot(cut.normal,b);
+  if(Math.abs(va)<1e-10)out.push(a);
+  if(va*vb<0)out.push(a.map((v,j)=>v+va/(va-vb)*(b[j]-v)));
+ }
+ return out.filter((p,i)=>!out.slice(0,i).some(q=>Math.hypot(...sub(p,q))<1e-10));
+}
+function trace2D(vertices,color,label,fill=false){
+ const v=fill&&vertices.length>2?[...vertices,vertices[0]]:vertices;
+ return {type:'scatter',mode:v.length===1?'markers':'lines',x:v.map(p=>p[0]),y:v.map(p=>p[1]),
+  line:{color,width:1.6},marker:{color,size:8},fill:fill&&v.length>3?'toself':'none',opacity:fill?.45:1,name:label,
+  hovertemplate:label+'<br>(%{x:.3f}, %{y:.3f}) kW<extra></extra>'};
+}
+function geoTraces(geometry,color,label){
+ if(!geometry)return [];
+ if(geometry.type==='GeometryCollection')return geometry.geometries.flatMap(g=>geoTraces(g,color,label));
+ const polygons=geometry.type==='Polygon'?[geometry.coordinates]:geometry.type==='MultiPolygon'?geometry.coordinates:[];
+ return polygons.flatMap(p=>p.map(ring=>trace2D(ring,color,label))); // 保留所有孔洞边界，不填成凸包。
+}
+
+// 3. 左侧按步骤展示数值域或信息域，右侧比较同一方案更新前后。
+async function draw2D(s){
+ const bounds=s.bounds||latest.bounds,nodes=s.load_nodes||latest.load_nodes;
+ const information=!!s.survey&&(view==='final'||s.event.startsWith('survey_'));
+ const geometry=information?[]:s.geometry||[],scope=scopeKey(s);
+ if(scope!==schemeScope){schemeScope=scope;selectedScheme=null;coveredSchemes.clear()}
+ const selected=geometry.find(g=>choiceKey(g.choice)===(selectedScheme||choiceKey(s.choice)))||geometry[0];
+ const history=cutHistory(s),effects=cutChanges(history),cut=conditionCut(history?.cut||s.latest_cut,selected);
+ const old=history?.before.geometry?.find(g=>choiceKey(g.choice)===choiceKey(selected?.choice));
+ const before=cursor>0&&scopeKey(at(cursor-1))===scope?at(cursor-1).geometry?.find(g=>choiceKey(g.choice)===choiceKey(selected?.choice)):null;
+ const global=[],detail=[],stage=$('cut-stage').value,finalGeometry=!!s.region;
+ if(information){
+  global.push(...geoTraces(s.survey.optimistic,'#6095c4','信息乐观域 D⁺'),...geoTraces(s.survey.confirmed,'#229d88','信息确认域 D⁻'));
+  global.push(...geoTraces(s.survey.optimistic_outer,'#adc4d9','乐观域数值外界'),...geoTraces(s.survey.confirmed_outer,'#8fc8b9','确认域数值外界'));
+ }else{
+  if($('outer').checked){
+   if(s.event==='domain_end')global.push(...geoTraces(s.domain.outer,'#6095c4','本次道路集合的数值外界'));
+   else for(const poly of s.global_outer||[])global.push(trace2D(poly.vertices,'#6095c4','保守全局外包络',true));
+  }
+  if($('inner').checked){
+   if(s.event==='domain_end')global.push(...geoTraces(s.domain.inner,'#229d88','本次道路集合的认证内域'));
+   else for(const g of geometry)global.push({...trace2D(g.inner.vertices,'#229d88','单方案认证内域',true),meta:{schemeKey:choiceKey(g.choice)}});
+  }
+  if(selected){
+   if($('outer').checked&&!finalGeometry)global.push(trace2D([...selected.outer.vertices,...selected.outer.vertices.slice(0,1)],'#6095c4','选中方案候选外域'));
+   if($('outer').checked)detail.push(trace2D((stage==='before'&&old?old:selected).outer.vertices,'#6095c4','单方案候选外域',true));
+   if($('inner').checked)detail.push(trace2D((stage==='before'&&old?old:selected).inner.vertices,'#229d88','单方案认证内域',true));
+   if(before&&s.event==='feasible')detail.push(trace2D([...before.inner.vertices,...before.inner.vertices.slice(0,1)],'#36556a','更新前内域'));
+   if(cut&&!finalGeometry&&stage!=='before'){
+    if($('plane').checked)detail.push(trace2D(line2D(cut,bounds),'#c7922b','本次条件割'));
+    if(stage==='cut'&&old)detail.push(trace2D(clipPolygon(old.outer.vertices,{constant:-cut.constant,normal:cut.normal.map(v=>-v)},bounds),'#cc5962','本次切除部分',true));
+   }
+  }
+  if(s.point){const point=trace2D([s.point],'#cc5962','当前候选点');global.push(point);detail.push(point)}
+ }
+ $('detail-title').textContent=selected?'方案 '+(geometry.indexOf(selected)+1)+' · 更新前后':'单方案 · 选择构域历史步骤';
+ $('cut-stage').disabled=!old||finalGeometry;
+ $('choice').textContent=selected?'['+formatChoice(selected.choice)+']':'—';
+ $('point').textContent=!information&&s.point?'('+s.point.map(v=>fmt(v)).join(', ')+') kW':'—';
+ $('cut-equation').textContent=cut?`${fmt(cut.constant,6)} + (${cut.normal.map(v=>fmt(v,6)).join(', ')}) · p ≥ 0`:'本步没有条件割';
+ $('scheme-status').textContent=selected?schemeStatus(selected,finalGeometry)[1]:'信息域按道路观测更新';
+ $('geometry-note').textContent=information?'D⁻ / D⁺ 是信息确认域与乐观域；浅色边界分别表示它们的数值外界。':'各建设方案分别形成凸内域，整体取并集；未发现方案仍由剩余域模型检查。';
+ $('cut-impact').textContent=history?[...effects.values()].join(' / '):'';
+ schemeRows(geometry,selected,finalGeometry,effects);
+ await Promise.all(plotIds.map((id,i)=>{const traces=i?detail:global,axes=viewAxes(traces,nodes,bounds);return Plotly.react(id,traces,{
+  margin:{l:55,r:15,t:15,b:50},showlegend:false,paper_bgcolor:'#fff',xaxis:axes.xaxis,
+  yaxis:{...axes.yaxis,scaleanchor:'x',scaleratio:1},uirevision:scope},{responsive:true,displaylogo:false,scrollZoom:true})}));
+}
+
+// 4. 勘察评分使用当轮记录，不读取尚未观测的道路真值。
+function surveyRows(s){
+ $('survey-section').classList.toggle('hidden',!s.survey);
+ const is2D=(s.bounds||latest?.bounds)?.length===2;
+ $('result-section').classList.toggle('hidden',is2D);
+ $('camera-setting').classList.toggle('hidden',is2D);
+ $('reset-camera').classList.toggle('hidden',is2D);
+ $('queries-label').textContent=is2D&&view==='final'?'道路集合查询':'SP 调用 / 发现方案';
+ if(!s.survey)return;
+ const info=s.survey;
+ $('survey-title').textContent=`勘察第 ${info.step} 轮 · 候选道路`;
+ $('survey-summary').textContent=`已知可用 ${info.known_usable.join(', ')||'无'}；已知不可用 ${info.known_unusable.join(', ')||'无'}。确认面积 ${fmt(info.confirmed_area)} / 乐观面积 ${fmt(info.optimistic_area)} kW²；信息间隙上界 ${fmt(info.information_gap_upper)} kW²。`;
+ $('candidates').replaceChildren();
+ for(const row of s.all_candidates||[]){const tr=document.createElement('tr');for(const v of [row.route,fmt(row.gain_if_usable),fmt(row.removal_if_unusable),fmt(row.information_efficiency),fmt(row.information_efficiency_lower)+' – '+fmt(row.information_efficiency_upper)])td(tr,v);$('candidates').append(tr)}
+}
+
+// 5. 时间轴和结果表只读取已经产生的记录。
 function eventRows(){const start=Math.max(0,cursor-65),end=Math.min(frames.length,start+150);$('events').replaceChildren();for(let i=start;i<end;i++){const f=frames[i],c=contexts[i],tr=document.createElement('tr');tr.className='clickable'+(i===cursor?' current':'');td(tr,i+1);td(tr,fmt(f.elapsed,2)+' s');td(tr,(names[c.method]||'准备')+' / '+(c.budget==null?'—':budgetLabel(c.budget)));td(tr,c.phase||'—');td(tr,c.message);tr.onclick=()=>{stop();$('method').value='auto';$('budget').value='auto';seek(i)};$('events').append(tr)}}
 function budgetLabel(i){const b=latest?.budgets?.[i];return b==null?'无限':String(b)}
 function resultRows(){
@@ -192,6 +322,7 @@ function resultRows(){
  const m=latest?.metadata;if(m)$('timing').textContent=`每档预算独立求解；混合方法包含线性和 SOCP 两阶段。独立 AC 校核 ${fmt(m.seconds?.ac)} s，使用 ${m.divisions}³ 网格。`;
 }
 async function render(s){if(view==='final'&&$('method').value==='auto')$('method').value='socp';state=s;const version=++renderVersion;const key=JSON.stringify(latest?.budgets||s.budgets||[]);if(key!==budgetKey){budgetKey=key;const value=$('budget').value;$('budget').replaceChildren(new Option('跟随步骤','auto'));(latest?.budgets||s.budgets||[]).forEach((v,i)=>$('budget').add(new Option(v==null?'无限预算':String(v),i)));$('budget').value=view==='final'&&value==='auto'?'0':value||'auto'}
+ $('point-reason').textContent=s.point_reason?'选点依据：'+s.point_reason:'';$('answer').textContent=s.answer?JSON.stringify(s.answer,null,2):'—';surveyRows(s);
  const r=selectedResult(s),isFinal=view==='final',current=r||(isFinal?null:s.region),counts=r?.counts||(isFinal?{}:s.counts_algorithm)||{};const label={running:'正在计算',completed:'计算完成',failed:'计算失败',interrupted:'已中断'};
  $('status').textContent=(view==='replay'?'历史回放':view==='final'?'最终结果':label[s.status]||'实时计算');$('status').classList.toggle('error',['failed','interrupted'].includes(s.status));
  $('network').textContent=`${latest?.network||s.network||'PlanRegion'} · 连续负荷节点 ${(s.load_nodes||latest?.load_nodes||[18,25,33]).join(' / ')} · ${frames.length.toLocaleString()} 条完整算法事件`;
@@ -203,6 +334,12 @@ async function render(s){if(view==='final'&&$('method').value==='auto')$('method
  $('geometry-note').textContent=isFinal&&!r?'AC 仅作公共网格上的独立校核；这些点没有参与连续域构造。':r?'绿色为同方案证书构成的内域并集，蓝色为保守全局外包络；未跨方案取凸包。':s.coverage_complete?'全部整数方案已通过连续覆盖检查。':'绿色只表示已认证内域并集，未着色部分仍未确定；未发现方案由整数联合外域保留。';
  if(view==='live'||view==='final')cursor=frames.length-1;$('slider').value=Math.max(0,cursor);$('position').textContent=`${view==='final'?'最终结果':view==='live'?'跟随实时':'历史回放'} · 第 ${cursor+1} / ${frames.length} 帧 · 原始时间 ${fmt(frames[cursor]?.elapsed,2)} s`;
  $('scope').textContent=$('method').value==='auto'&&$('budget').value==='auto'?'全部方法与预算':`单步 / 播放筛选：${$('method').selectedOptions[0]?.text} · ${$('budget').selectedOptions[0]?.text}`;
+ if(s.survey&&view==='final'){
+  $('certificate').textContent=latest.audit?.passed?'勘察停止已认证':'勘察核查未通过';
+  $('queries').textContent=(latest.query_count??'—')+' 个道路集合';
+  $('cuts').textContent=latest.joint_cut_count??'—';$('elapsed').textContent=fmt(latest.seconds,2)+' s';
+  $('message').textContent=s.message;$('coverage').textContent='信息间隙 '+fmt(s.survey.information_gap_upper)+' kW²';
+ }
  eventRows();resultRows();drawQueue=drawQueue.then(()=>version===renderVersion?draw(s,r):undefined);await drawQueue;
 }
 $('prev').onclick=()=>{stop();const i=nextIndex(-1);if(i>=0)seek(i)};$('next').onclick=()=>{stop();const i=nextIndex(1);if(i>=0)seek(i)};
@@ -215,7 +352,7 @@ for(const id of ['inner','outer','plane','cut-stage'])$(id).onchange=()=>state&&
 $('follow-scheme').onclick=()=>{selectedScheme=null;if(state)render(state)};
 $('reset-camera').onclick=async()=>{cameraSync=true;try{await Promise.all(plotIds.filter(id=>$(id).layout).map(id=>{cameras[id]=JSON.parse(JSON.stringify(defaultCamera));return Plotly.relayout(id,{'scene.camera':cameras[id]})}))}finally{cameraSync=false}};
 $('sync-camera').onchange=async()=>{if($('sync-camera').checked&&$('detail-chart').layout){cameras['detail-chart']=JSON.parse(JSON.stringify(cameras.chart||defaultCamera));await Plotly.relayout('detail-chart',{'scene.camera':cameras['detail-chart']})}};
-$('file').onchange=async()=>{try{const data=JSON.parse(await $('file').files[0].text());if(data.recording_version!==1||!Array.isArray(data.history))throw Error('不是完整的 PlanRegion 回放文件');stop();offline=true;$('live').disabled=true;ingest(data,true);view='final';await render(latest);$('connection').textContent='已载入完整离线回放'}catch(error){$('connection').textContent='载入失败：'+error.message}};
+$('file').onchange=async()=>{try{const data=JSON.parse(await $('file').files[0].text());if(![1,2].includes(data.recording_version)||!Array.isArray(data.history))throw Error('不是完整的 PlanRegion 回放文件');stop();offline=true;$('live').disabled=true;ingest(data,true);view='final';await render(latest);$('connection').textContent='已载入完整离线回放'}catch(error){$('connection').textContent='载入失败：'+error.message}};
 async function poll(){if(offline)return;try{const response=await fetch('/state?after='+frames.length,{cache:'no-store'});if(!response.ok)throw Error('HTTP '+response.status);const data=await response.json();if(offline)return;ingest(data);if(view==='live'){if(latest.status==='completed')view='final';await render(latest)};$('connection').textContent='本地实时连接 · 历史可随时回放'}catch(error){$('connection').textContent='连接已断开；已收到的历史仍可回放'}setTimeout(poll,750)}
 function unpackReplay(data){
  if(data.packed_replay_version!==1)return data;

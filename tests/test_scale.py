@@ -9,7 +9,7 @@ import nbformat  # 读取正式入口和创建短测试夹具。
 import numpy as np  # 统一网格和预算标签。
 from threadpoolctl import threadpool_limits  # 所有比较单线程。
 from Network.case33bw import Case33  # 三档嵌套候选线路配置。
-from model import PlanningEquations, PlanningModel  # 完整规划模型作为直接求解对照。
+from model import GridPhysics, MasterProblem  # 完整规划模型作为直接求解对照。
 from plot import sample_region
 from vertify import ac_planning_query, validate_ac_region
 import main
@@ -41,9 +41,9 @@ class ScaleTests(unittest.TestCase):  # 规模扩展只改变网架设置。
                 return np.asarray(states).reshape((len(budgets),4,4,4))
             expected = {}  # 保存两类直接模型的参考标签。
             for method in ('linear','socp'):  # LP/SOCP 分别对照。
-                equations,costs = PlanningEquations(network,method),[]  # 共用固定系数。
+                equations,costs = GridPhysics(network,method),[]  # 共用固定系数。
                 for point in points:  # 测试逐点求解，不复用单调分类结论。
-                    problem = PlanningModel(equations,power=point, threads=1)  # 完整运行方程与逐线路变量。
+                    problem = MasterProblem(equations,power=point, threads=1)  # 完整运行方程与逐线路变量。
                     with problem.model:  # 每次直接查询及时释放。
                         answer = problem.solve()  # 参考必须完成最优性或不可行证明。
                     self.assertTrue(answer is None or answer['status']=='optimal')  # 未确定不算参考真值。
@@ -60,7 +60,7 @@ class ScaleTests(unittest.TestCase):  # 规模扩展只改变网架设置。
             np.testing.assert_array_equal(hybrid[known],expected['socp'][known])
             ac = validate_ac_region(network,budgets,4,bounds, threads=1)
             costs = []  # 独立逐点执行 AC 方案搜索，核对成块推断。
-            equations = PlanningEquations(network,'socp')  # AC 搜索只借助 SOCP 候选。
+            equations = GridPhysics(network,'socp')  # AC 搜索只借助 SOCP 候选。
             for point in points:  # 每个中心独立验证，不继承整块标签。
                 answer = ac_planning_query(equations,point, threads=1)  # 独立 AC 等式认证。
                 self.assertTrue(answer is None or answer['status']=='optimal')  # 当前小样本须完整获证。
@@ -71,18 +71,15 @@ class ScaleTests(unittest.TestCase):  # 规模扩展只改变网架设置。
             self.assertTrue(np.all((ac!=1)|(expected['socp']==1)))  # AC 必须包含在 SOCP 外松弛内。
 
     def test_hybrid_rechecks_linear_interior(self):  # SOCP 没有证书时不得继承 LP 内点。
-        original = PlanningModel.solve  # LP 阶段使用真实优化器。
+        original = MasterProblem.solve  # LP 阶段使用真实优化器。
         def query(problem, *args, **kwargs):  # 测试只替换 SOCP 的认证结果。
-            if problem.equations.method=='socp':  # 模拟没有候选和证书。
-                return dict(feasible=False, x=None, p=None, bound=None, status='unknown')
+            if problem.equations.method=='socp':
+                raise RuntimeError('SOCP has no certificate')
             return original(problem, *args, **kwargs)  # LP 阶段仍真实切割。
-        with patch.object(PlanningModel, 'solve', new=query):
+        with patch.object(MasterProblem, 'solve', new=query):
             bounds = np.array([540.,5950.,970.])
-            domain = main.build_continuous_region(fixed_topology(Case33(upgrade_count=8)), 'hybrid', 0., bounds, threads=1)
-            points = (np.indices((4,)*3).reshape(3,-1).T+.5)*bounds/4
-            states = sample_region(domain,points,bounds)
-        self.assertTrue(np.any(states==0))  # 尚待 SOCP 认证的区域仍为未知。
-        self.assertTrue(np.all(states<=0))  # 没有任何 SOCP 证书就不能发布域内点。
+            with self.assertRaisesRegex(RuntimeError, 'SOCP has no certificate'):
+                main.build_continuous_region(fixed_topology(Case33(upgrade_count=8)), 'hybrid', 0., bounds, threads=1)
 
     def test_notebook_does_not_depend_on_test_orchestration(self):  # 测试设施与正式流程保持明确边界。
         from pathlib import Path
@@ -95,11 +92,10 @@ class ScaleTests(unittest.TestCase):  # 规模扩展只改变网架设置。
         self.assertNotIn('joint_benders',source)  # 旧算法只保留在对照测试。
 
     def test_solver_timeout_remains_unknown(self):  # 优化器自身时限不等于不可行证明。
-        problem = PlanningModel(PlanningEquations(Case33(upgrade_count=8),'socp'),power=[300.,3000.,500.], threads=1)  # 正常规划查询。
+        problem = MasterProblem(GridPhysics(Case33(upgrade_count=8),'socp'),power=[300.,3000.,500.], threads=1)  # 正常规划查询。
         with problem.model:  # 测试后释放优化器。
-            answer = problem.solve(time_limit=0.)  # 在搜索开始前触发优化器时限。
-        self.assertEqual(answer['status'],'unknown')  # 保留未确定。
-        self.assertFalse(answer['feasible'])  # 不得产生伪运行证书。
+            with self.assertRaisesRegex(RuntimeError, 'status=9'):
+                problem.solve(time_limit=0.)
 
     def test_external_watchdog_handles_return_error_and_timeout(self):  # 被测函数无需 deadline、report 或检查点接口。
         with TemporaryDirectory() as folder:  # 所有夹具仅用于这个测试。

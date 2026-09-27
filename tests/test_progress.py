@@ -16,7 +16,8 @@ import numpy as np
 from threadpoolctl import threadpool_limits
 
 import main
-from plot import RunMonitor, cut_slice, json_value, pack_replay
+from monitor import RunMonitor
+from plot import cut_slice, json_value, pack_replay
 from vertify import validate_ac_region
 
 
@@ -57,8 +58,8 @@ class ProgressTests(unittest.TestCase):
     def test_live_cuts_preserve_solver_result_and_show_clipped_geometry(self):
         net, bounds = main.FourBus(), [150., 150., 150.]
         with threadpool_limits(limits=1), RunMonitor(record=True, stream=StringIO()) as monitor:
-            shown = main.build_continuous_region(net, 'linear', 0., bounds, threads=1, progress=monitor)
-            plain = main.build_continuous_region(net, 'linear', 0., bounds, threads=1)
+            shown = main.build_continuous_region(net, 'socp', 0., bounds, threads=1, progress=monitor)
+            plain = main.build_continuous_region(net, 'socp', 0., bounds, threads=1)
         self.assertEqual(json_value({k: v for k, v in shown.items() if k != 'timing'}),
                          json_value({k: v for k, v in plain.items() if k != 'timing'}))
         state, cuts = {}, 0
@@ -86,10 +87,9 @@ class ProgressTests(unittest.TestCase):
 
 
     def test_unknown_phase_never_reports_full_classification(self):
-        answer = dict(bound=None, feasible=False, status='unknown')
-        with patch('vertify.ac_planning_query', return_value=answer):
-            states = validate_ac_region(main.FourBus(), [0., np.inf], 2, [150.]*3, threads=1)
-            self.assertTrue(np.all(states == 0))
+        with patch('vertify.ac_planning_query', side_effect=RuntimeError('AC not converged')):
+            with self.assertRaisesRegex(RuntimeError, 'AC not converged'):
+                validate_ac_region(main.FourBus(), [0., np.inf], 2, [150.]*3, threads=1)
 
 
     def test_http_snapshot_history_and_cleanup(self):
@@ -154,7 +154,7 @@ class ProgressTests(unittest.TestCase):
             self.assertIn('mp_start', events)
             self.assertIn('point', events)
             self.assertEqual({path.name for path in Path(folder).iterdir()},
-                             {'result.npz', 'region_comparison.html', 'live_view.html'})
+                             {'result.npz', 'region_comparison.html', 'live_view.html', 'steps.jsonl'})
             for region in result.metadata['continuous']:
                 self.assertEqual(set(region['counts']), {'sp', 'cuts'})
                 self.assertEqual(set(region['timing']), {'total_seconds'})
@@ -164,7 +164,7 @@ class ProgressTests(unittest.TestCase):
                 for derived in ('inner_volume', 'outer_volume', 'volume_gap', 'validation', 'tau', 'residual_mode'):
                     self.assertNotIn(derived, region)
                 self.assertTrue(all('choice' in p and 'cost' in p for p in region['inner']))
-            with patch('main.evaluation_bounds', side_effect=AssertionError('unexpected solve')):
+            with patch('main.build_continuous_region', side_effect=AssertionError('unexpected solve')):
                 loaded = main.run(main.FourBus(), recompute=False, output=folder, show_ui=False)
             np.testing.assert_array_equal(loaded.states, result.states)
             code = 'import sys; sys.path.insert(0, '+repr(str(main.ROOT))+'); import main; main.run(main.FourBus(), recompute=False, show_ui=False, output='+repr(folder)+')'

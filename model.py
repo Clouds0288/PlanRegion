@@ -28,8 +28,8 @@ def new_model(name, threads):
     return model
 
 
-class PlanningEquations:
-    """共用物理参数、索引和约束；不再手工装配标准锥矩阵。"""
+class GridPhysics:
+    """保存共用电网物理参数，并向 MP/SP 模型添加运行变量与约束。"""
 
     def __init__(self, network, method):
         self.network, self.method = network, method
@@ -140,11 +140,11 @@ class PlanningEquations:
         return SimpleNamespace(P=P, Q=Q, ell=ell, v=v, plus=plus, minus=minus, state=state, cones=cones)
 
 
-class PlanningModel:
-    """给定 power 或 min_total 时求 MP1 最小投资，否则求 MP2 最大总负荷。"""
+class MasterProblem:
+    """完整 MP：给定 power/min_total 时最小投资，否则最大化 direction@p。"""
 
     def __init__(self, equations, *, power=None, budget=np.inf, cuts_only=False,
-                 min_total=None, fixed_plan=None, cuts=(), threads=DEFAULT_SOLVER_THREADS):
+                 min_total=None, fixed_plan=None, cuts=(), direction=None, threads=DEFAULT_SOLVER_THREADS):
         # 1. 读取网架参数，创建求解模型
         net = equations.network
         model = new_model('planning_'+equations.method, threads)
@@ -193,9 +193,11 @@ class PlanningModel:
         # 7. 添加运行变量及物理约束；cuts_only 模式省略此部分
         operation = None if cuts_only else equations.add_operation(model, x, p)
 
-        # 8. MP1 最小投资，MP2 最大总负荷；返回时将 MP2 目标换回 kW
+        # 8. MP1 最小投资；MP2 沿给定方向最大化负荷，其他负荷仍自由。
         minimizing = power is not None or min_total is not None
-        model.setObjective(investment if minimizing else total_power, GRB.MINIMIZE if minimizing else GRB.MAXIMIZE)
+        self.direction = np.ones(len(net.load_nodes)) if direction is None else np.asarray(direction, dtype=float)
+        objective = gp.quicksum(w*value for w, value in zip(self.direction, p.values()))/net.base
+        model.setObjective(investment if minimizing else objective, GRB.MINIMIZE if minimizing else GRB.MAXIMIZE)
         self.objective_scale = 1. if minimizing else net.base
 
         # 9. 保存变量引用；具名变量与扁平视图共享同一批 Gurobi 变量
@@ -241,43 +243,46 @@ class PlanningModel:
         # 2. 判断是否有候选解，提取目标的全局界
         if model.Status == GRB.INFEASIBLE:
             return None
+        if model.Status not in (GRB.OPTIMAL, GRB.USER_OBJ_LIMIT) or not model.SolCount:
+            raise RuntimeError(f'{model.ModelName}: status={model.Status}, SolCount={model.SolCount}')
+        if model.MaxVio > PLANNING_TOL:
+            raise RuntimeError(f'{model.ModelName}: MaxVio={model.MaxVio:g} > {PLANNING_TOL:g}')
         bound = model.ObjBound*self.objective_scale
-        if not model.SolCount:
-            return dict(status='unknown', x=None, p=None, objective=None, bound=bound, state=None, feasible=False)
 
         # 3. 提取选型、负荷和目标值：投资用原费用单位，负荷用 kW
         x = np.rint(self.x.X).astype(int)
         p = self.power.X
-        objective = equations.network.cost@x if model.ModelSense == GRB.MINIMIZE else p.sum()
+        objective = equations.network.cost@x if model.ModelSense == GRB.MINIMIZE else self.direction@p
 
         # 4. 原样读取运行状态；质量指标覆盖所建模型，cuts_only 没有运行证书。
         state = None if self.state is None else self.state.X
-        feasible = state is not None and model.MaxVio <= PLANNING_TOL
+        feasible = state is not None
 
         # 5. 返回候选解、目标界和认证状态
         minimizing = model.ModelSense == GRB.MINIMIZE
         gap = objective-bound if minimizing else bound-objective
         tolerance = 1e-7 if minimizing else radial_gap_kw+1e-5
-        status = ('optimal' if model.MaxVio <= PLANNING_TOL and (
-                      model.Status == GRB.OPTIMAL or feasible and gap <= tolerance)
-                  else 'feasible' if feasible else 'unknown')
+        status = 'optimal' if model.Status == GRB.OPTIMAL or gap <= tolerance else 'feasible'
         return dict(x=x, p=p, objective=float(objective), bound=bound, state=state, feasible=feasible, status=status)
 
 
-class PlanningSP:
-    """固定 x,p 的 Gurobi 可行性问题；锥支撑平面的 LP 对偶生成全局联合割。"""
+class SubProblem:
+    """固定 x,p 的运行可行性 SP；锥支撑平面的 LP 对偶生成全局联合割。"""
 
     def __init__(self, equations, *, threads=DEFAULT_SOLVER_THREADS):
         self.equations, self.threads, self.calls = equations, threads, 0
 
     def solve(self, x, power, time_limit=None):
+        # 1. 固定 x、p，建立等式松弛问题
         self.calls += 1
         equations, net = self.equations, self.equations.network
         limit = SP_TIME_LIMIT[equations.method] if time_limit is None else time_limit
         deadline = perf_counter()+limit
         with new_model('planning_SP', self.threads) as model:
-            # 边界及零潮流锥易病态；提高原始解精度，避免依赖事后状态重建。
-            model.Params.NumericFocus = 2
+            # 固定数值设置，不在失败后重求；证书仍按 PLANNING_TOL 接受。
+            model.Params.Aggregate = 0
+            model.Params.ScaleFlag = 0
+            model.Params.BarQCPConvTol = 1e-9
             choice = model.addVars(equations.keys, ub=1., name='x')
             p = model.addVars(net.load_nodes, lb=-GRB.INFINITY, name='p_kw')
             # 固定参数用等式表示；求割时去掉这些等式的乘子，保留 x,p 系数。
@@ -285,30 +290,36 @@ class PlanningSP:
             fixed_p = model.addConstrs((p[i] == value for i, value in zip(net.load_nodes, power)), name='fixed_p')
             eta = model.addVar(name='violation')
             operation = equations.add_operation(model, choice, p, eta)
-            # 正比例缩放目标，避免边界的微小标幺违反量淹没在绝对求解误差中。
-            model.setObjective(1000.*eta)
+            model.setObjective(eta)
+            # 2. 求解并检查终止状态与精度；失败直接报错。
             model.Params.TimeLimit = max(0., deadline-perf_counter())
             model.optimize()
-            if not model.SolCount:
-                return dict(cut=None, state=None, feasible=False)
-            # eta=0 对应原约束；松弛量与求解误差共用接受容差，直接返回原始状态。
+            if model.Status != GRB.OPTIMAL:
+                raise RuntimeError(f'SP {equations.method}: status={model.Status}, x={np.asarray(x).tolist()}, p={np.asarray(power).tolist()}')
+            if model.MaxVio > PLANNING_TOL:
+                raise RuntimeError(f'SP {equations.method}: MaxVio={model.MaxVio:g} > {PLANNING_TOL:g}, p={np.asarray(power).tolist()}')
+            # 3. eta=0 对应原约束；松弛量与求解误差共用容差，返回原始状态
             if np.maximum(0., eta.X)+model.MaxVio <= PLANNING_TOL:
                 return dict(cut=None, state=operation.state.X, feasible=True)
-            # ||tail|| <= head 的支撑平面对整个锥有效；正 eta 仍须用对偶取得有效割。
+            if eta.X <= PLANNING_TOL:
+                raise RuntimeError(f'SP {equations.method}: eta={eta.X:g}, MaxVio={model.MaxVio:g}; certificate exceeds tolerance')
+            # 4. 正 eta 对应不可行候选；建立锥支撑平面 LP 以取得对偶割。
             planes = []
             for head, tail in operation.cones:
                 values = np.array([item.getValue() for item in tail])
                 length = np.linalg.norm(values)
                 if length:
                     planes.append(head-gp.quicksum(float(a/length)*item for a, item in zip(values, tail)))
-            # 未取得可行证书则继续分离；用 LP 乘子形成割，不依赖 QCP 对偶恢复。
             model.remove(model.getQConstrs())
             for plane in planes:
                 model.addConstr(plane >= 0., name='cone_support')
             model.Params.TimeLimit = max(0., deadline-perf_counter())
             model.optimize()
-            if model.Status != GRB.OPTIMAL or model.ObjVal <= 0.:
-                return dict(cut=None, state=None, feasible=False)
+            if model.Status != GRB.OPTIMAL:
+                raise RuntimeError(f'SP cut LP: status={model.Status}, p={np.asarray(power).tolist()}')
+            if model.ObjVal <= 0. or model.MaxVio > PLANNING_TOL:
+                raise RuntimeError(f'SP cut LP: objective={model.ObjVal:g}, MaxVio={model.MaxVio:g}')
+            # 5. 组合 LP 乘子，返回能分离该候选点的联合割
             cut = self._separating_cut(model, operation, choice, p, [*fixed_x.values(), *fixed_p.values()], x, power)
             return dict(cut=cut, state=None, feasible=False)
 
@@ -333,20 +344,20 @@ class PlanningSP:
         scale = max(np.max(np.abs(cut)), np.max(np.abs(cut[1:1+len(power)]))*equations.network.base)
         cut /= scale
         cut[0] += 1e-10
-        if cut[0]+cut[1:1+len(power)]@power+cut[1+len(power):]@x < -1e-9:
-            return cut
-        return None
+        if not cut[0]+cut[1:1+len(power)]@power+cut[1+len(power):]@x < -1e-9:
+            raise RuntimeError(f'SP cut does not separate the candidate: x={np.asarray(x).tolist()}, p={np.asarray(power).tolist()}')
+        return cut
 
 
 class RemainingRegionModel:
     """共享并集排除约束；light 搜索割外域，physical 再加入完整运行约束。"""
 
     def __init__(self, equations, budget, bounds, total_bound, cuts, inner_halfspaces, tau,
-                  *, mode='light', threads=DEFAULT_SOLVER_THREADS):
+                  *, axis_bounds=None, mode='light', threads=DEFAULT_SOLVER_THREADS):
         self.mode = mode
-        self.problem = problem = PlanningModel(equations, budget=budget, cuts_only=mode == 'light', threads=threads)
+        self.problem = problem = MasterProblem(equations, budget=budget, cuts_only=mode == 'light', threads=threads)
         m = self.model = problem.model
-        problem.power.UB = bounds
+        problem.power.UB = bounds if axis_bounds is None else axis_bounds
         m.addConstr(problem.power.sum() <= total_bound)
         self.distance_scale = 1000.
         d = len(bounds)
@@ -376,31 +387,16 @@ class RemainingRegionModel:
         details = dict(feasible=False)
         if m.Status == GRB.INFEASIBLE:
             return dict(complete=True, bound=None, x=None, p=None, **details)
+        if m.Status not in (GRB.OPTIMAL, GRB.USER_OBJ_LIMIT) or not m.SolCount:
+            raise RuntimeError(f'Remaining region {self.mode}: status={m.Status}, SolCount={m.SolCount}')
+        if m.MaxVio > PLANNING_TOL:
+            raise RuntimeError(f'Remaining region {self.mode}: MaxVio={m.MaxVio:g} > {PLANNING_TOL:g}')
         bound = float(m.ObjBound)/self.distance_scale
         if bound <= tolerance:
             return dict(complete=True, bound=bound, x=None, p=None, **details)
-        if not m.SolCount or m.ObjVal/self.distance_scale <= tolerance:
-            return dict(complete=False, bound=bound, x=None, p=None, **details)
+        if m.ObjVal/self.distance_scale <= tolerance:
+            raise RuntimeError(f'Remaining region {self.mode}: no uncovered witness or coverage certificate, bound={bound:g}')
         x, point = np.rint(problem.x.X).astype(int), problem.power.X
         if self.mode == 'physical':
-            details.update(feasible=m.MaxVio <= PLANNING_TOL)
+            details.update(feasible=True)
         return dict(complete=False, bound=bound, x=x, p=point, **details)
-
-
-def evaluation_bounds(network, *, threads=DEFAULT_SOLVER_THREADS):
-    """三个无预算 LP 轴向全局上界确定公共评价箱。"""
-    equations, bounds = PlanningEquations(network, 'linear'), []
-    for axis in np.eye(len(network.load_nodes)):
-        problem = PlanningModel(equations, threads=threads)
-        for e in network.corridors:
-            for k in e.types:
-                if any(t.r <= k.r and t.reactance <= k.reactance and t.capacity >= k.capacity
-                       and (t.r < k.r or t.reactance < k.reactance or t.capacity > k.capacity) for t in e.types):
-                    problem.choices[e.id, k.id].UB = 0.
-        problem.power.UB = axis*network.power_limit
-        with problem.model:
-            answer = problem.solve()
-        if answer is None or answer['bound'] is None or not np.isfinite(answer['bound']):
-            raise RuntimeError('No finite planning bound for the common evaluation box')
-        bounds.append(min(network.power_limit, answer['bound']))
-    return np.ceil(np.asarray(bounds)/10.)*10.
