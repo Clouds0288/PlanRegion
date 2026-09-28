@@ -16,8 +16,8 @@ class StartupTests(unittest.TestCase):
         network = run.call_args.args[0]
         self.assertIsInstance(network, main.Case33)
         self.assertEqual(network.load_nodes, (18, 25))
-        self.assertEqual(network.upgrade_count, 4)
-        self.assertEqual(run.call_args.kwargs['budget'], 2.)
+        self.assertEqual(network.n_types, 37)
+        self.assertEqual(run.call_args.kwargs['budget'], network.switch_budget)
         self.assertEqual(run.call_args.kwargs['divisions'], 20)
         self.assertEqual(run.call_args.kwargs['output'].parent.name, 'case33_2d')
         fixed = ~np.isin(network.nodes, network.load_nodes)
@@ -27,14 +27,14 @@ class StartupTests(unittest.TestCase):
 
     def test_default_threads_and_top_level_settings_reach_run(self):
         with patch('main.run') as run:
-            main.main()
+            main.main('fourbus')
         network = run.call_args.args[0]
         self.assertIsInstance(network, main.FourBus)
         self.assertEqual(network.load_nodes, (1, 2))
         self.assertEqual(run.call_args.kwargs['budget'], 20000.)
         self.assertEqual(run.call_args.kwargs['threads'], DEFAULT_SOLVER_THREADS)
         self.assertEqual(main.REFINEMENT_CHECKS, 32)
-        self.assertEqual(main.RESIDUAL_MODE, 'light')
+        self.assertEqual(main.RESIDUAL_MODE, 'physical')
         self.assertEqual(network.fixed_p[2], 0.)
         self.assertEqual(network.fixed_q[2], 0.)
         self.assertTrue(network.required.all())

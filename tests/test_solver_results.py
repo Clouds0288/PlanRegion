@@ -6,7 +6,7 @@ import numpy as np
 import pytest
 
 from Network.four_bus_five_corridor import FourBus
-from Network.case33bw import Case33
+from tests.legacy_case33 import Case33
 from model import PLANNING_TOL, GridPhysics, MasterProblem, SubProblem
 from tests.planning_checks import margin
 from tests.reference import fixed_topology
@@ -85,7 +85,7 @@ def test_sp_uses_eta_and_keeps_the_existing_dual_cut_path(feasible):
 def test_sp_timeout_without_solution_stays_unknown():
     network = FourBus()
     equations = GridPhysics(network, 'socp')
-    with pytest.raises(RuntimeError, match='status=9'):
+    with pytest.raises(TimeoutError, match='time limit'):
         SubProblem(equations, threads=1).solve(network.encode_plan(network.initial_plan), np.zeros(3), time_limit=0.)
 
 

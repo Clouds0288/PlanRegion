@@ -33,11 +33,12 @@ class Corridor:
     existing_type: str | None
     initial_active: bool
     types: tuple[TypeParameters, ...]
+    switchable: bool = True
 
 
 @dataclass
 class Network:
-    """完整候选图。初始开合状态只用于生成初始方案，不限制规划。
+    """完整候选图。switchable=False 的走廊保持初始状态和型号。
 
     nodes 仅含非根节点；required 指定必须接入的节点。
     型号按走廊顺序连续展开，x/P/Q/ell 与 r/reactance/capacity/cost 共用该顺序。
@@ -62,6 +63,7 @@ class Network:
     source_smax: float = np.inf
     sources: tuple = ()
     road_allowed: object = True
+    cost_offset: float = 0.
 
     cost_unit = '相对投资单位'
     budgets = (0., 1., 2., np.inf)
@@ -279,7 +281,7 @@ class OperatingTree:
 
     @property
     def cost(self):
-        return float(self.network.cost[self.type_indices].sum())
+        return float(self.network.cost_offset+self.network.cost[self.type_indices].sum())
 
     @property
     def fixed_p(self):

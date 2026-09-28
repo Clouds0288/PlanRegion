@@ -38,9 +38,10 @@ def _merge(state, patch):
 class RunMonitor:
     """求解线程只提交数值；Tk 与绘图仅在主线程执行。"""
 
-    def __init__(self, *, output=None, callback=None, clock=perf_counter):
+    def __init__(self, *, output=None, callback=None, clock=perf_counter, algorithm='主线'):
         self.output = None if output is None else Path(output)
         self.callback, self._clock = callback, clock
+        self.algorithm = algorithm
         self.condition = Condition()
         self.cancelled = Event()
         self.paused = False
@@ -116,11 +117,12 @@ class RunMonitor:
 
     # 1. 初始化：每个完整 MP2 的可行点立即入帧。
     def begin(self, network, method, budget, region, time_limit):
+        self.region = region
         self.started = self.clock()
         self.time_limit = time_limit
         self._emit('phase_start', phase='初始化', network=network.name, load_nodes=network.load_nodes,
-                   bounds=region.bounds, budget=budget, method=method, status='running',
-                   cost_unit=network.cost_unit, initial_plan=network.initial_plan,
+                   bounds=region.bounds, budget=budget, method=method, time_limit=time_limit, status='running',
+                   cost_unit=network.cost_unit, initial_plan=network.initial_plan, algorithm=self.algorithm,
                    cut_history={str(i+1): dict(cut=cut, scheme=None) for i, cut in enumerate(region.cuts)},
                    sp=0, global_search=0, global_point=None, sp_point=None,
                    **self._geometry(region))
@@ -147,7 +149,7 @@ class RunMonitor:
         self._notify('residual_start')
 
     def global_end(self, answer, region):
-        point = None if answer['complete'] else dict(scheme=self._scheme(answer['x']), p=answer['p'])
+        point = None if answer['x'] is None else dict(scheme=self._scheme(answer['x']), p=answer['p'])
         self._emit('residual_end', phase='全局搜索', global_point=point,
                    coverage_bound=answer['bound'], coverage_complete=answer['complete'],
                    **self._geometry(region))
@@ -180,9 +182,36 @@ class RunMonitor:
 
     # 5. 构域完成后独立扫描；最终指标、几何、回放只写同一个压缩文件。
     def finish(self, result, region):
-        self._emit('region_end', phase='构域完成', result=result, coverage_complete=True,
+        complete = result.get('certified', result.get('status', 'certified') == 'certified')
+        self._emit('region_end', phase='构域完成' if complete else '构域停止', result=result, coverage_complete=complete,
                    coverage_bound=result['coverage_bound'], **self._geometry(region))
         self._notify('region_end', region, region=result)
+
+    def stopped(self, status):
+        """保存截止时刻已取得的证据；未完成时只保留安全初始外包络。"""
+        result = dict(method=self.state['method'], budget=self.state['budget'], status=status,
+            certified=False, axis_bounds=self.region.axis_bounds, coverage_bound=self.state.get('coverage_bound'),
+            counts=dict(sp=self.state['sp'], cuts=len(self.region.cuts),
+                        global_search=self.state['global_search']), timing=self.timing(),
+            **self.region.finish(False))
+        self.finish(result, self.region)
+        return result
+
+    def certification_start(self, power):
+        self._emit('certification_start', phase='全网架认证', query_point=power, certification_eta=None)
+
+    def certification_end(self, answer, region):
+        self._emit('certification_end', phase='全网架认证', certification_eta=answer['eta'],
+                   certification_feasible=answer['feasible'], **self._geometry(region))
+
+    def support_start(self, x, direction):
+        self._emit('support_start', phase='网架支撑', support_scheme=self._scheme(x),
+                   support_direction=direction)
+
+    def support_end(self, answer, region):
+        self._emit('support_end', phase='网架支撑',
+                   seed_point=dict(scheme=self._scheme(answer['x']), p=answer['p']),
+                   **self._geometry(region))
 
     def scanning(self, completed, total):
         self._validation_update(phase='SOCP 扫描', scan_progress=[completed, total])
@@ -196,20 +225,23 @@ class RunMonitor:
             self.validation_state.update(values)
             self.state.update(values)
 
-    def validation(self, reference, result):
+    def validation(self, reference, result, *, region_key='inner'):
         from region import contains, halfspaces
         states = np.asarray(reference['states'])
         divisions = states.shape[0]
         indices = np.indices(states.shape).reshape(2, -1).T
         points = (indices+.5)*reference['bounds']/divisions
-        inside = np.zeros(len(points), dtype=bool)
-        for row in result['inner']:
-            inside |= contains(points, halfspaces(row['vertices']))
         truth = states.ravel() == 1
-        missed, extra = np.count_nonzero(truth & ~inside), np.count_nonzero(inside & ~truth)
-        validation = dict(bounds=reference['bounds'], states=states,
-            mr_percent=100.*missed/truth.sum() if truth.any() else None,
-            fr_percent=100.*extra/inside.sum() if inside.any() else None)
+        metrics = {}
+        for key in (key for key in ('inner', 'outer') if key in result):
+            inside = np.zeros(len(points), dtype=bool)
+            for row in result[key]:
+                inside |= contains(points, halfspaces(row['vertices']))
+            missed, extra = np.count_nonzero(truth & ~inside), np.count_nonzero(inside & ~truth)
+            metrics[key] = dict(mr_percent=100.*missed/truth.sum() if truth.any() else None,
+                               fr_percent=100.*extra/inside.sum() if inside.any() else None)
+        validation = dict(bounds=reference['bounds'], states=states, region_key=region_key,
+                          metrics=metrics, **metrics[region_key])
         self._validation_update(phase='完成', status='completed', validation=validation)
 
     def frame(self, index):
@@ -355,7 +387,7 @@ def _draw(ax, geometry, *, color, fill=False, alpha=1., linestyle='-', linewidth
 class NativeWindow:
     """A 总域、B 动态网架、C 独立扫描；实时 / 回放共用同一绘图入口。"""
 
-    def __init__(self, monitor):
+    def __init__(self, monitor, *, root=None, controller=None):
         import tkinter as tk
         from tkinter import ttk
         from matplotlib.figure import Figure
@@ -364,7 +396,8 @@ class NativeWindow:
         mpl.rcParams.update({'font.family': 'sans-serif', 'font.sans-serif': ['Microsoft YaHei', 'DejaVu Sans'],
                              'font.size': 9, 'axes.unicode_minus': False, 'svg.fonttype': 'none'})
         self.monitor = monitor
-        self.root = tk.Tk()
+        self.root = tk.Tk() if root is None else root
+        self.controller = controller
         self.root.title('SOCP 规划域 · 二维割线回放')
         self.root.geometry('1420x900')
         self.root.minsize(1000, 700)
@@ -421,27 +454,35 @@ class NativeWindow:
         self.scheme_frame.columnconfigure((0, 1), weight=1)
         controls = ttk.Frame(self.root)
         controls.pack(fill='x', padx=10, pady=(2, 10))
-        for text, action in (('暂停计算', lambda: monitor.control('pause')),
+        actions = (('暂停计算', lambda: monitor.control('pause')),
                              ('计算一步', lambda: monitor.control('next')),
                              ('继续计算', lambda: monitor.control('continue')),
-                             ('上一帧', lambda: self.seek(self.index-1)),
-                             ('下一帧', lambda: self.seek(self.index+1)),
+                             ('上一帧', lambda: self.step(-1)),
+                             ('下一帧', lambda: self.step(1)),
                              ('上一割', lambda: self.seek_cut(-1)),
                              ('下一割', lambda: self.seek_cut(1)),
-                             ('播放 / 暂停', self.play), ('实时', self.go_live)):
+                   ('播放 / 暂停', self.play), ('实时', self.go_live))
+        for text, action in actions if controller is None else actions[3:]:
             ttk.Button(controls, text=text, command=action).pack(side='left', padx=2)
         self.frame_text = tk.StringVar(value='0 / 0')
         ttk.Label(controls, textvariable=self.frame_text, width=15).pack(side='right')
         self.slider = ttk.Scale(controls, from_=0, to=1, command=self.slide)
         self.slider.pack(side='left', fill='x', expand=True, padx=8)
-        self.root.after(40, self.tick)
+        if controller is None:
+            self.root.after(40, self.tick)
 
     def close(self):
+        if self.controller is not None:
+            self.controller.close()
+            return
         if self.monitor.busy:
             self.monitor.control('cancel')
         self.root.destroy()
 
     def seek(self, index):
+        if self.controller is not None:
+            self.controller.seek(index)
+            return
         self.live, self.playing = False, False
         self.index = max(0, min(int(index), len(self.monitor.history)-1))
         self.show()
@@ -449,6 +490,10 @@ class NativeWindow:
     def slide(self, value):
         if not self.setting_slider:
             self.seek(float(value))
+
+    def step(self, direction):
+        index = self.index if self.controller is None else self.controller.index
+        self.seek(index+direction)
 
     def seek_cut(self, direction):
         indices = [i for i, item in enumerate(self.monitor.history)
@@ -469,6 +514,9 @@ class NativeWindow:
         self._draw_schemes(self.monitor.frame(self.index))
 
     def play(self):
+        if self.controller is not None:
+            self.controller.play()
+            return
         self.live = False
         if self.index >= len(self.monitor.history)-1:
             self.index = 0
@@ -476,6 +524,9 @@ class NativeWindow:
         self.last_drawn = -1
 
     def go_live(self):
+        if self.controller is not None:
+            self.controller.seek(self.controller.total-1)
+            return
         self.live, self.playing = True, False
 
     def tick(self):
@@ -532,12 +583,12 @@ class NativeWindow:
             keys = list(state.get('schemes', {}))
             if self.focus_scheme in keys:
                 self.scheme_page = keys.index(self.focus_scheme)//4
-        self.root.title(f"{state.get('network', '')} · SOCP 规划域 · 二维割线回放")
+        self.root.title(f"{state.get('algorithm', '主线')} · {state.get('network', '')} · 二维割线回放")
         total = len(self.monitor.history)
         self.frame_text.set(f'{self.index+1} / {total}')
         self.setting_slider = True
-        self.slider.configure(to=max(1, total-1))
-        self.slider.set(self.index)
+        self.slider.configure(to=max(1, total-1 if self.controller is None else self.controller.total-1))
+        self.slider.set(self.index if self.controller is None else self.controller.index)
         self.setting_slider = False
         phase = state.get('phase', '初始化')
         detail = ''
@@ -550,6 +601,12 @@ class NativeWindow:
             detail = f" · η={state['eta']:.3g} · {'认证' if state['feasible'] else '不可行'}"
             if state.get('event') == 'cut':
                 detail += ' · 采用割'
+        elif phase == '全网架认证':
+            detail = ' · 固定 p=('+', '.join(f'{p:.3f}' for p in state['query_point'])+')，x/y 自由'
+            if state.get('certification_eta') is not None:
+                detail += f" · η={state['certification_eta']:.3g}"
+        elif phase == '网架支撑':
+            detail = f" · 固定 {state['support_scheme']}，p/y 自由 · 方向 {state['support_direction']}"
         if state.get('error'):
             detail = ' · '+state['error']
         self.status.set(f"{phase}{detail}    SP 累计 {state.get('sp', 0)} · 全局 #{state.get('global_search', 0)} · 割 {state.get('cuts', 0)}")
@@ -637,7 +694,7 @@ class NativeWindow:
         self._markers(ax, state)
         handles = [Line2D([], [], color=INNER, label='认证内域并集'),
                            Line2D([], [], color=OUTER, linestyle='--',
-                                  label='认证外包络' if result else '全局外包络')]
+                                  label='有效外包络' if result else '全局外包络')]
         if not result:
             handles.append(Line2D([], [], color=OUTER, label='已知条件外域并集'))
         ax.legend(handles=handles, loc='lower left', bbox_to_anchor=(-.1, 1.01),
@@ -712,15 +769,67 @@ class NativeWindow:
             ax.pcolormesh(np.arange(n+1)*bounds[0]/n, np.arange(n+1)*bounds[1]/n,
                           (states.T == 1).astype(int), cmap=ListedColormap(['white', '#d5e3ea']),
                           vmin=0, vmax=1, shading='flat', rasterized=True)
-            inner = _union([row['vertices'] for row in state['result']['inner']])
-            _draw(ax, inner, color=INNER, linewidth=1.5)
+            key = validation.get('region_key', 'inner')
+            predicted = _union([row['vertices'] for row in state['result'][key]])
+            _draw(ax, predicted, color=INNER, linewidth=1.5)
             ax.contour(*centers, (states.T == 1).astype(float), levels=[.5], colors=['#526c80'], linewidths=.7)
             fmt = lambda value: '—' if value is None else f'{value:.3f}%'
             ax.set_title(f"遗漏 {fmt(validation['mr_percent'])}    多余 {fmt(validation['fr_percent'])}    · {n}×{n} 网格", fontsize=9)
             ax.legend(handles=[Line2D([], [], color='#526c80', label='SOCP 扫描参考'),
-                               Line2D([], [], color=INNER, label='认证内域并集')],
+                               Line2D([], [], color=INNER, label='认证内域并集' if key == 'inner' else '联合割外域并集')],
                       loc='upper right', frameon=False, fontsize=8)
         self.canvases['C'].draw_idle()
+
+
+class SynchronizedReplay:
+    """两窗口共用帧索引与播放时钟，短轨迹停在末帧。"""
+
+    def __init__(self, recordings):
+        import tkinter as tk
+        self.root = tk.Tk()
+        self.index, self.playing = 0, False
+        self.windows = []
+        width = max(760, min(1120, self.root.winfo_screenwidth()//2))
+        height = min(820, self.root.winfo_screenheight()-80)
+        for index, path in enumerate(recordings):
+            monitor = RunMonitor()
+            monitor.load_recording(path)
+            root = self.root if index == 0 else tk.Toplevel(self.root)
+            window = NativeWindow(monitor, root=root, controller=self)
+            window.live = False
+            window.root.minsize(760, 600)
+            window.root.geometry(f'{width}x{height}+{index*width}+20')
+            self.windows.append(window)
+        self.total = max(len(w.monitor.history) for w in self.windows)
+        self.seek(0)
+        self.root.after(180, self.tick)
+
+    def seek(self, index):
+        self.playing = False
+        self.index = max(0, min(int(index), self.total-1))
+        self.show()
+
+    def show(self):
+        for window in self.windows:
+            window.index = min(self.index, len(window.monitor.history)-1)
+            window.last_drawn = -1
+            window.show()
+
+    def play(self):
+        if self.index == self.total-1:
+            self.index = 0
+        self.playing = not self.playing
+
+    def tick(self):
+        if self.playing:
+            self.index = min(self.index+1, self.total-1)
+            self.show()
+            if self.index == self.total-1:
+                self.playing = False
+        self.root.after(180, self.tick)
+
+    def close(self):
+        self.root.destroy()
 
 
 if __name__ == '__main__':
@@ -728,7 +837,11 @@ if __name__ == '__main__':
     parser = argparse.ArgumentParser(description='原生窗口回放，不运行优化器')
     parser.add_argument('recording', nargs='?', type=Path,
                         default=Path(__file__).resolve().parent/'results'/'fourbus_2d'/'monitor.json.gz')
+    parser.add_argument('--compare', type=Path, help='第二份轨迹；打开两窗口同步逐帧回放')
     args = parser.parse_args()
-    monitor = RunMonitor()
-    monitor.load_recording(args.recording)
-    monitor.replay()
+    if args.compare is not None:
+        SynchronizedReplay([args.recording, args.compare]).root.mainloop()
+    else:
+        monitor = RunMonitor()
+        monitor.load_recording(args.recording)
+        monitor.replay()

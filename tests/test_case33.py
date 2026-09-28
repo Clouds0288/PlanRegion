@@ -1,7 +1,7 @@
 """33 节点原始数据、背景负荷与独立 AC 证书校验。"""
 import unittest  # 标准回归测试。
 import numpy as np  # 物理数组和可复现查询。
-from Network.case33bw import Case33, network  # 唯一物理数据输入。
+from tests.legacy_case33 import Case33, network  # 唯一物理数据输入。
 from model import GridPhysics, SubProblem
 from vertify import ACPowerFlow
 from tests.reference import fixed_topology, upgrade_plan, validate_power_flow

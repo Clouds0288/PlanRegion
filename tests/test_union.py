@@ -6,7 +6,7 @@ import unittest
 import numpy as np
 from threadpoolctl import threadpool_limits
 
-from Network.case33bw import Case33
+from tests.legacy_case33 import Case33
 from main import FourBus, build_continuous_region
 from monitor import RunMonitor
 from model import GridPhysics, MasterProblem, SubProblem, RemainingRegionModel, PLANNING_TOL

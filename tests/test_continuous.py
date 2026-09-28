@@ -13,7 +13,7 @@ import unittest
 import numpy as np
 from threadpoolctl import threadpool_limits
 
-from Network.case33bw import Case33
+from tests.legacy_case33 import Case33
 from main import RegionTimeout, build_continuous_region
 from model import RemainingRegionModel
 from tests.planning_checks import margin

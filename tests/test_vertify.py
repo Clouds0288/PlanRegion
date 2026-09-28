@@ -4,7 +4,7 @@ import tempfile  # 测试文件仅写临时目录。
 import unittest  # 标准回归框架。
 import numpy as np  # 复相量、表面几何和标签数组。
 import gurobipy as gp  # 独立非凸 AC 求解环境。
-from Network.case33bw import Case33  # 当前正式网架。
+from tests.legacy_case33 import Case33  # 当前正式网架。
 from plot import BenchmarkResult, METHODS, validation_summary, voxel_surface
 from vertify import ACPowerFlow
 from plot import disagreement, disagreement_interval

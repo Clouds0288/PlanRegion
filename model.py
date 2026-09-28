@@ -156,6 +156,11 @@ class MasterProblem:
         f = model.addVars(equations.types, lb=-net.n, ub=net.n, name='connectivity')
         z = {e: gp.quicksum(x[e, k] for k in equations.types[e]) for e in equations.types}
         for corridor, allowed in zip(net.corridors, net.road_allowed):
+            if not corridor.switchable:
+                for kind in corridor.types:
+                    model.addConstr(x[corridor.id, kind.id] == int(
+                        corridor.initial_active and kind.id == corridor.existing_type),
+                        name=f'fixed_branch[{corridor.id},{kind.id}]')
             if not allowed:
                 model.addConstr(z[corridor.id] == 0., name=f'road_blocked[{corridor.id}]')
 
@@ -175,7 +180,7 @@ class MasterProblem:
         model.addConstr(gp.quicksum(z.values()) == gp.quicksum(a.values()), name='tree_edges')  # 边数 = 非根接入节点数。
 
         # 5. 限制预算和总负荷，并设置给定负荷或最低总负荷
-        investment = gp.quicksum(equations.cost[e, k]*x[e, k] for e, k in equations.keys)
+        investment = net.cost_offset+gp.quicksum(equations.cost[e, k]*x[e, k] for e, k in equations.keys)
         total_power = gp.quicksum(p.values())/net.base
         model.addConstr(total_power <= net.power_limit/net.base, name='power_limit')  # 总负荷采用标幺缩放。
         if np.isfinite(budget):
@@ -218,11 +223,12 @@ class MasterProblem:
 
     def use_incumbent(self, incumbent):
         """提供已有可行解作为起点，并将其投资作为成本上界。"""
-        cost = float(self.equations.network.cost@incumbent['x'])
+        net = self.equations.network
+        cost = float(net.cost_offset+net.cost@incumbent['x'])
         self.x.Start, self.power.Start = incumbent['x'], incumbent['p']
         if self.state is not None:
             self.state.Start = incumbent['state']
-        self.model.addConstr(self.equations.network.cost@self.x <= cost+1e-9)
+        self.model.addConstr(net.cost_offset+net.cost@self.x <= cost+1e-9)
         return cost
 
     def exclude(self, x):
@@ -243,6 +249,8 @@ class MasterProblem:
         # 2. 判断是否有候选解，提取目标的全局界
         if model.Status == GRB.INFEASIBLE:
             return None
+        if model.Status == GRB.TIME_LIMIT:
+            raise TimeoutError(f'{model.ModelName}: time limit')
         if model.Status not in (GRB.OPTIMAL, GRB.USER_OBJ_LIMIT) or not model.SolCount:
             raise RuntimeError(f'{model.ModelName}: status={model.Status}, SolCount={model.SolCount}')
         if model.MaxVio > PLANNING_TOL:
@@ -252,7 +260,7 @@ class MasterProblem:
         # 3. 提取选型、负荷和目标值：投资用原费用单位，负荷用 kW
         x = np.rint(self.x.X).astype(int)
         p = self.power.X
-        objective = equations.network.cost@x if model.ModelSense == GRB.MINIMIZE else self.direction@p
+        objective = equations.network.cost_offset+equations.network.cost@x if model.ModelSense == GRB.MINIMIZE else self.direction@p
 
         # 4. 原样读取运行状态；质量指标覆盖所建模型，cuts_only 没有运行证书。
         state = None if self.state is None else self.state.X
@@ -294,6 +302,8 @@ class SubProblem:
             # 2. 求解并检查终止状态与精度；失败直接报错。
             model.Params.TimeLimit = max(0., deadline-perf_counter())
             model.optimize()
+            if model.Status == GRB.TIME_LIMIT:
+                raise TimeoutError('SP: time limit')
             if model.Status != GRB.OPTIMAL:
                 raise RuntimeError(f'SP {equations.method}: status={model.Status}, x={np.asarray(x).tolist()}, p={np.asarray(power).tolist()}')
             if model.MaxVio > PLANNING_TOL:
@@ -316,6 +326,8 @@ class SubProblem:
                 model.addConstr(plane >= 0., name='cone_support')
             model.Params.TimeLimit = max(0., deadline-perf_counter())
             model.optimize()
+            if model.Status == GRB.TIME_LIMIT:
+                raise TimeoutError('SP cut LP: time limit')
             if model.Status != GRB.OPTIMAL:
                 raise RuntimeError(f'SP cut LP: status={model.Status}, p={np.asarray(power).tolist()}')
             if model.ObjVal <= 0. or model.MaxVio > PLANNING_TOL:
@@ -388,6 +400,8 @@ class RemainingRegionModel:
         details = dict(feasible=False)
         if m.Status == GRB.INFEASIBLE:
             return dict(complete=True, bound=None, x=None, p=None, **details)
+        if m.Status == GRB.TIME_LIMIT:
+            raise TimeoutError(f'Remaining region {self.mode}: time limit')
         if m.Status not in (GRB.OPTIMAL, GRB.USER_OBJ_LIMIT) or not m.SolCount:
             raise RuntimeError(f'Remaining region {self.mode}: status={m.Status}, SolCount={m.SolCount}')
         if m.MaxVio > PLANNING_TOL:

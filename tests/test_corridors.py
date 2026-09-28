@@ -6,7 +6,7 @@ import pytest
 from gurobipy import GRB
 
 from Network import Corridor, Network, TypeParameters
-from Network.case33bw import Case33
+from tests.legacy_case33 import Case33
 from Network.four_bus_five_corridor import FourBus
 from Network.jiangkou import Jiangkou
 from model import GridPhysics, MasterProblem, SubProblem

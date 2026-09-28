@@ -8,7 +8,7 @@ from unittest.mock import patch  # 模拟未获证的 SOCP 查询，检查混合
 import nbformat  # 读取正式入口和创建短测试夹具。
 import numpy as np  # 统一网格和预算标签。
 from threadpoolctl import threadpool_limits  # 所有比较单线程。
-from Network.case33bw import Case33  # 三档嵌套候选线路配置。
+from tests.legacy_case33 import Case33  # 三档嵌套候选线路配置。
 from model import GridPhysics, MasterProblem  # 完整规划模型作为直接求解对照。
 from plot import sample_region
 from vertify import ac_planning_query, validate_ac_region

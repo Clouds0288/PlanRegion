@@ -113,8 +113,9 @@ class GlobalViolation:
         loads = list(self.problem.loads.values())
         for i, j in zip(*np.nonzero(template.sp_p)):
             dual_value += template.sp_p[i, j]*self.row_dual[i].item()*loads[j]
-        # FourBus 的零潮流、v=1 提供 eta* <= max(p)/base 的解析上界。
-        self.violation = model.addVar(ub=float(max(axis_bounds)/equations.network.base), name='G_violation')
+        # 零潮流、v=1 的解析上界包含全部固定负荷及动态有功/无功负荷。
+        loads_at_box = equations.network.loads(axis_bounds)
+        self.violation = model.addVar(ub=float(max(np.max(np.abs(v)) for v in loads_at_box)), name='G_violation')
         model.addQConstr(self.violation <= dual_value, name='dual_objective')
         model.setObjective(self.violation, GRB.MAXIMIZE)
 

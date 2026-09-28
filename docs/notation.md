@@ -1,6 +1,6 @@
 # 数学符号与代码变量规范
 
-版本：2.1，2026-09-28。顶点 SP 违反量优先、32 次新增 SP 的全局检查间隔；默认二维 FourBus + SOCP + Python 原生监视窗口，径向精度 tau=0.005。联合割布局及公共归一化坐标保持不变。
+版本：2.2，2026-09-28。顶点 SP 违反量优先、32 次新增 SP 的全局检查间隔；当前入口为二维 Case33 + SOCP + Python 原生监视窗口，径向精度 tau=0.005。Case33 采用第 39 节的七开关及开合变动预算；联合割布局及公共归一化坐标保持不变。
 
 本文是本项目数学符号、代码名称、单位、数组顺序和结果字段的统一约定。正式代码为 `Network/`、`model.py`、`region.py`、`vertify.py`、`plot.py`、`main.py`、`survey.py`、`monitor.py`；测试、注释和新文档使用同一约定。项目外归档的源码、已有结果和固定方案历史推导保留原口径，其局部记号须通过附录（原第 10 节）换算。
 
@@ -18,7 +18,7 @@
 | \(y\) | 完整运行向量 | 接口 / 字段 `state`；装配局部 `y`；返回键 `'state'` | `(3*t+n+2*m,)` |
 | \(P,Q,\ell,v\) | 支路有功、无功、电流平方、节点电压平方 | `P`、`Q`、`ell`、`v`，由规定切片访问 | p.u. 或 p.u.² |
 | \(r,\chi\) | 线路电阻、电抗 | `r`、`reactance` | p.u.，`(t,)` |
-| \(c,\mathcal B\) | 型号投资向量、预算 | `network.cost`、`budget` | `network.cost_unit` |
+| \(c,\mathcal B\) | 预算线性系数、预算 | `network.cost`、`budget` | `network.cost_unit`；Case33 总变动数含常数 cost_offset，见第 39 节 |
 | \(S_{\mathrm b}\) | 功率基值 | `network.base` | kVA |
 | \(\lambda\) | 必要线性约束的乘子 | `dual` | 支撑平面 LP 的约束行顺序，见第 6 节 |
 | \((\alpha,\beta,\delta)\) | 联合割系数 | `cut = [alpha, *beta, *delta]` 的扁平数组 | `(1+d+t,)` |
@@ -57,8 +57,8 @@
 | \(r_{e,k}\)，数组 \(r_\nu\) | [TypeParameters.r](../Network/__init__.py) → [Network.r](../Network/__init__.py)；具名 [GridPhysics.r](../model.py) | p.u.，标量 → `(t,)` / 按键字典 |
 | \(\chi_{e,k}\)，数组 \(\chi_\nu\) | [TypeParameters.reactance](../Network/__init__.py) → [Network.reactance](../Network/__init__.py)；具名 [GridPhysics.reactance](../model.py) | p.u.，标量 → `(t,)` / 按键字典 |
 | \(P_{e,k}^{\max}\)，输入的送端有功上限 | [TypeParameters.capacity](../Network/__init__.py) → [Network.capacity](../Network/__init__.py) | p.u.，标量 → `(t,)`；不是电流或视在功率 |
-| \(c_{e,k}\)，增量投资 | [TypeParameters.investment_cost](../Network/__init__.py) → [Network.cost](../Network/__init__.py)；具名 [GridPhysics.cost](../model.py) | `cost_unit`，标量 → `(t,)` / 按键字典 |
-| 费用单位、默认预算列表 | [Network.cost_unit](../Network/__init__.py)、[Network.budgets](../Network/__init__.py) | FourBus / 江口为元；Case33 为相对投资单位 |
+| \(c_{e,k}\)，预算线性系数 | [TypeParameters.investment_cost](../Network/__init__.py) → [Network.cost](../Network/__init__.py)；具名 [GridPhysics.cost](../model.py) | `cost_unit`，标量 → `(t,)` / 按键字典；通常为增量投资，Case33 的仿射开合次数见第 39 节 |
+| 费用单位、默认预算列表 | [Network.cost_unit](../Network/__init__.py)、[Network.budgets](../Network/__init__.py) | FourBus / 江口为元；当前 Case33 为开合变动次数，历史升级测试夹具仍为相对投资单位 |
 | \(p^{\rm original},q^{\rm original}\) | [Network.original_p](../Network/__init__.py)、[Network.original_q](../Network/__init__.py) | kW / kvar，`(n,)` |
 | \(p^{\rm fixed},q^{\rm fixed}\) | [Network.fixed_p](../Network/__init__.py)、[Network.fixed_q](../Network/__init__.py) | kW / kvar，`(n,)`；独立负荷节点置零 |
 | \(\kappa_h=q_h/p_h\) | [Network.q_ratio](../Network/__init__.py) | 无量纲，`(d,)`；并非功率因数本身 |
@@ -731,3 +731,77 @@ FourBus 中零潮流、v=1、压降松弛为零满足全部 SP 硬约束，故 e
 | 重复运行的最简比较记录 | [run_comparison.comparison](../experiments/fourbus_known_first.py) | 保存每次运行的 `total_seconds/counts/coverage_bound/fr_percent/mr_percent/volume_gap`；volume_gap 在二维使用面积测度，仍是比例 |
 
 对照直接调用当前 `main.build_continuous_region`：32 次 SP 调度、相同 physical 全局模型、预算 20000 元、负荷节点 (1,2)、tau=0.005、每种方法独立初始化、4 个求解器线程、数值库 1 线程，默认交替顺序重复 3 次。构域时间含初始化和监视记录，不含独立扫描、事后审计或绘图。双方共同使用一次 80×80 完整 SOCP 扫描，不限制参考网架、不使用构域割。每种方法仅保存耗时中位数对应的一份原生 monitor 回放；比较记录写入其 validation_state，不另建报告或逐轮日志。
+
+## 37. 二维 FourBus：双线性与负荷 LP 互补重写对照
+
+`experiments/fourbus_outer_kkt.py` 为独立实验，保持主线及原 `GlobalViolation` 不变。负荷节点为 (1,2)，节点 3 负荷固定为 0；预算 20000 元，原始 SOCP SP、完整锥对偶及全部二元建设变量不变。两方法求同一个 R_k=max_(x,p in O_k) eta*(x,p)，默认仅当有效全局上界 <=0.1 时认证，不用候选值或面积误差停止。
+
+负荷外域局部记为 `outer_p @ p <= outer_rhs + outer_x @ x`（这些记号不替换第 4 节的网络 H/T）。固定 x 与 SP 对偶乘子后，负荷子问题是线性规划。其乘子 lambda>=0 满足 `outer_p.T @ lambda = sp_p.T @ row_dual`，并与每行外域余量互补。最优性给出 `(sp_p.T @ row_dual) @ p = (outer_rhs + outer_x @ x) @ lambda`。余量非负，二元变量为 0 时令 lambda=0、为 1 时令余量=0；用指示约束表达，不设置任意乘子大 M。新增的 x*lambda 同样用二元指示约束精确表达。保留原完整 Lorentz 锥，设置 NonConvex=0，不作网架连续松弛或锥多面体替换。
+
+| 数学量 / 定义 | 固定代码映射 | 单位、形状与用途 |
+|---|---|---|
+| 负荷外域各行的 lambda | [KktViolation.outer_dual](../experiments/fourbus_outer_kkt.py) | 非负连续变量列表，按加入的上下界、总量界、联合割顺序 |
+| 负荷外域的系数行 | [KktViolation.outer_p](../experiments/fourbus_outer_kkt.py)、[KktViolation.outer_x](../experiments/fourbus_outer_kkt.py) | 每行分别为 p、右端 x 的系数；用于计算互补乘子的有效有限界 |
+| 各行互补选择 | [KktViolation.outer_active](../experiments/fourbus_outer_kkt.py) | 二元变量列表；1 允许非零乘子并强制该行紧约束，不代表网架 |
+| 负荷 LP 对偶平衡行 | [KktViolation.load_stationarity](../experiments/fourbus_outer_kkt.py) | d 条线性等式；每次加割同步新增 lambda 的系数 |
+| outer_x.T @ lambda | [KktViolation.outer_choice_dual](../experiments/fourbus_outer_kkt.py) | `(t,)` 自由连续变量，保留完整建设型号索引 |
+| x_j*(outer_x.T @ lambda)_j | [KktViolation.outer_choice_term](../experiments/fourbus_outer_kkt.py) | `(t,)`；与原 `choice_term` 分开，原项仍只指 SP 的 sp_x 贡献 |
+| 重写后的线性目标约束 | [KktViolation.dual_objective](../experiments/fourbus_outer_kkt.py) | R <= sum(choice_term)+sum(outer_choice_term)+outer_rhs@lambda-sp_rhs@mu-cone_constant@s |
+| 单次构域耗时 | [run_trial:seconds](../experiments/fourbus_outer_kkt.py) | 秒，含本方法建模、G、SP 与加割，不含共享 MP2 初始化、事后扫描和绘图 |
+| 含初始化总耗时 | [run_trial:total_seconds](../experiments/fourbus_outer_kkt.py) | seconds+initial_seconds；共同初始化时间为两方法各计一次 |
+| 外域扫描多余 / 遗漏百分比 | [compare_reference:fr_percent](../experiments/fourbus_outer_kkt.py)、[compare_reference:mr_percent](../experiments/fourbus_outer_kkt.py) | FR=外域中的扫描不可行点/外域格点数；MR=外域外的扫描可行点/扫描可行点数，均乘100；本节算法集合是外域，与主线内域指标须明确区分 |
+
+每次加割必须同时更新负荷可行域、负荷 LP 驻点条件、互补选择和替换目标，遗漏其中任何一项均不等价。G 的候选下界与全局界继续复用原实现及其数学接受条件；超时、无反例或数值异常不能写成构域完成。实验默认交替顺序重复 3 次，4 个求解线程、数值库 1 线程。共用同一组初始方向界且各自从零条割开始。独立二维网格参考固定 p、自由选择全部合法 x/y，不用构域割；只作 SOCP 离散参考，非 AC 真值。事后枚举预算内网架仅用于准确绘制小算例的外域投影并集与检查，不参与 G 或 SP 的选点。结果、轨迹及扫描保留在一份 `comparison.json.gz`，图另存 PNG/SVG/PDF；耗时中位数那次实际运行用于各方法的区域图。
+
+本次数值回归与正式比较均采用 4 个 G 求解线程：用全部 17 个预算内网架及其外域顶点的原始 SP 独立核验初始和加割后的全局最大值，并检查联合割在不限预算的完整物理域上有效。未加有限乘子界的原型曾在继续加割后出现 Gurobi SUBOPTIMAL（状态 13），仍直接报错，不接收该状态、不自动重试或切换算法。最终版本统一施加下述有效界；R_k<=0.01 的四线程比较及额外单线程核查均达标。初始 R_k<=0.1 记录的 `settings.kkt_dual_bounds=False`，新版本为 True；旧记录的时间和割不改写。按用户追加要求，R_k<=0.01、每方法最多 100 秒的正式对照为各一次运行，保存在 `results/fourbus_outer_kkt_001`，不能称为三次中位数。
+
+互补乘子有限界：二维负荷 LP 的对偶可行集为 `{lambda>=0: outer_p.T@lambda=theta}`。非空有界的原负荷 LP 存在最优基本对偶解，其非零乘子可限制在两个线性无关行上。由原 eta 归一化，theta 属于 0 与 `sp_p[i]/(-sp_eta[i])`（sp_eta[i]<0）的凸包；其余行的 sp_p 必须为零。对每个二行基及这些 theta 极点计算对应基本解分量，逐个 lambda 取所有基/极点的非负最大值，即有至少一个最优对偶解满足的有效上界。`_bound_outer_duals` 用实际浮点系数的精确有理数表示计算二阶行列式和商，再向上舍入为浮点上界；加割后重算所有旧、新乘子界，不能沿用较小的旧界。outer_choice_dual/outer_choice_term 的界由这些非负乘子界及 outer_x 的符号作区间传播。该界不依赖枚举网架，不改变原负荷空间或 eta，且只使用两行基组合而非全部负荷顶点。它在建模时统一施加，不是求解失败后的重试策略。
+
+## 38. KKT 未认证区域优先实验
+
+`fourbus_outer_kkt.py --coverage` 比较原 KKT 与认证并集排除版本，主线不变。I_x 为同一网架下完整 SOCP 认证点的凸包，I 为这些凸包的并集，严禁跨网架取凸包。初始化 MP2 点直接复用；每个首次登记网架补充两个轴和总负荷方向的固定网架 SOCP 支撑点，其求解时间计入构域时间，不预先枚举全部网架。FourBus 零固定负荷下，原点由零潮流、单位电压解析认证。
+
+为避免严格不等式与重复边界点，归一化坐标中以 `I_x + [-coverage_pad,coverage_pad]^2` 作搜索排除域，真实 inner 仍只保留认证凸包。G 搜索联合割外域中每个排除多边形之外（含边界）的网架—负荷组合。排除域以 ConvexHull 的完整半空间表示；每个多边形至少选择一个外侧面。每个选择 s 对应 `a@p <= rhs + selector_rhs*s`，M 仅由已知负荷盒精确计算。固定 x 和所有 s 后仍为负荷 LP；全部排除行同时进入原始约束、KKT 驻点、互补和替换目标，s*lambda 用指示约束精确表达，乘子界按全部新行重算。
+
+| 新增量 | 固定代码映射 | 定义与单位 |
+|---|---|---|
+| 认证域搜索扩边 δ | [COVERAGE_PAD](../experiments/fourbus_outer_kkt.py) | 1e-5；公共评价箱归一化坐标；不是新增可行点 |
+| 面选择与其右端系数 | [KktViolation._add_outer_row.selector](../experiments/fourbus_outer_kkt.py)、[KktViolation._add_outer_row.selector_rhs](../experiments/fourbus_outer_kkt.py) | 二元变量与常数；原方法不传此参数 |
+| s*lambda 精确辅助项 | [KktViolation.selector_terms](../experiments/fourbus_outer_kkt.py) | `(lambda 行索引, product)` 对列表，乘子有限界同步传播到 product |
+| 排除多边形的半空间 | [exclusion_halfspaces](../experiments/fourbus_outer_kkt.py) | 输入为归一化认证凸包，输出 [F,g]；内侧 F@xi+g<=0 |
+| 排除并集后的 G | [UncoveredKktViolation](../experiments/fourbus_outer_kkt.py) | bound 为未认证区域最大配对违反量上界；不是原全域 R_k |
+| 固定负荷的全网架认证 | [certify_load](../experiments/fourbus_outer_kkt.py) | 固定 p，自由 x,y，最小 eta；不用实验割限制 x；返回 eta/bound/x/feasible/status |
+| 认证薄层的违反量上界 | [run_coverage:padding_bound](../experiments/fourbus_outer_kkt.py) | δ max_i(sum_j(abs(sp_p_ij)*axis_bounds_j)/(-sp_eta_i)) + PLANNING_TOL；仅计 sp_eta_i<0 的行 |
+| 整个负荷投影的违反量上界 | [run_coverage:union_bound](../experiments/fourbus_outer_kkt.py) | max(未排除部分的 bound, padding_bound)，上界于 max_p min_x eta*(x,p)，不冒充 max_(x,p) eta* |
+| 认证凸包结果 | [run_coverage:inner](../experiments/fourbus_outer_kkt.py) | 列表；每项 x 为建设向量、vertices 为 kW 的同方案认证凸包顶点 |
+
+薄层界来自：保持一个认证点的可行运行 y 不变，只增加 eta 即可容纳盒内负荷扰动；所有非松弛行的 sp_p 必须为零。因此排除薄层没有获得精确可行认证，但其 union 违反量有显式界。只有 union_bound<=epsilon 或等价有效全局证书才能停止。新的 bound_scope=`uncovered_pairs`；旧结果 bound 仍按第 37 节解释，未迁移或改写旧数据。
+
+每轮 G 后，固定它的 x,p 求原 SP 并加联合割，再固定该 p 求全网架认证；发现可行方案后扩充其自身内域并重建 G。全网架认证证明 eta>0 只说明该点不可行，不能据此任意删除邻域；后续仍由有效联合割收紧各条件外域。超时未获证保留未完成状态。最终图与 FR/MR 仍以联合割外域在全部预算内网架上的投影并集计算，不扣除认证域，不用扫描指导选点。
+
+FourBus 正式对照保存在 `results/fourbus_outer_coverage_001`：epsilon=0.01、每次构域最多 100 秒、4 线程、交替顺序重复 3 次、共用 80×80 SOCP 扫描。原 KKT / 新版本耗时中位数为 10.7531 / 3.7930 秒，G 为 17 / 13 次，SP 与割为 16 / 12 次；新版本另计入 12 次全网架认证和 6 次固定网架方向支撑，3 次成功认证均切换了候选网架，最终登记网架仍为 2 个。多余网格点为 14 / 15 个，FR 为 0.3764% / 0.4032%，均未发现遗漏。新版本 remaining bound=0.00596354、padding_bound=6.35238e-6；事后枚举得到其未限制认证域的全配对最大值仍为 0.02054188，这不违反其 union 证书，不能改写成原 R_k<=0.01。上述网架枚举、扫描及审计均在计时结束后进行。
+
+## 39. Case33 限定开关与双算法回放
+
+Case33 仅保留原始线路型号，不再提供升级接口。根节点为 1；允许改变状态的支路为 21-8、7-8、22-12、11-12、9-15、33-18、25-29，其他支路固定为原始状态。完整连通和树边数约束保持不变。旧升级算例只作为 tests/legacy_case33.py 的历史回归夹具，不用于当前入口。
+
+| 数学量 / 定义 | 固定代码映射 | 单位与用途 |
+|---|---|---|
+| 支路是否允许改变原始状态 | [Corridor.switchable](../Network/__init__.py) | bool；默认 True 保持其他网络原行为；False 时 MP 固定初始型号向量 |
+| B，最多开合变动次数 | [Case33.switch_budget](../Network/case33bw.py) | 默认 7；Network/case33bw.py 唯一默认入口 |
+| c0，预算仿射常数 | [Network.cost_offset](../Network/__init__.py) | 默认 0；Case33 为允许打开的常闭支路数 2 |
+| c(x)=c0+c@x | Network.cost、TypeParameters.investment_cost、OperatingTree.cost | 显式迁移：Case33 的系数 c 对常闭可变支路为 -1、常开可变支路为 +1、其余为 0；总成本即相对初始状态的 Hamming 距离。其他算例仍为原增量投资，c0=0 |
+| 二维动态负荷 | Case33.load_nodes | 主入口及对照均为 (18,25)，其余节点保持原始负荷 |
+| KKT 未认证区域上界 | [build_kkt_region:union_bound](../experiments/case33_compare.py) | 沿用第 38 节语义，不能称为全配对 R_k；epsilon=0.01 |
+| 校验使用的算法集合 | [RunMonitor.validation.region_key](../monitor.py) | inner 或 outer；同一套 MR/FR 定义，明确标记集合，不混淆内外域 |
+| 原有内域与外域的两套网格指标 | [RunMonitor.validation:metrics](../monitor.py) | 键 inner/outer；各自 MR/FR 保持原分母，主显示集合由 region_key 指定 |
+| 固定 p、自由 x/y 的认证点 | [RunMonitor.certification_start.power](../monitor.py) | kW、(2,)；回放独立阶段，不改写固定方案 SP 的点 |
+| 开关算例的联合割投影 | [projected_outer](../experiments/case33_compare.py) | 每个预算内网架的条件外域顶点，kW；只作事后绘图和误差统计，不参与 G |
+
+主线沿用 tau=0.005 的几何覆盖证书，新 KKT 使用未认证区域残差上界 <=0.01；两者独立初始化、各计最多 1000 秒，时间包含初始化和记录，不含事后参考扫描。达到时限只保存当时已认证内域和有效外域，不能记成认证完成。Case33 新网架的原点不默认可行，增加完整 SOCP 的负总负荷方向支撑以取得下侧认证点。G 的零潮流解析 eta 上界包含全部固定和动态有功/无功负荷。
+
+回放继续使用 version=4 的单份增量文件；全网架固定负荷认证、固定网架支撑单独标明阶段。双窗口同步按各自帧序号前进一步，较短轨迹停在末帧；这不是两算法数学步骤一一对应。预算、扫描结果及比较指标均存于两份 monitor 文件，不新增文字报告。
+
+数值与超时约定：G 的 `candidate_lower` 是经过残差修正的保守下界，等于 0 不等于该候选 SP 的最优 eta 等于 0；只要 G 返回候选，仍调用原始 SP 判定，不能据此重复求解同一 G。主线全局搜索可用剩余总时限，不再受旧 120 秒单次上限截断。求解器 TIME_LIMIT 显式抛出 TimeoutError，实验入口保存截止状态，不接收超时运行解、不重求 SP、不放宽容差。
+
+当前 1000 秒上限、epsilon=0.01、4 线程、80×80 共同扫描的实际单次结果：主线 0.9364 秒、15 次 SP、4 条割、3 次全局检查；KKT 排除版 1.5847 秒、8 次固定网架支撑、首次 G 上界 0.00363333 即停止，0 次 SP/割。内域遗漏率分别 0.1599% / 0.0640%，外域多余率分别 0.4299% / 2.0367%；两者内域多余和外域遗漏均为 0 个网格点。两种停止标准不同，不是同精度速度比较。结果位于 results/case33_compare 的两份原生回放；扫描是 SOCP 离散参考，不是连续域或 AC 真值证明。

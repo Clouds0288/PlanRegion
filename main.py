@@ -7,7 +7,7 @@ from threadpoolctl import threadpool_limits
 
 from Network.four_bus_five_corridor import FourBus
 from Network.case33bw import Case33
-from model import (DEFAULT_SOLVER_THREADS, SP_TIME_LIMIT, RESIDUAL_TIME_LIMIT,
+from model import (DEFAULT_SOLVER_THREADS, SP_TIME_LIMIT,
                    GridPhysics, MasterProblem, SubProblem, RemainingRegionModel)
 from region import GEOMETRY_TOL, RegionState, contains
 from vertify import validate_socp_region
@@ -62,7 +62,7 @@ def build_continuous_region(network, method, budget, bounds, *, tau=REGION_TAU,
             maximum_answer = answer
             region.tighten_bounds(axis_bounds, answer['bound'])
         x = answer['x']
-        region.add_scheme(x, network.decode_plan(x), network.cost@x)
+        region.add_scheme(x, network.decode_plan(x), network.cost_offset+network.cost@x)
         region.add_point(x, answer['p']/bounds)
         monitor.seed(answer, region)
 
@@ -97,12 +97,12 @@ def build_continuous_region(network, method, budget, bounds, *, tau=REGION_TAU,
                     region.cuts, region.inner_halfspaces(), region.tau,
                     axis_bounds=region.axis_bounds, mode=residual_mode, threads=threads)
                 with problem.model:
-                    witness = problem.solve(GEOMETRY_TOL, time_limit=monitor.remaining(RESIDUAL_TIME_LIMIT))
+                    witness = problem.solve(GEOMETRY_TOL, time_limit=monitor.remaining(time_limit))
                 global_search += 1
                 coverage = witness['bound']
                 if not witness['complete']:
                     x = witness['x']
-                    region.add_scheme(x, network.decode_plan(x), network.cost@x)
+                    region.add_scheme(x, network.decode_plan(x), network.cost_offset+network.cost@x)
                 monitor.global_end(witness, region)
                 if witness['complete']:
                     break
@@ -175,7 +175,7 @@ def main(case=None):
     # 两个二维切片；未选中的节点负荷保持各案例的原始值。
     network_type, load_nodes, budget, divisions, time_limit = {
         'fourbus': (FourBus, (1, 2), BUDGET, DIVISIONS, CASE_TIME_LIMIT),
-        'case33': (Case33, (18, 25), 2., 20, 900.),
+        'case33': (Case33, (18, 25), Case33.switch_budget, 20, 1000.),
     }[case]
     return run(network_type(load_nodes=load_nodes), budget=budget, divisions=divisions,
                show_ui=SHOW_UI, output=ROOT/'results'/f'{case}_2d'/'monitor.json.gz', tau=REGION_TAU,

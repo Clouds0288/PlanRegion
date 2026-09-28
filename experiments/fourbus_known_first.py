@@ -106,7 +106,7 @@ def build_known_first_region(network, method, budget, bounds, *, tau=REGION_TAU,
             maximum_answer = answer
             region.tighten_bounds(axis_bounds, answer['bound'])
         x = answer['x']
-        region.add_scheme(x, network.decode_plan(x), network.cost@x)
+        region.add_scheme(x, network.decode_plan(x), network.cost_offset+network.cost@x)
         region.add_point(x, answer['p']/bounds)
         monitor.seed(answer, region)
 
@@ -165,7 +165,7 @@ def build_known_first_region(network, method, budget, bounds, *, tau=REGION_TAU,
         if not witness['complete']:
             x = witness['x']
             assert tuple(x) not in region.records, '局部覆盖完成后，全局未覆盖见证不能仍属已知网架'
-            region.add_scheme(x, network.decode_plan(x), network.cost@x)
+            region.add_scheme(x, network.decode_plan(x), network.cost_offset+network.cost@x)
             assert witness['feasible']
             region.add_point(x, witness['p']/bounds)
         monitor.global_end(witness, region)

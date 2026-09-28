@@ -130,7 +130,7 @@ def build_vertex_priority_region(network, budget, bounds, *, tau=REGION_TAU,
             maximum_answer = answer
             region.tighten_bounds(axis_bounds, answer['bound'])
         x = answer['x']
-        region.add_scheme(x, network.decode_plan(x), network.cost@x)
+        region.add_scheme(x, network.decode_plan(x), network.cost_offset+network.cost@x)
         region.add_point(x, answer['p']/bounds)
 
     while True:
@@ -180,7 +180,7 @@ def build_vertex_priority_region(network, budget, bounds, *, tau=REGION_TAU,
                     coverage = witness['bound']
                     break
                 x = witness['x']
-                region.add_scheme(x, network.decode_plan(x), network.cost@x)
+                region.add_scheme(x, network.decode_plan(x), network.cost_offset+network.cost@x)
                 sp_since_global = 0
                 global_requested = False
                 continue

@@ -2,7 +2,7 @@
 import unittest  # 直接运行模型回归。
 import numpy as np  # 构造固定查询和型号向量。
 from threadpoolctl import threadpool_limits  # 所有比较保持单线程。
-from Network.case33bw import Case33  # 四、八、十六条候选使用同一网架定义。
+from tests.legacy_case33 import Case33  # 四、八、十六条候选使用同一网架定义。
 from Network.four_bus_five_corridor import FourBus
 from model import GridPhysics, MasterProblem, SubProblem  # 正式方程、主问题和连续 SP。
 from tests.reference import dispatch_support, fixed_topology, upgrade_plan
