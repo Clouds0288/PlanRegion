@@ -17,7 +17,7 @@ from threadpoolctl import threadpool_limits
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 from experiments.fourbus_mainline_comparison import region_radial_capacity
-from main import build_continuous_region, REFINEMENT_CHECKS, REGION_TAU
+from continuous import build_continuous_region, REFINEMENT_CHECKS, REGION_TAU
 from model import (GridPhysics, MasterProblem, SubProblem, RemainingRegionModel,
                    new_model, PLANNING_TOL, MP_TIME_LIMIT, SP_TIME_LIMIT,
                    RESIDUAL_TIME_LIMIT)

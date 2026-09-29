@@ -12,7 +12,7 @@ from shapely.ops import unary_union
 from threadpoolctl import threadpool_limits
 
 from Network.concept5 import Concept5, ROUTES
-from main import build_continuous_region
+from continuous import build_continuous_region
 from model import GridPhysics, MasterProblem
 from vertify import ACPowerFlow
 

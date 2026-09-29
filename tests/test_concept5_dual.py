@@ -10,7 +10,7 @@ from shapely.geometry import box
 
 from Network import Network, TypeParameters
 from Network.concept5 import Concept5, ROUTES
-from main import build_continuous_region
+from continuous import build_continuous_region
 from model import GridPhysics, MasterProblem, SubProblem
 from region import clip_polytope, halfspaces, contains, polytope_volume
 from survey import increase_bounds

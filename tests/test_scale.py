@@ -13,6 +13,7 @@ from model import GridPhysics, MasterProblem  # 完整规划模型作为直接�
 from plot import sample_region
 from vertify import ac_planning_query, validate_ac_region
 import main
+import continuous
 from tests.watchdog import run_guarded  # 只有测试导入看门狗。
 from tests.reference import fixed_topology
 
@@ -35,7 +36,7 @@ class ScaleTests(unittest.TestCase):  # 规模扩展只改变网架设置。
             def build(method):  # 看门狗从测试外部约束正式构域函数。
                 states = []
                 for budget in budgets:
-                    run = run_guarded('build_continuous_region',dict(network=network,method=method,budget=budget,bounds=bounds),900.)
+                    run = run_guarded('build_continuous_region',dict(network=network,method=method,budget=budget,bounds=bounds),900., notebook='continuous.py')
                     self.assertEqual(run['termination'],'returned',run['error'])
                     states.append(sample_region(run['value'],points,bounds))
                 return np.asarray(states).reshape((len(budgets),4,4,4))
@@ -79,7 +80,7 @@ class ScaleTests(unittest.TestCase):  # 规模扩展只改变网架设置。
         with patch.object(MasterProblem, 'solve', new=query):
             bounds = np.array([540.,5950.,970.])
             with self.assertRaisesRegex(RuntimeError, 'SOCP has no certificate'):
-                main.build_continuous_region(fixed_topology(Case33(upgrade_count=8)), 'socp', 0., bounds, threads=1)
+                continuous.build_continuous_region(fixed_topology(Case33(upgrade_count=8)), 'socp', 0., bounds, threads=1)
 
     def test_notebook_does_not_depend_on_test_orchestration(self):  # 测试设施与正式流程保持明确边界。
         from pathlib import Path

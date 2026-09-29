@@ -277,28 +277,37 @@ class MasterProblem:
 class SubProblem:
     """固定 x,p 的运行可行性 SP；锥支撑平面的 LP 对偶生成全局联合割。"""
 
-    def __init__(self, equations, *, threads=DEFAULT_SOLVER_THREADS):
+    def __init__(self, equations, *, threads=DEFAULT_SOLVER_THREADS, numeric_focus=0):
         self.equations, self.threads, self.calls = equations, threads, 0
+        self.numeric_focus = numeric_focus
+        self.cut_calls = 0
 
-    def solve(self, x, power, time_limit=None):
+    def _build(self, model, x, power):
+        """评分 SOCP 与取割 LP 使用同一组变量、等式和物理约束。"""
+        equations, net = self.equations, self.equations.network
+        model.Params.Aggregate = 0
+        model.Params.ScaleFlag = 0
+        model.Params.BarQCPConvTol = 1e-9
+        model.Params.BarHomogeneous = 1 if self.numeric_focus == 3 else -1
+        model.Params.NumericFocus = self.numeric_focus
+        choice = model.addVars(equations.keys, ub=1., name='x')
+        p = model.addVars(net.load_nodes, lb=-GRB.INFINITY, name='p_kw')
+        # 固定参数用等式表示；求割时去掉这些等式的乘子，保留 x,p 系数。
+        fixed_x = model.addConstrs((choice[e, k] == value for (e, k), value in zip(equations.keys, x)), name='fixed_x')
+        fixed_p = model.addConstrs((p[i] == value for i, value in zip(net.load_nodes, power)), name='fixed_p')
+        eta = model.addVar(name='violation')
+        operation = equations.add_operation(model, choice, p, eta)
+        model.setObjective(eta)
+        return choice, p, eta, operation, [*fixed_x.values(), *fixed_p.values()]
+
+    def solve(self, x, power, time_limit=None, *, score_only=False):
         # 1. 固定 x、p，建立等式松弛问题
         self.calls += 1
-        equations, net = self.equations, self.equations.network
+        equations = self.equations
         limit = SP_TIME_LIMIT[equations.method] if time_limit is None else time_limit
         deadline = perf_counter()+limit
         with new_model('planning_SP', self.threads) as model:
-            # 固定数值设置，不在失败后重求；证书仍按 PLANNING_TOL 接受。
-            model.Params.Aggregate = 0
-            model.Params.ScaleFlag = 0
-            model.Params.BarQCPConvTol = 1e-9
-            choice = model.addVars(equations.keys, ub=1., name='x')
-            p = model.addVars(net.load_nodes, lb=-GRB.INFINITY, name='p_kw')
-            # 固定参数用等式表示；求割时去掉这些等式的乘子，保留 x,p 系数。
-            fixed_x = model.addConstrs((choice[e, k] == value for (e, k), value in zip(equations.keys, x)), name='fixed_x')
-            fixed_p = model.addConstrs((p[i] == value for i, value in zip(net.load_nodes, power)), name='fixed_p')
-            eta = model.addVar(name='violation')
-            operation = equations.add_operation(model, choice, p, eta)
-            model.setObjective(eta)
+            choice, p, eta, operation, fixed = self._build(model, x, power)
             # 2. 求解并检查终止状态与精度；失败直接报错。
             model.Params.TimeLimit = max(0., deadline-perf_counter())
             model.optimize()
@@ -314,27 +323,41 @@ class SubProblem:
                 return dict(cut=None, state=operation.state.X, feasible=True, eta=value)
             if eta.X <= PLANNING_TOL:
                 raise RuntimeError(f'SP {equations.method}: eta={eta.X:g}, MaxVio={model.MaxVio:g}; certificate exceeds tolerance')
-            # 4. 正 eta 对应不可行候选；建立锥支撑平面 LP 以取得对偶割。
-            planes = []
+            # 4. 缓存数值支撑方向；只评分时不解 LP，也不保留求解器对象。
+            cone_normals = []
             for head, tail in operation.cones:
                 values = np.array([item.getValue() for item in tail])
                 length = np.linalg.norm(values)
-                if length:
-                    planes.append(head-gp.quicksum(float(a/length)*item for a, item in zip(values, tail)))
-            model.remove(model.getQConstrs())
-            for plane in planes:
-                model.addConstr(plane >= 0., name='cone_support')
-            model.Params.TimeLimit = max(0., deadline-perf_counter())
-            model.optimize()
-            if model.Status == GRB.TIME_LIMIT:
-                raise TimeoutError('SP cut LP: time limit')
-            if model.Status != GRB.OPTIMAL:
-                raise RuntimeError(f'SP cut LP: status={model.Status}, p={np.asarray(power).tolist()}')
-            if model.ObjVal <= 0. or model.MaxVio > PLANNING_TOL:
-                raise RuntimeError(f'SP cut LP: objective={model.ObjVal:g}, MaxVio={model.MaxVio:g}')
-            # 5. 组合 LP 乘子，返回能分离该候选点的联合割
-            cut = self._separating_cut(model, operation, choice, p, [*fixed_x.values(), *fixed_p.values()], x, power)
+                cone_normals.append(values/length if length else values)
+            if score_only:
+                return dict(cut=None, state=None, feasible=False, eta=value, cone_normals=cone_normals)
+            cut = self._cut(model, operation, choice, p, fixed, x, power, cone_normals, deadline)
             return dict(cut=cut, state=None, feasible=False, eta=value)
+
+    def generate_cut(self, x, power, cone_normals, time_limit=None):
+        """仅对获选点解一次支撑 LP；方向来自该 x,p 已完成的 SOCP。"""
+        limit = SP_TIME_LIMIT[self.equations.method] if time_limit is None else time_limit
+        deadline = perf_counter()+limit
+        with new_model('planning_SP_cut', self.threads) as model:
+            choice, p, eta, operation, fixed = self._build(model, x, power)
+            return self._cut(model, operation, choice, p, fixed, x, power, cone_normals, deadline)
+
+    def _cut(self, model, operation, choice, p, fixed, x, power, cone_normals, deadline):
+        model.update()
+        model.remove(model.getQConstrs())
+        for (head, tail), normal in zip(operation.cones, cone_normals):
+            if np.any(normal):
+                model.addConstr(head-gp.quicksum(float(a)*item for a, item in zip(normal, tail)) >= 0., name='cone_support')
+        model.Params.TimeLimit = max(0., deadline-perf_counter())
+        self.cut_calls += 1
+        model.optimize()
+        if model.Status == GRB.TIME_LIMIT:
+            raise TimeoutError('SP cut LP: time limit')
+        if model.Status != GRB.OPTIMAL:
+            raise RuntimeError(f'SP cut LP: status={model.Status}, p={np.asarray(power).tolist()}')
+        if model.ObjVal <= 0. or model.MaxVio > PLANNING_TOL:
+            raise RuntimeError(f'SP cut LP: objective={model.ObjVal:g}, MaxVio={model.MaxVio:g}')
+        return self._separating_cut(model, operation, choice, p, fixed, x, power)
 
     def _separating_cut(self, model, operation, choice, power_vars, fixed, x, power):
         """按行方向组合必要约束，以运行变量全局盒消去 y，得到 α+βᵀp+δᵀx>=0。"""

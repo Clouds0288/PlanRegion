@@ -6,6 +6,7 @@ import numpy as np
 import pytest
 
 import main
+import continuous
 from model import GridPhysics, MasterProblem, SubProblem, RemainingRegionModel
 from region import RegionState
 from monitor import RunMonitor
@@ -41,8 +42,8 @@ def test_axis_certificate_is_saved_before_later_mp2_can_time_out(failed_call):
     oracle = SubProblem(GridPhysics(network, 'socp'), threads=1)
     monitor = RunMonitor()
     with pytest.raises(main.RegionTimeout, match='MP timeout'), \
-         patch.object(MasterProblem, 'solve', new=solve), patch('main.SubProblem', return_value=oracle):
-        monitor.execute(lambda: main.build_continuous_region(network, 'socp', 20000., [150.]*3,
+         patch.object(MasterProblem, 'solve', new=solve), patch('continuous.SubProblem', return_value=oracle):
+        monitor.execute(lambda: continuous.build_continuous_region(network, 'socp', 20000., [150.]*3,
                         threads=1, progress=monitor), show_ui=False)
     assert len(calls) == failed_call and oracle.calls == 0
     assert monitor.state['status'] == 'failed'
@@ -56,7 +57,7 @@ def test_directional_seeds_of_same_scheme_share_one_region():
     def progress(event, **data):
         if event == 'feasible' and data.get('point_reason', '').startswith('MP2'):
             seeds.append((len(data['records']), data['point'].copy()))
-    result = main.build_continuous_region(network, 'socp', 0., [150.]*3, threads=1, progress=progress)
+    result = continuous.build_continuous_region(network, 'socp', 0., [150.]*3, threads=1, progress=progress)
     assert [count for count, _ in seeds] == [1, 1, 1, 1]
     assert len({tuple(p) for _, p in seeds}) > 1
     assert result['status'] == 'certified' and len(result['inner']) == 1

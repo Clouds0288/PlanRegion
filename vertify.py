@@ -1,7 +1,12 @@
 """独立 AC 潮流、建设方案认证与网格校核；求解失败直接报错。"""
+from time import perf_counter
+from concurrent.futures import ProcessPoolExecutor
+from contextlib import nullcontext
+
 import gurobipy as gp
 from gurobipy import GRB
 import numpy as np
+from threadpoolctl import threadpool_limits
 
 from model import DEFAULT_SOLVER_THREADS, GridPhysics, MasterProblem
 
@@ -217,21 +222,42 @@ def validate_ac_region(network, budgets, divisions, bounds, *, threads=DEFAULT_S
     return states
 
 
+def _scan_line(args):
+    """一个扫描行复用完整模型；只改变固定负荷等式的右端。"""
+    network, budget, divisions, bounds, index, threads = args
+    d = len(network.load_nodes)
+    with threadpool_limits(limits=1):
+        problem = MasterProblem(GridPhysics(network, 'socp'), power=np.zeros(d), budget=budget, threads=threads)
+        states = np.empty(divisions, dtype=np.int8)
+        with problem.model as model:
+            model.Params.NumericFocus = 3
+            model.Params.Presolve = 0 if network.name == 'four_bus_five_corridor' else -1
+            model.Params.BarHomogeneous = 1
+            model.Params.Aggregate = 0
+            model.Params.ScaleFlag = 0
+            model.update()
+            fixed = [row for row in model.getConstrs() if row.ConstrName.startswith('fixed_power[')]
+            for j in range(divisions):
+                power = (np.asarray((*index, j))+.5)*bounds/divisions
+                model.setAttr('RHS', fixed, power)
+                states[j] = 1 if problem.solve() is not None else -1
+    return index, states
+
+
 def validate_socp_region(network, budget, divisions, bounds, *, threads=DEFAULT_SOLVER_THREADS,
-                         progress=lambda completed, total: None):
-    """二维独立扫描：每个 p 固定，完整 SOCP 的 x、y 自由，不使用构域割或内域。"""
+                         workers=1, progress=lambda completed, total: None):
+    """独立 d 维扫描：逐点固定 p，完整 SOCP 的全部 x、y 自由。"""
+    started = perf_counter()
     bounds = np.asarray(bounds, dtype=float)
-    assert bounds.shape == (2,)
-    equations = GridPhysics(network, 'socp')
-    states = np.empty((divisions, divisions), dtype=np.int8)
-    total = divisions**2
+    d = len(network.load_nodes)
+    states = np.empty((divisions,)*d, dtype=np.int8)
+    total = divisions**d
     progress(0, total)
-    for completed, index in enumerate(np.ndindex(states.shape), 1):
-        power = (np.asarray(index)+.5)*bounds/divisions
-        problem = MasterProblem(equations, power=power, budget=budget, threads=threads)
-        with problem.model:
-            answer = problem.solve()
-        states[index] = 1 if answer is not None else -1
-        if completed % divisions == 0:
-            progress(completed, total)
-    return dict(bounds=bounds, states=states)
+    jobs = ((network, budget, divisions, bounds, index, 1 if workers > 1 else threads)
+            for index in np.ndindex((divisions,)*(d-1)))
+    with ProcessPoolExecutor(max_workers=workers) if workers > 1 else nullcontext() as pool:
+        lines = pool.map(_scan_line, jobs) if workers > 1 else map(_scan_line, jobs)
+        for completed, (index, line) in enumerate(lines, 1):
+            states[index] = line
+            progress(completed*divisions, total)
+    return dict(bounds=bounds, states=states, scan_seconds=perf_counter()-started)

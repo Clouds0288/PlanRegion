@@ -17,7 +17,7 @@ sys.path.insert(0, str(ROOT))
 from Network.case33bw import Case33
 from experiments.fourbus_outer_kkt import COVERAGE_PAD, UncoveredKktViolation, certify_load
 from experiments.fourbus_outer_volume import budget_schemes
-from main import build_continuous_region, REGION_TAU
+from continuous import build_continuous_region, REGION_TAU
 from model import GridPhysics, MasterProblem, SubProblem, PLANNING_TOL
 from monitor import RunMonitor, RegionTimeout, _draw, _union
 from region import RegionState, initial_polytope, clip_polytope

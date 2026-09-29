@@ -54,11 +54,11 @@ class SurveyTests(unittest.TestCase):
                                    self.reference['result']['trace'][0]['marginal_information_value'])
 
     def test_default_main_dispatches_to_formal_survey(self):
-        # 新默认入口迁为二维 FourBus；勘察从 survey.run_survey 单独启动。
+        # 默认入口采用 NETWORK 设置；勘察从 survey.run_survey 单独启动。
         with patch.object(main, 'run', return_value='finished') as run:
             self.assertEqual(main.main(), 'finished')
-        self.assertIsInstance(run.call_args.args[0], main.FourBus)
-        self.assertEqual(run.call_args.args[0].load_nodes, (1, 2))
+        self.assertIsInstance(run.call_args.args[0], main.NETWORK)
+        self.assertEqual(len(run.call_args.args[0].load_nodes), main.DIMENSION)
 
 
     def test_production_modules_do_not_import_experiments_or_tests(self):

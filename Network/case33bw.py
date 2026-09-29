@@ -7,6 +7,9 @@ import numpy as np
 from . import Corridor, Network, TypeParameters
 
 
+LOAD_NODES = (18, 25)             # 二维：(18, 25)；三维：(18, 25, 30)
+
+
 class Case33(Network):
     # 1. 唯一预算入口：相对原始状态，断开或闭合一条线路各计一次。
     switch_budget = 7
@@ -15,7 +18,7 @@ class Case33(Network):
     switchable_branches = ((21, 8), (7, 8), (22, 12), (11, 12),
                            (9, 15), (33, 18), (25, 29))
 
-    def __init__(self, load_nodes=(18, 25)):
+    def __init__(self, load_nodes=LOAD_NODES):
         source = (Path(__file__).parent/'data'/'case33bw.m').read_text(encoding='utf-8')
         tables = {}
         for name in ('bus', 'gen', 'branch'):

@@ -14,7 +14,7 @@ import numpy as np
 from threadpoolctl import threadpool_limits
 
 from tests.legacy_case33 import Case33
-from main import RegionTimeout, build_continuous_region
+from continuous import RegionTimeout, build_continuous_region
 from model import RemainingRegionModel
 from tests.planning_checks import margin
 from model import GridPhysics, MasterProblem

@@ -9,6 +9,7 @@ import numpy as np
 from threadpoolctl import threadpool_limits
 
 import main
+import continuous
 from monitor import RunMonitor
 from plot import cut_slice, json_value, pack_replay
 from vertify import validate_ac_region
@@ -40,8 +41,8 @@ class ProgressTests(unittest.TestCase):
                 cuts.append(cut)
         monitor = RunMonitor(callback=callback)
         with threadpool_limits(limits=1):
-            shown = main.build_continuous_region(net, 'socp', 20000., bounds, threads=1, progress=monitor)
-            plain = main.build_continuous_region(net, 'socp', 20000., bounds, threads=1)
+            shown = continuous.build_continuous_region(net, 'socp', 20000., bounds, threads=1, progress=monitor)
+            plain = continuous.build_continuous_region(net, 'socp', 20000., bounds, threads=1)
         self.assertEqual(json_value({k: v for k, v in shown.items() if k != 'timing'}),
                          json_value({k: v for k, v in plain.items() if k != 'timing'}))
         self.assertGreater(len(cuts), 0)

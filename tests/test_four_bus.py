@@ -9,7 +9,7 @@ from model import GridPhysics, MasterProblem, SubProblem
 from vertify import ACPowerFlow
 from vertify import ac_planning_query, validate_ac_region
 from plot import sample_region
-from main import build_continuous_region
+from continuous import build_continuous_region
 from tests.planning_checks import joint_benders
 from tests.reference import dispatch_support  # 独立固定网架的消元方程。
 

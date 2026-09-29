@@ -22,7 +22,7 @@ from threadpoolctl import threadpool_limits
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 from experiments.fourbus_outer_partition import initialize, run_trial
 from experiments.fourbus_partition_report import compare_rays
-from main import build_continuous_region
+from continuous import build_continuous_region
 from model import GridPhysics
 from Network.four_bus_five_corridor import FourBus
 from plot import json_value

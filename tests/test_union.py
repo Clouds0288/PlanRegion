@@ -7,7 +7,7 @@ import numpy as np
 from threadpoolctl import threadpool_limits
 
 from tests.legacy_case33 import Case33
-from main import FourBus, build_continuous_region
+from continuous import FourBus, build_continuous_region
 from monitor import RunMonitor
 from model import GridPhysics, MasterProblem, SubProblem, RemainingRegionModel, PLANNING_TOL
 from plot import region_geometry
@@ -93,7 +93,7 @@ class UnionSolverTests(unittest.TestCase):
         answer = dict(x=left, p=np.array([.4, 1., 1.]), feasible=True, bound=3., status='optimal')
         residuals = [dict(complete=False, bound=1., x=filling, p=witness, feasible=True),
                      dict(complete=True, bound=0., x=None, p=None)]
-        with patch('main.RegionState', return_value=state), \
+        with patch('continuous.RegionState', return_value=state), \
              patch.object(MasterProblem, 'solve', return_value=answer), \
              patch.object(RemainingRegionModel, 'solve', side_effect=residuals), \
              patch.object(SubProblem, 'solve', return_value=dict(feasible=True, eta=0.)) as check:

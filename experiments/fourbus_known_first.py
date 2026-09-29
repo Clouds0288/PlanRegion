@@ -15,7 +15,7 @@ from shapely.ops import unary_union
 from threadpoolctl import threadpool_limits
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
-from main import build_continuous_region, REGION_TAU, REFINEMENT_CHECKS
+from continuous import build_continuous_region, REGION_TAU, REFINEMENT_CHECKS
 from model import GridPhysics, MasterProblem, RemainingRegionModel, SubProblem, SP_TIME_LIMIT, RESIDUAL_TIME_LIMIT
 from monitor import RunMonitor
 from Network.four_bus_five_corridor import FourBus
