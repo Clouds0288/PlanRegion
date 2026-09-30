@@ -111,26 +111,32 @@ def test_interval_checks_actual_new_sp_after_batch():
 
 
 def test_default_run_finishes_socp_before_ac(tmp_path):
-    # 2.1 迁移：校验改为独立 SOCP，主线不再调用 AC。
-    build, scan = main.build_sequential_region, main.validate_socp_region
+    import gzip
+    import json
+    from region import build_sequential_region
+    from monitor import RunMonitor
+    build, scan = build_sequential_region, main.scan_reference
     calls = []
     def region(*args, **kwargs):
         result = build(*args, **kwargs)
-        calls.append(('region', 'socp', result['status']))
+        calls.append(('region', kwargs['mode'], result['status']))
         return result
     def validate(*args, **kwargs):
-        assert calls == [('region', 'socp', 'certified')]
+        assert calls == [('region', 1, 'certified')]*4
         calls.append(('scan',))
         return scan(*args, **kwargs)
     output = tmp_path/'monitor.json.gz'
-    with patch('main.build_sequential_region', side_effect=region), \
-         patch('main.validate_socp_region', side_effect=validate):
+    with patch('region.build_sequential_region', side_effect=region), \
+         patch('main.scan_reference', side_effect=validate):
         result = main.run(main.FourBus(load_nodes=(1, 2)), divisions=4, output=output,
                           show_ui=False, threads=1, scan_workers=1, scan_output=tmp_path/'scans')
-    monitor = RunMonitor()
-    monitor.load_recording(output)
+    with gzip.open(output, 'rt', encoding='utf-8') as stream:
+        data = json.load(stream)
     assert calls[-1] == ('scan',)
-    assert monitor.state['status'] == 'completed'
-    assert monitor.state['validation']['fr_percent'] == 0.
+    assert data['version'] == 4
+    assert data['validation_state']['validation']['metrics']['inner']['fr_percent'] == 0.
     assert result['status'] == 'certified'
     assert sorted(p.name for p in tmp_path.iterdir()) == ['monitor.json.gz', 'scans']
+    restored = RunMonitor()
+    restored.load_recording(output)
+    assert restored.state['result']['certified']

@@ -35,13 +35,34 @@ def _merge(state, patch):
             state[key] = value
 
 
+def signed_values(value, sign, prefix, key=''):
+    """记录时把幅值、割系数、网架标签转成带符号坐标。"""
+    if value is None:
+        return None
+    if key in ('scheme', 'active_scheme'):
+        return prefix+value
+    if key in ('p', 'anchor', 'target', 'vertices', 'ray_target'):
+        return (np.asarray(value)*sign).tolist()
+    if key == 'cut':
+        cut = np.asarray(value).copy()
+        cut[1:1+len(sign)] *= sign
+        return cut.tolist()
+    if isinstance(value, dict):
+        return {k: signed_values(v, sign, prefix, k) for k, v in value.items()}
+    if isinstance(value, list):
+        return [signed_values(v, sign, prefix) for v in value]
+    return value
+
+
 class RunMonitor:
     """求解线程只提交数值；Tk 与绘图仅在主线程执行。"""
 
-    def __init__(self, *, output=None, callback=None, clock=perf_counter, algorithm='主线'):
+    def __init__(self, *, output=None, callback=None, clock=perf_counter, algorithm='主线', parent=None, sign=None):
         self.output = None if output is None else Path(output)
         self.callback, self._clock = callback, clock
         self.algorithm = algorithm
+        self.parent, self.sign = parent, None if sign is None else np.asarray(sign)
+        self.count_offsets = {key: parent.state.get(key, 0) for key in ('sp', 'cuts', 'global_search')} if parent else {}
         self.condition = Condition()
         self.cancelled = Event()
         self.paused = False
@@ -85,7 +106,10 @@ class RunMonitor:
                         del patch[key]
             patch['event'] = event
             _merge(self.state, patch)
-            self.history.append(dict(elapsed=self.clock()-self.started, patch=patch))
+            if self.parent is None:
+                self.history.append(dict(elapsed=self.clock()-self.started, patch=patch))
+            else:
+                self.parent.partition_frame(self, patch)
             before = self._clock()
             while checkpoint and self.paused and not self.permits and not self.cancelled.is_set():
                 self.condition.wait()
@@ -94,6 +118,40 @@ class RunMonitor:
                 self.permits -= 1
             if self.cancelled.is_set():
                 raise KeyboardInterrupt()
+
+    def partition_frame(self, local, patch):
+        """局部分区只保留当前状态；真实坐标下的增量帧统一交给现有时间轴。"""
+        from region import initial_polytope
+        sign = local.sign
+        label = ''.join('+' if s > 0 else '-' for s in sign)
+        prefix, d = label+':', len(sign)
+        mapped = signed_values(patch, sign, prefix)
+        for key in ('bounds', 'axis_bounds', 'total_bound', 'result', 'time_limit'):
+            mapped.pop(key, None)
+        if patch['event'] == 'phase_start':
+            mapped.update(active_scheme=None, ray=None, seed_point=None, coverage_complete=False)
+        for key in local.count_offsets:
+            if key in mapped:
+                mapped[key] += local.count_offsets[key]
+        if 'schemes' in patch:
+            mapped['schemes'] = {prefix+key: {**row, 'sign': sign,
+                'inner': np.asarray(row['inner']).reshape(-1, d)*sign,
+                'outer': np.asarray(row['outer']).reshape(-1, d)*sign} for key, row in patch['schemes'].items()}
+        if 'cut_history' in mapped:
+            mapped['cut_history'] = {str(int(key)+local.count_offsets['cuts']): {**row, 'sign': sign}
+                                     for key, row in mapped['cut_history'].items()}
+        state = local.state
+        if 'result' in patch:
+            self.envelopes[label] = [np.asarray(row['vertices'])*sign for row in patch['result']['outer']]
+        else:
+            self.envelopes[label] = [initial_polytope(state['bounds'], state['total_bound'], state['axis_bounds'])*state['bounds']*sign]
+        outer = [p for polys in self.envelopes.values() for p in polys]
+        vertices = np.vstack(outer)
+        mapped.update(partition=label, global_outer=outer,
+                      axis_lower=vertices.min(axis=0) if self.state['mode'] else np.zeros(d),
+                      axis_bounds=vertices.max(axis=0))
+        event = mapped.pop('event')
+        self._emit('partition_end' if event == 'region_end' else event, **mapped)
 
     def _notify(self, event, geometry=None, **values):
         """旧研究脚本的数值回调；不增加文件或第二份事件记录。"""
@@ -230,7 +288,8 @@ class RunMonitor:
         states = np.asarray(reference['states'])
         divisions = states.shape[0]
         indices = np.indices(states.shape).reshape(states.ndim, -1).T
-        points = (indices+.5)*reference['bounds']/divisions
+        lower = np.asarray(reference.get('axis_lower', np.zeros(states.ndim)))
+        points = lower+(indices+.5)*(np.asarray(reference['bounds'])-lower)/divisions
         truth = states.ravel() == 1
         metrics = {}
         for key in (key for key in ('inner', 'outer') if key in result):
@@ -242,7 +301,7 @@ class RunMonitor:
                                fr_percent=100.*extra/inside.sum() if inside.any() else None,
                                missed_cells=int(missed), extra_cells=int(extra),
                                reference_cells=int(truth.sum()), computed_cells=int(inside.sum()))
-        validation = dict(bounds=reference['bounds'], states=states, region_key=region_key,
+        validation = dict(axis_lower=lower, bounds=reference['bounds'], states=states, region_key=region_key,
                           scan_seconds=reference.get('scan_seconds'),
                           metrics=metrics, **metrics[region_key])
         self._validation_update(phase='完成', status='completed', validation=validation)
@@ -336,29 +395,32 @@ INNER, OUTER, GLOBAL, SP = '#397f85', '#a9b9c4', '#cc3838', '#ef8a23'
 CUT = '#8055a4'
 
 
-def _cut_segment(cut, x, bounds):
+def _cut_segment(cut, x, bounds, axis_lower=None):
     """alpha + beta @ p + delta @ x = 0 在二维显示框中的截线；只用于绘图。"""
     cut, x, bounds = np.asarray(cut), np.asarray(x), np.asarray(bounds)
+    lower = np.zeros(2) if axis_lower is None else np.asarray(axis_lower)
     beta, constant = cut[1:3], cut[0]+cut[3:]@x
     points = []
     for fixed in (0, 1):
         free = 1-fixed
         if beta[free] == 0.:
             continue
-        for edge in (0., bounds[fixed]):
+        for edge in (lower[fixed], bounds[fixed]):
             value = -(constant+beta[fixed]*edge)/beta[free]
-            if -1e-9*bounds[free] <= value <= (1+1e-9)*bounds[free]:
+            tolerance = 1e-9*(bounds[free]-lower[free])
+            if lower[free]-tolerance <= value <= bounds[free]+tolerance:
                 point = np.zeros(2)
-                point[fixed], point[free] = edge, np.clip(value, 0., bounds[free])
+                point[fixed], point[free] = edge, np.clip(value, lower[free], bounds[free])
                 if not any(np.allclose(point, old, rtol=1e-9, atol=1e-9) for old in points):
                     points.append(point)
     return np.asarray(points).reshape(-1, 2)
 
 
-def _cut_polygon(cut, x, bounds):
+def _cut_polygon(cut, x, bounds, axis_lower=None):
     """三维联合割平面与显示盒十二条棱的交点，保留实际 kW 坐标。"""
     from itertools import product
     cut, bounds = np.asarray(cut), np.asarray(bounds)
+    lower = np.zeros(3) if axis_lower is None else np.asarray(axis_lower)
     beta, constant = cut[1:4], cut[0]+cut[4:]@x
     points = []
     for free in range(3):
@@ -367,9 +429,10 @@ def _cut_polygon(cut, x, bounds):
         fixed = [i for i in range(3) if i != free]
         for corner in product((0., 1.), repeat=2):
             point = np.zeros(3)
-            point[fixed] = np.asarray(corner)*bounds[fixed]
+            point[fixed] = lower[fixed]+np.asarray(corner)*(bounds-lower)[fixed]
             point[free] = -(constant+beta@point)/beta[free]
-            if -1e-9*bounds[free] <= point[free] <= (1+1e-9)*bounds[free]:
+            tolerance = 1e-9*(bounds[free]-lower[free])
+            if lower[free]-tolerance <= point[free] <= bounds[free]+tolerance:
                 points.append(point)
     return np.unique(np.asarray(points).reshape(-1, 3), axis=0)
 
@@ -632,11 +695,12 @@ class NativeWindow:
         bounds = np.asarray(state['bounds'])
         limits = np.minimum(bounds, np.asarray(state['axis_bounds']))
         limits = np.maximum(limits, .01)
-        ax.set(xlim=(0, limits[0]*1.04), ylim=(0, limits[1]*1.04),
+        lower = np.asarray(state.get('axis_lower', np.zeros(d)))
+        ax.set(xlim=(lower[0]*1.04, limits[0]*1.04), ylim=(lower[1]*1.04, limits[1]*1.04),
                xlabel=f"$p_{{{state['load_nodes'][0]}}}$ (kW)",
                ylabel=f"$p_{{{state['load_nodes'][1]}}}$ (kW)")
         if d == 3:
-            ax.set(zlim=(0, limits[2]*1.04), zlabel=f"$p_{{{state['load_nodes'][2]}}}$ (kW)")
+            ax.set(zlim=(lower[2]*1.04, limits[2]*1.04), zlabel=f"$p_{{{state['load_nodes'][2]}}}$ (kW)")
             ax.set_box_aspect((1., 1., .8))
             ax.view_init(*view)
             ax.tick_params(pad=0)
@@ -657,7 +721,7 @@ class NativeWindow:
         if state.get('unknown_points'):
             ax.scatter(*np.asarray(state['unknown_points']).T, c='#777777', marker='x', s=34, zorder=9)
         ray = state.get('ray')
-        if ray and state.get('phase') in ('射线补点', '边界补充') and (scheme is None or ray['scheme'] == scheme):
+        if ray and state.get('phase') in ('首轮射线认证', '射线补点', '边界补充') and (scheme is None or ray['scheme'] == scheme):
             ax.plot(*np.asarray([ray['anchor'], ray['target']]).T, color=INNER, ls=':', lw=1.)
             if ray['p'] is not None:
                 ax.scatter(*ray['p'], c=INNER, marker='s', s=35, zorder=10)
@@ -736,7 +800,7 @@ class NativeWindow:
                            'area_stagnation': '边界补充完成，进入连续查漏',
                            'point_resolution': '近点处理完成，进入连续查漏'}[state['stage_reason']]
         if state.get('active_scheme'):
-            detail += f" · 阶段 {state['stage']} / 网架 {state['active_scheme']}"
+            detail += f" · 阶段 {state.get('stage', 0)} / 网架 {state['active_scheme']}"
             if state.get('area_ratio') is not None:
                 detail += f" · 切割{measure} {100*state['area_ratio']:.3f}% · 连续 {state['small_cuts']}/{state['patience']}"
         if state.get('error'):
@@ -759,11 +823,18 @@ class NativeWindow:
         cuts = state.get('cut_history', {})
         if not cuts or scheme not in state.get('schemes', {}):
             return
+        sign = state['schemes'][scheme].get('sign')
+        cuts = {key: row for key, row in cuts.items() if np.array_equal(row.get('sign'), sign)}
+        if not cuts:
+            return
         latest = next(reversed(cuts))
         limits = np.minimum(state['bounds'], state['axis_bounds'])*1.04
+        lower = np.asarray(state.get('axis_lower', np.zeros(len(limits))))*1.04
+        if sign is not None:
+            lower, limits = np.minimum(0., lower*(np.asarray(sign) < 0)), limits*(np.asarray(sign) > 0)
         if len(limits) == 3:
             # 历史割已体现在 Nx 的棱面；当前割另画平面，避免几十个透明面遮住认证域。
-            polygon = _cut_polygon(cuts[latest]['cut'], state['schemes'][scheme]['x'], limits)
+            polygon = _cut_polygon(cuts[latest]['cut'], state['schemes'][scheme]['x'], limits, lower)
             _draw_3d(ax, [polygon], state['bounds'], color=CUT, fill=True, alpha=.10,
                      linewidth=1., gid=f'cut-{latest}-{scheme}')
             ax.text2D(.02, .97, f'割 #{latest} · 网架 {scheme}', transform=ax.transAxes,
@@ -773,11 +844,11 @@ class NativeWindow:
         for number, item in cuts.items():
             if not history and number != latest:
                 continue
-            segment = _cut_segment(item['cut'], state['schemes'][scheme]['x'], limits)
+            segment = _cut_segment(item['cut'], state['schemes'][scheme]['x'], limits, lower)
             if len(segment) != 2:
                 if number == latest:
                     cut = np.asarray(item['cut'])
-                    corners = np.array([[0., 0.], [limits[0], 0.], [0., limits[1]], limits])
+                    corners = np.array([lower, [limits[0], lower[1]], [lower[0], limits[1]], limits])
                     slack = cut[0]+corners@cut[1:3]+cut[3:]@state['schemes'][scheme]['x']
                     message = ('本框全部排除' if slack.max() < 0. else
                                '本框均满足此割' if slack.min() >= 0. else '仅与角点相交')
@@ -816,7 +887,7 @@ class NativeWindow:
             return
         inner = _union([row['inner'] for row in state.get('schemes', {}).values()])
         result = state.get('result')
-        outer = _union([row['vertices'] for row in result['outer']]) if result else _union([
+        outer = _union(state['global_outer']) if 'global_outer' in state else _union([row['vertices'] for row in result['outer']]) if result else _union([
             initial_polytope(state['bounds'], state['total_bound'], state['axis_bounds'])*state['bounds']])
         _draw(ax, outer, color=OUTER, fill=True, alpha=.20)
         _draw(ax, outer, color=OUTER, linestyle='--')
@@ -918,10 +989,11 @@ class NativeWindow:
         else:
             states = np.asarray(validation['states'])
             bounds, n = np.asarray(validation['bounds']), states.shape[0]
-            centers = [(np.arange(n)+.5)*b/n for b in bounds]
+            lower = np.asarray(validation.get('axis_lower', np.zeros(2)))
+            centers = [a+(np.arange(n)+.5)*(b-a)/n for a, b in zip(lower, bounds)]
             # 参考域按真实扫描格显示；曲线为算法的连续多边形，不平滑扫描结果。
             from matplotlib.colors import ListedColormap
-            ax.pcolormesh(np.arange(n+1)*bounds[0]/n, np.arange(n+1)*bounds[1]/n,
+            ax.pcolormesh(np.linspace(lower[0], bounds[0], n+1), np.linspace(lower[1], bounds[1], n+1),
                           (states.T == 1).astype(int), cmap=ListedColormap(['white', '#d5e3ea']),
                           vmin=0, vmax=1, shading='flat', rasterized=True)
             key = validation.get('region_key', 'inner')
@@ -950,12 +1022,13 @@ class NativeWindow:
         if state.get('event') != 'cut':
             return []
         before = self.monitor.frame(self.index-1)['schemes']
-        cut = np.asarray(next(reversed(state['cut_history'].values()))['cut'])
+        latest = next(reversed(state['cut_history'].values()))
+        cut = np.asarray(latest['cut'])
         bounds = np.asarray(state['bounds'])
         keys = before if scheme is None else [scheme]
         return [clip_polytope(np.asarray(before[key]['outer'])/bounds,
                              -cut[0]-cut[4:]@before[key]['x'], -cut[1:4]*bounds)*bounds
-                for key in keys if key in before]
+                for key in keys if key in before and np.array_equal(before[key].get('sign'), latest.get('sign'))]
 
     def _draw_union_3d(self, ax, state):
         from matplotlib.lines import Line2D
@@ -963,7 +1036,7 @@ class NativeWindow:
         bounds = np.asarray(state['bounds'])
         result = state.get('result')
         schemes = state.get('schemes', {})
-        outer = ([row['vertices'] for row in result['outer']] if result else
+        outer = state['global_outer'] if 'global_outer' in state else ([row['vertices'] for row in result['outer']] if result else
                  [initial_polytope(bounds, state['total_bound'], state['axis_bounds'])*bounds])
         _draw_3d(ax, outer, bounds, color=OUTER, linestyle='--', alpha=.65)
         if not result:
@@ -987,14 +1060,15 @@ class NativeWindow:
         from region import contains, halfspaces
         validation, result = state['validation'], state['result']
         states, bounds = np.asarray(validation['states']), np.asarray(validation['bounds'])
+        lower = np.asarray(validation.get('axis_lower', np.zeros(3)))
         ax.set_position([.03, .22, .80, .60])
-        ax.add_collection3d(Poly3DCollection(_voxel_faces(states, bounds), facecolors='#7e9bae',
+        ax.add_collection3d(Poly3DCollection(lower+_voxel_faces(states, bounds-lower), facecolors='#7e9bae',
                                             edgecolors='none', alpha=.14, gid='scan-reference'))
         _draw_3d(ax, [row['vertices'] for row in result['outer']], bounds, color=OUTER,
                  linestyle='--', alpha=.75)
         _draw_3d(ax, [row['vertices'] for row in result['inner']], bounds, color=INNER,
                  fill=True, alpha=.06, linewidth=.3)
-        points = (np.indices(states.shape).reshape(3, -1).T+.5)*bounds/states.shape[0]
+        points = lower+(np.indices(states.shape).reshape(3, -1).T+.5)*(bounds-lower)/states.shape[0]
         inside = np.zeros(len(points), dtype=bool)
         for row in result['inner']:
             inside |= contains(points, halfspaces(row['vertices']))

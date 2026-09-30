@@ -7,7 +7,8 @@ from threadpoolctl import threadpool_limits
 
 from Network.case33bw import Case33
 from model import MasterProblem
-from experiments.fourbus_signed import PortPhysics, PortSubProblem, port_bounds, port_ray, scan_line
+from model import PortPhysics, PortSubProblem, port_bounds, ray_support
+from vertify import scan_line
 
 
 class Case33SignedTests(unittest.TestCase):
@@ -47,7 +48,7 @@ class Case33SignedTests(unittest.TestCase):
             answer = PortSubProblem(equations, threads=1).solve(x, np.zeros(len(nodes)), score_only=True)
             self.assertTrue(answer['feasible'])
             for direction in (np.ones(len(nodes)), np.eye(len(nodes))[0]):
-                answer = port_ray(equations, x, np.zeros(len(nodes)), direction*port_bounds(net), 10.)
+                answer = ray_support(equations, 7 if isinstance(net, Case33) else 20000., x, np.zeros(len(nodes)), direction*port_bounds(net), threads=1, time_limit=10.)
                 self.assertTrue(answer['feasible'])
                 self.assertGreater(answer['ray_fraction'], 0.)
 

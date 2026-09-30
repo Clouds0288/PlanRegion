@@ -9,7 +9,8 @@ from threadpoolctl import threadpool_limits
 import main
 from Network.case33bw import Case33, LOAD_NODES
 from Network.four_bus_five_corridor import FourBus
-from main import ray_gain, union_measure, recording_path, SCAN_DIVISIONS
+from main import recording_path, SCAN_DIVISIONS
+from region import ray_gain, union_measure
 from model import GridPhysics, MasterProblem
 from monitor import RunMonitor, NativeWindow, _cut_polygon, _voxel_faces
 from region import RegionState, polytope_volume
@@ -73,7 +74,7 @@ def test_dimension_setting_controls_nodes_scan_and_recording(case, nodes, dimens
     selected = nodes[:dimension]
     assert run.call_args.args[0].load_nodes == selected
     assert run.call_args.kwargs['output'] == recording_path(case, dimension=dimension)
-    expected = SCAN_DIVISIONS[dimension] if case == 'case33' else main.DIVISIONS
+    expected = main.DIVISIONS if case == 'fourbus' and dimension == 2 else SCAN_DIVISIONS[dimension]
     assert run.call_args.kwargs['divisions'] == expected
 
 

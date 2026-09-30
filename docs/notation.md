@@ -1,16 +1,32 @@
 # 数学符号与代码变量规范
 
+## 正负功率合并主线（2026-09-30）
+
+`main.py` 的 [mode](../main.py) 默认 1：0 仅计算非负负荷（含零边界），1 计算负光伏至正负荷。模式 0 保留 `GridPhysics`；模式 1 使用固定功率因数符号分区。p、state、联合割、认证阈值和分区坐标转换不变。
+
+职责迁移：`PortPhysics`、`PortSubProblem`、`solve_conic`、`port_bounds`、`voltage_flow_bounds` 及物理常数并入 model.py；实验 `port_ray` 合入既有 [ray_support](../model.py)，保留原形参，`budget` / `numeric_focus` 不参与固定网架连续锥求解。实验 `build_partition` 合入 [build_sequential_region](../region.py)，新增固定 [build_sequential_region.sign](../region.py) / [build_sequential_region.mode](../region.py)；选点、几何收益和覆盖函数原名从 main.py 迁入 region.py。[build_region](../region.py) 调度各符号分区，总时限由全部分区共享。扫描 `scan_line` / `scan_path` / `save_scan` / `scan_reference` 原名迁入 vertify.py。main.py 只保留设置和入口。
+
+原 `MODE` 并入用户指定的 `main.mode`；`TIME_LIMITS` 并入既有 `CASE_TIME_LIMIT=50`；Case33 `LOAD_NODES` 由 [main.load_nodes](../main.py) 配置。`SCAN_DIVISIONS={2:160,3:80}`；`NETWORK=FourBus`、`DIMENSION=2`、`SOLVER_THREADS=4`、`RAY_THRESHOLD=1e-4`。
+
+扫描增加真实 kW 下界 `axis_lower`，与 `bounds` 一起定义网格中心 `lower+(index+0.5)*(bounds-lower)/divisions`；[RunMonitor.validation](../monitor.py) 统一计算指标。缓存按案例、模式、有序节点、功率因数和预算隔离，按范围包含关系复用，不混用零下界旧缓存。
+
+回放继续采用现有 monitor.py 原生窗口和 version=4 增量记录，路径 `results/mainline/mode_<模式>/<case>_<节点>.json.gz`。`signed_values` 迁入 monitor.py，负责真实功率与割系数转换；实验 `combine_history` 由 [RunMonitor.partition_frame](../monitor.py) 的即时增量记录替代，不再保留第二份局部历史。废止实验网页 `export_replay` / `mesh` / `cut_mesh` 及独立 `metrics`，使用原生绘图与校验。没有新增回放脚本、网页或格式。
+
+version=4 新增可选字段：顶层状态 `mode`、`partition`、`axis_lower` 和 `global_outer`；网架与割的 `sign` 表示其固定符号分区。真实功率单位仍为 kW；网架 ID 加符号前缀，割 ID 为全局递增编号。旧记录缺少 `axis_lower` 时仍从零显示。[_cut_segment.axis_lower](../monitor.py) / [_cut_polygon.axis_lower](../monitor.py) 只扩展显示盒下界，割只在所属分区有效。逐帧、逐割、播放和扫描对照共用原生前端。
+
+最终 result 只存一次，保留状态、轴界、认证内外域、计数和总耗时；扫描指标仅存 validation_state。分区证书保留在 partition_end 帧；未完成时保留安全外包络，不宣称认证完成。删除已并入的实验入口、网页和重复说明，历史结果不改写。
+
 ## Case33 正负接入实验扩展（2026-09-29）
 
-`experiments/case33_signed.py` 复用 FourBus 分区构域、独立扫描和回放，主线不变。[LOAD_NODES](../experiments/case33_signed.py) 为 (18,25)/(18,25,30)，预算7次开合，全部符号区共用60/300秒。未选节点保留原始有功、无功背景负荷；选中节点负荷PF=0.95、光伏PF=1，与 FourBus 实验一致。
+原 `experiments/case33_signed.py` 复用 FourBus 分区构域、独立扫描和回放；现已合入主线。实验 LOAD_NODES 现由 [main.load_nodes](../main.py) 配置，为 (18,25)/(18,25,30)，预算7次开合；历史实验时限60/300秒。未选节点保留原始有功、无功背景负荷；选中节点负荷PF=0.95、光伏PF=1，与 FourBus 一致。
 
-Case33 原数据 rateA=0 表示没有线路额定容量数据，不人为新增容量或逆变器圆。[voltage_flow_bounds](../experiments/fourbus_signed.py) 返回由两端电压上界推出的有效 ell/P 界：ell<=(sqrt(vmax_i)+sqrt(vmax_j))²/(r²+χ²)，两端功率幅值均不超过 sqrt(max(vmax_i,vmax_j)*ell)。[port_bounds](../experiments/fourbus_signed.py) 对无限额线路使用此有效功率界，有限额线路仍使用原额定有功容量，节点幅值上界仍为相邻走廊最大界之和。
+Case33 原数据 rateA=0 表示没有线路额定容量数据，不人为新增容量或逆变器圆。[voltage_flow_bounds](../model.py) 返回由两端电压上界推出的有效 ell/P 界：ell<=(sqrt(vmax_i)+sqrt(vmax_j))²/(r²+χ²)，两端功率幅值均不超过 sqrt(max(vmax_i,vmax_j)*ell)。[port_bounds](../model.py) 对无限额线路使用此有效功率界，有限额线路仍使用原额定有功容量，节点幅值上界仍为相邻走廊最大界之和。
 
 `PortPhysics._build_variable_bounds` 对 Case33 再由全网无功平衡得到 ell<=(min(source_qmax,source_smax)-sum(fixed_q)/base-minimum_variable_q)/χ，并与电压推导界取小值；支路P/Q界据此收紧。这些是物理可行集的有效界，不添加运行限制。SP的零潮流松弛量上界补入固定背景负荷最大P/Q。新网架先收入实际见证，再实际检查零接入点，只有SP可行才收入原点；不把Case33原点默认认证。
 
 共享入口 `run` / `main` 新增 network_type、load_nodes、budget 参数；`main.time_limits` 选择各维时限，默认仍为 FourBus；`build_partition.budget`、`scan_line.network_type`/`budget`、`scan_reference.network_type`/`budget` 显式传递，不修改变量、状态或记录布局。Case33 结果和扫描分别位于 results/case33_signed 与 results/scans/case33_signed；FourBus 目录保留。回放标题以接入节点标识案例，旧记录可原样回放。
 
-连续求解的等式消元：`solve_conic` 对固定变量消元后仍存在的 Aeq*y=beq 用 SVD 表示 y=offset+basis*z；[solve_conic.offset](../experiments/port_subproblem.py) 为特解，[solve_conic.basis](../experiments/port_subproblem.py) 为零空间正交基。只求自由坐标z，随后还原原状态并核验全部原始约束；消除压降等式中的数值残差，不改变1e-8认证门槛。无等式的SP仍直接求解原自由变量，不重试、不切换求解器。
+连续求解的等式消元：`solve_conic` 对固定变量消元后仍存在的 Aeq*y=beq 用 SVD 表示 y=offset+basis*z；[solve_conic.offset](../model.py) 为特解，[solve_conic.basis](../model.py) 为零空间正交基。只求自由坐标z，随后还原原状态并核验全部原始约束；消除压降等式中的数值残差，不改变1e-8认证门槛。无等式的SP仍直接求解原自由变量，不重试、不切换求解器。
 
 Case33 电流锥固定等价变换为 norm((20P,20Q,v-100ell))<=v+100ell，以改善小电流附近的数值尺度；原约束、原锥取割方向和原始残差核验不变。连续SP收敛目标为1e-10，物理接受仍要求 eta+原约束残差<=1e-8。两案例统一使用 `PortSubProblem`，没有失败后重试或求解器切换。
 
@@ -32,11 +48,11 @@ Case33 参考扫描固定 Aggregate=1；Aggregate=0 在 p=(-975.05625,-1861.5875
 
 | 新增量 | 固定代码映射 | 定义 |
 |---|---|---|
-| 接入模式 | [MODE](../experiments/fourbus_signed.py) | 0 原正负荷；1 正负接入分区 |
-| 接入符号 | [PortPhysics.sign](../experiments/fourbus_signed.py) | +1 负荷，-1 光伏，固定参数，不是整数决策变量 |
-| 节点初始功率幅值界 | [port_bounds](../experiments/fourbus_signed.py) | 节点相邻走廊各最大有功容量之和，kW；由两端容量界与节点平衡推出，不用电源容量截断内部交换 |
-| 构域总时限 | [TIME_LIMITS](../experiments/fourbus_signed.py) | 二维20秒、三维60秒；全部符号区共用，包含建模、几何与原始记录，扫描与回放导出另计 |
-| 扫描精度 | [SCAN_DIVISIONS](../experiments/fourbus_signed.py) | 全部正负范围每轴格数，二维160、三维80；网格中心逐点完整 SOCP，无算法割或认证凸包参与 |
+| 接入模式 | 实验 MODE，现 [mode](../main.py) | 0 原正负荷；1 正负接入分区 |
+| 接入符号 | [PortPhysics.sign](../model.py) | +1 负荷，-1 光伏，固定参数，不是整数决策变量 |
+| 节点初始功率幅值界 | [port_bounds](../model.py) | 节点相邻走廊各最大有功容量之和，kW；由两端容量界与节点平衡推出，不用电源容量截断内部交换 |
+| 构域总时限 | 实验 TIME_LIMITS，现 [CASE_TIME_LIMIT](../main.py) | 历史实验二维20秒、三维60秒；现默认50秒；全部符号区共用，包含建模、几何与原始记录，扫描与回放导出另计 |
+| 扫描精度 | [SCAN_DIVISIONS](../main.py) | 全部正负范围每轴格数，二维160、三维80；网格中心逐点完整 SOCP，无算法割或认证凸包参与 |
 | 扫描范围 | `axis_lower`、`bounds` | 下界和上界均为实际 kW；点为 axis_lower+(index+0.5)*(bounds-axis_lower)/divisions |
 
 MODE=1 接根支路允许反向 P/Q，保留原源端视在功率上限，线路两端均受原有功容量限制。由 -P+r*ell<=capacity 与 P<=capacity 推出 ell<=2*capacity/r；无功界由源端能力和区域内最大无功注入推出。此界不是新增额定电流。各分区用幅值总和上界，不把原纯负荷总量界用于限制负荷与光伏的内部交换。
@@ -61,11 +77,11 @@ SP 评价点在求解前统一朝同网架认证凸包重心内移至多 POINT_T
 
 | 新增量 / 接口 | 固定代码映射 | 定义 |
 |---|---|---|
-| 强制重新扫描开关 | [FORCE_RESCAN](../main.py)、[run.force_rescan](../main.py)、[scan_reference.force_rescan](../main.py) | 默认 False；True 时完整重算扫描，覆盖该算例、节点和预算的扫描文件 |
+| 强制重新扫描开关 | [FORCE_RESCAN](../main.py)、[run.force_rescan](../main.py)、[scan_reference.force_rescan](../vertify.py) | 默认 False；True 时完整重算扫描，覆盖该算例、节点和预算的扫描文件 |
 | 独立扫描目录 | [SCAN_OUTPUT](../main.py)、[run.scan_output](../main.py) | 默认 results/scans；与构域回放目录 OUTPUT 分开 |
-| 扫描文件位置 | [scan_path](../main.py) | 算例名 / 有序负荷节点 / budget_预算.npz；不同维数、节点顺序及预算分开保存 |
-| 保存参考网格 | [save_scan](../main.py) | 只写入既有 bounds、states；扫描下限统一为零，单位 kW；不保存旧构域的误差指标 |
-| 范围复用与扫描 | [scan_reference](../main.py) | 逐轴请求上限不超过已有 bounds 时复用原网格；否则对新旧范围的包围盒重新扫描，上限向上取整到 kW，避免数值微差重复扫描；强制重算同样保留已覆盖的范围 |
+| 扫描文件位置 | [scan_path](../vertify.py) | 算例名 / 有序负荷节点 / budget_预算.npz；不同维数、节点顺序及预算分开保存 |
+| 保存参考网格 | [save_scan](../vertify.py) | 只写入既有 bounds、states；扫描下限统一为零，单位 kW；不保存旧构域的误差指标 |
+| 范围复用与扫描 | [scan_reference](../vertify.py) | 逐轴请求上限不超过已有 bounds 时复用原网格；否则对新旧范围的包围盒重新扫描，上限向上取整到 kW，避免数值微差重复扫描；强制重算同样保留已覆盖的范围 |
 
 复用保留扫描原有 bounds 与 states 坐标，不缩放、不插值，也不把旧标签移到新格点。divisions 仅在实际重新扫描时生效；已覆盖范围内改变格数不会自动重扫，需 FORCE_RESCAN=True。独立文件不记录耗时，复用时沿用回放已有的 scan_seconds=None 口径，实际新扫描仍记录其耗时；每次仍按本次构域结果重算 inner/outer 的遗漏率和多余率。物理参数修改后由用户显式要求重扫，不作模型哈希认证。
 
@@ -96,27 +112,27 @@ SP 评价点在求解前统一朝同网架认证凸包重心内移至多 POINT_T
 
 | 数学量 / 定义 | 固定代码映射 | 单位与用途 |
 |---|---|---|
-| 当前活动网架 | [build_sequential_region.x](../main.py) | 完整二元型号向量；每阶段只有一个 |
-| 当前网架外包络的未认证顶点 | [stage_candidates](../main.py) | 公共评价箱归一化坐标；仅扣除本网架 N'_x，不再由其他网架认证边界生成候选 |
-| 射线参数 λ | [ray_support.ray_fraction](../main.py) | [0,1]；p=anchor+λ(power-anchor)，anchor 必须来自同网架认证凸包；原点不默认可行 |
+| 当前活动网架 | [build_sequential_region.x](../region.py) | 完整二元型号向量；每阶段只有一个 |
+| 当前网架外包络的未认证顶点 | [stage_candidates](../region.py) | 公共评价箱归一化坐标；仅扣除本网架 N'_x，不再由其他网架认证边界生成候选 |
+| 射线参数 λ | [ray_support.ray_fraction](../model.py) | [0,1]；p=anchor+λ(power-anchor)，anchor 必须来自同网架认证凸包；原点不默认可行 |
 | 固定 p、开放全部 x/y 的最小违反量 V(p) | 已退役：`experiments/sequential_region.py::certify_power` | 历史定义保留：原始物理模型最小违反量；本实验新流程不再调用 |
-| 局部割面积减少比例 | [build_sequential_region.area_ratio](../main.py) | 第一阶段为减少面积/加割前 O_A 面积；后续为未认证部分减少面积/加割前 W 面积；前后固定同一个 W |
-| 连续小割次数 | [build_sequential_region.small_cuts](../main.py) | 连续三次 area_ratio<0.02 时换阶段；零面积分母不使用该判据 |
-| 近点合并距离 εp | [build_sequential_region.point_tol](../main.py)、CLI `--point-tol` | 默认 1e-4 kW；以原始负荷坐标的 L-infinity 距离比较，不是标幺值或物理可行性容差 |
-| 点的固定代表及编号 | [register_power](../main.py)、[build_sequential_region.powers](../main.py) | powers[index] 保存首次登记的原始 kW 坐标；近点复用已有编号，代表不移动、不传递合并，不舍入求解坐标 |
-| SP 缓存索引 | [build_sequential_region.cache](../main.py) | (tuple(x),index)；历史 frontier / certifications 同代表索引已退役；输出 p/x 的单位、形状与含义不变 |
-| 已采用的局部割来源 | [build_sequential_region.applied](../main.py) | (tuple(x),index) 集合；近点匹配不得让同一缓存割再次被采用并计入连续小割次数 |
+| 局部割面积减少比例 | [build_sequential_region.area_ratio](../region.py) | 第一阶段为减少面积/加割前 O_A 面积；后续为未认证部分减少面积/加割前 W 面积；前后固定同一个 W |
+| 连续小割次数 | [build_sequential_region.small_cuts](../region.py) | 连续三次 area_ratio<0.02 时换阶段；零面积分母不使用该判据 |
+| 近点合并距离 εp | [build_sequential_region.point_tol](../region.py)、CLI `--point-tol` | 默认 1e-4 kW；以原始负荷坐标的 L-infinity 距离比较，不是标幺值或物理可行性容差 |
+| 点的固定代表及编号 | [register_power](../region.py)、[build_sequential_region.powers](../region.py) | powers[index] 保存首次登记的原始 kW 坐标；近点复用已有编号，代表不移动、不传递合并，不舍入求解坐标 |
+| SP 缓存索引 | [build_sequential_region.cache](../region.py) | (tuple(x),index)；历史 frontier / certifications 同代表索引已退役；输出 p/x 的单位、形状与含义不变 |
+| 已采用的局部割来源 | [build_sequential_region.applied](../region.py) | (tuple(x),index) 集合；近点匹配不得让同一缓存割再次被采用并计入连续小割次数 |
 | 换网架候选队列 | 已退役：`experiments/sequential_region.py::build_sequential_region.frontier` | 历史定义保留：按固定代表编号缓存来源 x 与 eta；新流程由连续查漏直接返回可行网架和负荷 |
 | 全网架已证不可行点 | 已退役：`build_sequential_region.rejected_points`（2026-09-29 主线精简） | p 为 kW；记录 eta 与可靠下界 bound，回放显示红色实心点；不删除邻域 |
 | SP 数值精度侧重 | [SubProblem.numeric_focus](../model.py) | 求解器 NumericFocus；默认 0 保持主线；实验 FourBus 固定 0、Case33 固定 3，从首次 SP 起使用；不改变原始 eta 与 1e-8 接受条件 |
-| 射线数值精度侧重 | [ray_support.numeric_focus](../main.py) | 与该案例 SP 的 NumericFocus 一致；默认 0；不改变物理约束和精度 |
+| 射线数值精度侧重 | [ray_support.numeric_focus](../model.py) | 与该案例 SP 的 NumericFocus 一致；默认 0；不改变物理约束和精度 |
 | 每阶段补充射线次数 | 已退役：`build_sequential_region.boundary_rays`（2026-09-29 主线精简） | 整数；stages[].boundary_rays；counts.ray 仍累计全部射线求解 |
 | 网架未认证面积 | 已退役：`build_sequential_region.local_gap_area`（2026-09-29 主线精简） | area(N_x 差 N'_x)，kW²；stages[].local_gap_area，不改变 remaining_area=area(N_x 差 G') |
-| 射线新增面积上界 U(q) | [ray_gain](../main.py) | area(conv(N'_x∪{q}))−area(N'_x)，内部用公共箱归一化面积；回放 ray_gain_bound 乘 prod(bounds) 后为 kW² |
-| 射线收益筛选比例 | [RAY_THRESHOLD](../main.py)、[build_sequential_region.ray_threshold](../main.py)；历史 CLI `--ray-threshold` 已随实验入口退役 | 默认 1e-4，即 0.01%；U(q)<ray_threshold*μ(N'_x) 时省去该射线；首轮 G 顶点射线不筛选；低维内域先补足维度，不按零测度筛除；不是停止证书 |
-| 非冗余认证域半空间 | [coverage_halfspaces](../main.py) | 返回保留的网架键及其半空间；只删被某一个其他认证凸包包含的排除项，不跨网架取凸包；使用已有 GEOMETRY_TOL |
+| 射线新增面积上界 U(q) | [ray_gain](../region.py) | area(conv(N'_x∪{q}))−area(N'_x)，内部用公共箱归一化面积；回放 ray_gain_bound 乘 prod(bounds) 后为 kW² |
+| 射线收益筛选比例 | [RAY_THRESHOLD](../main.py)、[build_sequential_region.ray_threshold](../region.py)；历史 CLI `--ray-threshold` 已随实验入口退役 | 默认 1e-4，即 0.01%；U(q)<ray_threshold*μ(N'_x) 时省去该射线；首轮 G 顶点射线不筛选；低维内域先补足维度，不按零测度筛除；不是停止证书 |
+| 非冗余认证域半空间 | [coverage_halfspaces](../region.py) | 返回保留的网架键及其半空间；只删被某一个其他认证凸包包含的排除项，不跨网架取凸包；使用已有 GEOMETRY_TOL |
 | 全局查漏逐次记录 | 已退役：`build_sequential_region.coverage_checks`（2026-09-29 主线精简） | 每项记录 total_domains/domains、total_faces/faces、objective、bound、complete；objective 为求解器当次可行解的未覆盖余量，bound 仍是全局上界 |
-| 求解与筛选计数 | [build_sequential_region.counts](../main.py) | 新增 initial=初始化 MP2 次数、cut_lp=实际割 LP 次数、ray_skipped=按几何上界省去的射线数；sp/cuts/ray/global_search 原义不变，sp_seconds 仍包含评分和取割时间 |
+| 求解与筛选计数 | [build_sequential_region.counts](../region.py) | 新增 initial=初始化 MP2 次数、cut_lp=实际割 LP 次数、ray_skipped=按几何上界省去的射线数；sp/cuts/ray/global_search 原义不变，sp_seconds 仍包含评分和取割时间 |
 
 2026-09-29 效率迁移：SP 增加显式 `score_only=True`，只求原始最小 eta 并缓存锥支撑方向；默认 False 保持所有原调用方“可行证书或有效割”的契约。仅获选的最大 eta 候选调用 generate_cut，复用缓存方向建立支撑 LP，不重复求 SOCP。切割后和阶段末射线均先计算 U(q)；补充轮按最新 U(q) 从大到小处理，每收入一个点后重新计算收益。小收益点不获得认证，最终仍由完整物理全局模型查漏。
 
@@ -130,7 +146,7 @@ SP 评价点在求解前统一朝同网架认证凸包重心内移至多 POINT_T
 
 ### 二维 / 三维入口与参考扫描迁移（2026-09-29）
 
-2026-09-29 快速调试迁移：逐网架实验的 build_sequential_region.seconds、run_case.seconds 和 CLI --seconds 默认统一为 50 秒；主入口 CASE_TIME_LIMIT 同为 50 秒，两个案例都读取该设置。完整预算包含初始化、几何、求解和过程记录。旧结果及其 1000 秒设置保留。新增 [build_sequential_region.initialized](../main.py) 为已完成首轮 G 顶点射线认证的网架键集合，每个网架只执行一次；[build_sequential_region.add_ray.initial_sweep](../main.py) 标记首轮，跳过收益筛选但不跳过物理认证。首轮遍历全局初始外包络 G 的顶点，已在同网架认证凸包内的点复用凸性，其余逐个求射线支撑；首轮不产生对偶割，随后恢复 N_x 顶点的最大 eta 选点切割。新增 initial_sweep_start / initial_sweep_end 回放事件，原 ray / sp / cuts 计数含义不变。
+2026-09-29 快速调试迁移：逐网架实验的 build_sequential_region.seconds、run_case.seconds 和 CLI --seconds 默认统一为 50 秒；主入口 CASE_TIME_LIMIT 同为 50 秒，两个案例都读取该设置。完整预算包含初始化、几何、求解和过程记录。旧结果及其 1000 秒设置保留。新增 [build_sequential_region.initialized](../region.py) 为已完成首轮 G 顶点射线认证的网架键集合，每个网架只执行一次；[build_sequential_region.add_ray.initial_sweep](../region.py) 标记首轮，跳过收益筛选但不跳过物理认证。首轮遍历全局初始外包络 G 的顶点，已在同网架认证凸包内的点复用凸性，其余逐个求射线支撑；首轮不产生对偶割，随后恢复 N_x 顶点的最大 eta 选点切割。新增 initial_sweep_start / initial_sweep_end 回放事件，原 ray / sp / cuts 计数含义不变。
 
 三维体积修正：暴露面求差统一使用 1e-11 的二维投影网格精度，与 _clip_face 的面内距离容差一致，避免约 1e-18 的共线偏差让布尔求差漏扣重叠面。仅规范测度计算的中间面片，不移动认证点、不改变物理或覆盖容差、不对体积作非负截断或累计最大值修补。
 
@@ -142,7 +158,7 @@ Case33 的动态负荷节点由文件顶部 LOAD_NODES 配置，默认 (18,25)�
 |---|---|---|
 | Case33 默认动态负荷节点 | [LOAD_NODES](../Network/case33bw.py) | 节点 ID 元组；二维 (18,25)，三维 (18,25,30) |
 | Case33 每轴参考扫描格数 | [SCAN_DIVISIONS](../main.py) | 按维数索引：2→100，3→60；均为均匀网格中心，可由 --divisions 覆盖 |
-| d 维凸域并集测度 | [union_measure](../main.py) | 归一化坐标下二维面积或三维体积；二维用多边形布尔并，三维用既有 union_volume |
+| d 维凸域并集测度 | [union_measure](../region.py) | 归一化坐标下二维面积或三维体积；二维用多边形布尔并，三维用既有 union_volume |
 | 输出测度单位 | 已退役：`build_sequential_region:measure_unit`（2026-09-29 主线精简） | kW² 或 kW³；回放 settings 同步保存 |
 | 按节点配置定位回放 | [recording_path](../main.py) | 文件名 case_节点序列.json.gz，例如 case33_18_25_30.json.gz；二维和三维不相互覆盖，旧文件不改写 |
 | 扫描张量与耗时 | [validate_socp_region:states](../vertify.py)、[validate_socp_region:scan_seconds](../vertify.py) | states.shape=(divisions,)*d，索引顺序与 load_nodes 一致，1/-1 为完整 SOCP 可行/不可行；扫描秒数独立于构域计时 |

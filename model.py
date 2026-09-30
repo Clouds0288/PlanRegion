@@ -7,6 +7,9 @@ p[i] 为 kW 负荷，v[i] 为电压平方。数组仅用于结果、几何算法
 from time import perf_counter
 from types import SimpleNamespace
 
+import clarabel
+from scipy import sparse
+
 import gurobipy as gp
 import numpy as np
 from gurobipy import GRB
@@ -438,3 +441,228 @@ class RemainingRegionModel:
         if self.mode == 'physical':
             details.update(feasible=True)
         return dict(complete=False, bound=bound, x=x, p=point, **details)
+
+
+LOAD_PF = .95
+PV_PF = 1.
+PV_Q_SIGN = 1.
+RAY_CONE_MARGIN = 1e-6
+
+
+def voltage_flow_bounds(network):
+    """由压降等式和电流锥推导有效界；两端电压均有限，反送也有界。"""
+    voltage = np.r_[network.vmax, 1.]
+    sending = voltage[network.senders[network.type_corridor]]
+    receiving = voltage[network.receivers[network.type_corridor]]
+    ellmax = (np.sqrt(sending)+np.sqrt(receiving))**2/(network.r**2+network.reactance**2)
+    return ellmax, np.sqrt(np.maximum(sending, receiving)*ellmax)
+
+
+def port_bounds(network):
+    """|节点净功率| 不超过相邻走廊各最大两端有功界之和。"""
+    _, voltage_bound = voltage_flow_bounds(network)
+    capacity = np.minimum(network.capacity, voltage_bound)
+    return network.base*np.array([sum(capacity[block].max()
+        for c, block in zip(network.corridors, network.type_slices) if node in c.endpoints)
+        for node in network.load_nodes])
+
+
+class PortPhysics(GridPhysics):
+    """固定 sign 后用非负幅值装配原方程；真实接入功率 p=sign*u。"""
+
+    def __init__(self, network, sign):
+        self.sign = np.asarray(sign)
+        network.q_ratio = np.where(self.sign > 0, np.tan(np.arccos(LOAD_PF)),
+                                   PV_Q_SIGN*np.tan(np.arccos(PV_PF)))
+        network.power_limit = float(port_bounds(network).sum())
+        super().__init__(network, 'socp')
+
+    def _build_variable_bounds(self):
+        super()._build_variable_bounds()
+        net = self.network
+        lower_q = np.minimum(net.q_ratio*self.sign*port_bounds(net)/net.base, 0.).sum()
+        pmax = net.capacity.copy()
+        qmax = np.full(net.n_types, min(net.source_qmax, net.source_smax)-lower_q)
+        ellmax = 2*pmax/net.r
+        if not np.all(np.isfinite(net.capacity)):
+            voltage_ell, _ = voltage_flow_bounds(net)
+            ellmax = np.minimum(voltage_ell, (qmax-net.fixed_q.sum()/net.base)/net.reactance)
+            voltage = np.r_[net.vmax, 1.]
+            end_voltage = np.maximum(voltage[net.senders[net.type_corridor]],
+                                     voltage[net.receivers[net.type_corridor]])
+            pmax = np.minimum(pmax, np.sqrt(end_voltage*ellmax))
+            qmax = np.minimum(qmax, pmax)
+        self.pmax, self.qmax, self.ellmax = (dict(zip(self.keys, a)) for a in (pmax, qmax, ellmax))
+        self.pmin, self.qmin = dict(zip(self.keys, -pmax)), dict(zip(self.keys, -qmax))
+        self.y_lb_global = np.r_[-pmax, -qmax, np.zeros(net.n_types+net.n+2*net.n_corridors)]
+        drop = list(self.drop_max.values())
+        self.y_ub_global = np.r_[pmax, qmax, ellmax, net.vmax, drop, drop]
+
+    def add_operation(self, model, x, p, eta=0.):
+        # 所有分区求解首次建模即采用同一数值设置，不作失败后的参数切换。
+        model.Params.BarHomogeneous, model.Params.Aggregate = 1, 0
+        model.Params.ScaleFlag = 1 if self.network.name == 'case33bw' else 0
+        if isinstance(eta, gp.Var):
+            net = self.network
+            eta.UB = float(max(np.max(np.abs(net.fixed_p)), np.max(np.abs(net.fixed_q)),
+                np.max(np.maximum(1., np.abs(net.q_ratio))*port_bounds(net)))/net.base)
+        signed = {i: int(s)*p[i] for i, s in zip(self.network.load_nodes, self.sign)}
+        operation = super().add_operation(model, x, signed, eta)
+        for e in self.outgoing[self.network.root]:
+            for k in self.types[e]:
+                model.addConstr(-operation.P[e, k]+self.r[e, k]*operation.ell[e, k]
+                                <= self.pmax[e, k]*x[e, k])
+                model.addConstr(-operation.Q[e, k]+self.reactance[e, k]*operation.ell[e, k]
+                                <= self.qmax[e, k]*x[e, k])
+        return operation
+
+
+def solve_conic(model, equations, operation, x, fixed, threads, deadline, tolerance, margin):
+    """原 SOCP 的固定变量消元、连续求解及原始残差核验。"""
+    model.update()
+    variables, rows = model.getVars(), model.getConstrs()
+    n = len(variables)
+
+    def affine(expression):
+        expression = gp.LinExpr(expression)
+        coefficients = np.zeros(n)
+        for j in range(expression.size()):
+            coefficients[expression.getVar(j).index] += expression.getCoeff(j)
+        return coefficients, expression.getConstant()
+
+    # 1. 原始等式、不等式和变量界，统一写成 Az+s=b。
+    matrix = model.getA().tocsc()
+    rhs = np.asarray(model.getAttr('RHS', rows))
+    senses = np.asarray(model.getAttr('Sense', rows))
+    lb, ub = np.array(model.getAttr('LB', variables)), np.array(model.getAttr('UB', variables))
+    for key, selected in zip(equations.keys, x):
+        if not selected:
+            fixed.update({flow[key].index: 0. for flow in (operation.P, operation.Q, operation.ell)})
+    for e in equations.types:
+        if sum(x[j] for j, key in enumerate(equations.keys) if key[0] == e):
+            fixed.update({operation.plus[e].index: 0., operation.minus[e].index: 0.})
+    free = np.array([j for j in range(n) if j not in fixed])
+    solution = np.zeros(n)
+    solution[list(fixed)] = list(fixed.values())
+    reduced = matrix[:, free]
+    keep = np.asarray(abs(reduced).sum(axis=1)).ravel() != 0.
+    a, b = reduced[keep], (rhs-matrix@solution)[keep]
+    equal = senses[keep] == '='
+    direction = np.where(senses[keep] == '>', -1., 1.)
+    eye = sparse.eye(len(free), format='csc')
+    lower, upper = lb[free] > -GRB.INFINITY, ub[free] < GRB.INFINITY
+    blocks = [a[equal], sparse.diags(direction[~equal])@a[~equal], -eye[lower], eye[upper]]
+    values = [b[equal], direction[~equal]*b[~equal], -lb[free][lower], ub[free][upper]]
+    cones = [clarabel.ZeroConeT(int(equal.sum())),
+             clarabel.NonnegativeConeT(int((~equal).sum()+lower.sum()+upper.sum()))]
+
+    # 2. 每个原二阶锥保存为仿射向量，直接交给连续锥求解器。
+    cone_rows = []
+    for j, (head, tail) in enumerate(operation.cones):
+        expressions = [affine(item) for item in (head, *tail)]
+        a, b = np.array([item[0] for item in expressions]), np.array([item[1] for item in expressions])
+        cone_rows.append((a, b))
+        if j < len(x) and not x[j]:
+            continue  # 开断型号 P=Q=ell=0，原电流锥恒成立。
+        if j < len(x) and equations.network.name == 'case33bw':
+            # Case33 小电流锥等价缩放，避免 v 与 ell 数量级悬殊。
+            key = equations.keys[j]
+            v = operation.v[equations.ends[key[0]][0]]
+            ell, P, Q = operation.ell[key], operation.P[key], operation.Q[key]
+            expressions = [affine(item) for item in (v+100*ell, 20*P, 20*Q, v-100*ell)]
+            a, b = np.array([item[0] for item in expressions]), np.array([item[1] for item in expressions])
+        blocks.append(sparse.csc_matrix(-a[:, free]))
+        constant = b+a@solution
+        constant[0] -= margin*(100. if j < len(x) and equations.network.name == 'case33bw' else 1.)
+        values.append(constant)
+        cones.append(clarabel.SecondOrderConeT(len(b)))
+    objective, _ = affine(model.getObjective())
+    objective *= model.ModelSense
+    # 射线的线性等式先精确消元，避免小阻抗压降行在锥求解中损失精度。
+    if equal.any():
+        left, singular, right = np.linalg.svd(blocks.pop(0).toarray(), full_matrices=True)
+        rank = int((singular > singular[0]*max(len(free), int(equal.sum()))*np.finfo(float).eps).sum())
+        offset = right[:rank].T@((left[:, :rank].T@values.pop(0))/singular[:rank])
+        basis = right[rank:].T
+        cones.pop(0)
+        matrix_free = sparse.vstack(blocks, format='csc')
+        conic_matrix = sparse.csc_matrix(matrix_free@basis)
+        conic_rhs = np.concatenate(values)-matrix_free@offset
+        conic_objective = basis.T@objective[free]
+    else:
+        conic_matrix = sparse.vstack(blocks, format='csc')
+        conic_rhs, conic_objective = np.concatenate(values), objective[free]
+    settings = clarabel.DefaultSettings()
+    settings.verbose = False
+    settings.max_threads = threads
+    settings.static_regularization_constant = 1e-10
+    settings.tol_gap_abs = settings.tol_gap_rel = tolerance
+    settings.tol_feas = tolerance
+    settings.time_limit = max(0., deadline-perf_counter())
+    count = len(conic_objective)
+    answer = clarabel.DefaultSolver(sparse.csc_matrix((count, count)), conic_objective,
+        conic_matrix, conic_rhs, cones, settings).solve()
+    if answer.status == clarabel.SolverStatus.MaxTime:
+        raise TimeoutError('连续子问题达到总时限')
+    if answer.status not in (clarabel.SolverStatus.Solved, clarabel.SolverStatus.AlmostSolved):
+        raise RuntimeError(f'Continuous SOCP: {answer.status}, x={list(x)}')
+    solution[free] = offset+basis@answer.x if equal.any() else answer.x
+
+    # 3. 以原始约束重新核验；锥求解器的缩放残差不直接作为物理证书。
+    residual = matrix@solution-rhs
+    violation = max(0., np.max(np.where(senses == '=', np.abs(residual),
+                    np.where(senses == '>', -residual, residual))),
+                    np.max(lb-solution), np.max(solution-ub))
+    for constraint in model.getQConstrs():
+        expression = model.getQCRow(constraint)
+        a, b = affine(expression.getLinExpr())
+        value = a@solution+b+sum(expression.getCoeff(j)*solution[expression.getVar1(j).index]
+            *solution[expression.getVar2(j).index] for j in range(expression.size()))
+        violation = max(violation, value-constraint.QCRHS)
+    normals = []
+    for a, b in cone_rows:
+        tail = (a@solution+b)[1:]
+        length = np.linalg.norm(tail)
+        normals.append(tail/length if length else tail)
+    return solution, violation, normals
+
+
+class PortSubProblem(SubProblem):
+    def solve(self, x, power, time_limit=None, *, score_only=False):
+        self.calls += 1
+        deadline = perf_counter()+(SP_TIME_LIMIT[self.equations.method] if time_limit is None else time_limit)
+        with new_model('port_SP', self.threads) as model:
+            choice, p, eta, operation, _ = self._build(model, x, power)
+            model.update()
+            fixed = {v.index: float(a) for v, a in zip([*choice.values(), *p.values()], [*x, *power])}
+            solution, violation, normals = solve_conic(model, self.equations, operation, x,
+                fixed, self.threads, deadline, 1e-10, 0.)
+            value = float(solution[eta.index])
+            if max(0., value)+violation <= PLANNING_TOL:
+                state = solution[[v.index for v in operation.state.tolist()]]
+                return dict(cut=None, state=state, feasible=True, eta=value)
+            if value <= PLANNING_TOL:
+                raise RuntimeError(f'SP: eta={value:g}, MaxVio={violation:g}; certificate exceeds tolerance')
+        if score_only:
+            return dict(cut=None, state=None, feasible=False, eta=value, cone_normals=normals)
+        cut = self.generate_cut(x, power, normals, time_limit=deadline-perf_counter())
+        return dict(cut=cut, state=None, feasible=False, eta=value)
+
+
+def ray_support(equations, budget, x, anchor, power, *, threads, time_limit, numeric_focus=0):
+    """固定网架的近边界射线点；原约束残差达标后才收入认证域。"""
+    deadline = perf_counter()+time_limit
+    with new_model('port_ray', threads) as model:
+        choice = dict(zip(equations.keys, x))
+        ray_fraction = model.addVar(ub=1., name='ray_fraction')
+        p = {i: float(a)+ray_fraction*float(q-a)
+             for i, a, q in zip(equations.network.load_nodes, anchor, power)}
+        operation = equations.add_operation(model, choice, p)
+        model.setObjective(ray_fraction, gp.GRB.MAXIMIZE)
+        solution, violation, _ = solve_conic(model, equations, operation, x, {},
+            threads, deadline, 1e-9, RAY_CONE_MARGIN)
+        if violation > PLANNING_TOL:
+            raise RuntimeError(f'Ray: MaxVio={violation:g}, anchor={list(anchor)}, p={list(power)}')
+        return dict(x=x.copy(), p=anchor+solution[ray_fraction.index]*(power-anchor),
+                    state=solution[[v.index for v in operation.state.tolist()]],
+                    ray_fraction=float(solution[ray_fraction.index]), feasible=True)

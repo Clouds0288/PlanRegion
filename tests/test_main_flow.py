@@ -6,6 +6,7 @@ import numpy as np
 import pytest
 
 import main
+from monitor import RegionTimeout
 import continuous
 from model import GridPhysics, MasterProblem, SubProblem, RemainingRegionModel
 from region import RegionState
@@ -37,18 +38,17 @@ def test_axis_certificate_is_saved_before_later_mp2_can_time_out(failed_call):
     def solve(problem, *args, **kwargs):
         calls.append(problem)
         if len(calls) == failed_call:
-            raise main.RegionTimeout('MP timeout')
+            raise RegionTimeout('MP timeout')
         return original(problem, *args, **kwargs)
     oracle = SubProblem(GridPhysics(network, 'socp'), threads=1)
     monitor = RunMonitor()
-    with pytest.raises(main.RegionTimeout, match='MP timeout'), \
+    with pytest.raises(RegionTimeout, match='MP timeout'), \
          patch.object(MasterProblem, 'solve', new=solve), patch('continuous.SubProblem', return_value=oracle):
         monitor.execute(lambda: continuous.build_continuous_region(network, 'socp', 20000., [150.]*3,
                         threads=1, progress=monitor), show_ui=False)
     assert len(calls) == failed_call and oracle.calls == 0
     assert monitor.state['status'] == 'failed'
     assert sum(f['patch'].get('event') == 'feasible' for f in monitor.history) == failed_call-1
-
 
 
 def test_directional_seeds_of_same_scheme_share_one_region():

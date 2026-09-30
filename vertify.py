@@ -1,5 +1,7 @@
 """独立 AC 潮流、建设方案认证与网格校核；求解失败直接报错。"""
 from time import perf_counter
+from pathlib import Path
+from functools import partial
 from concurrent.futures import ProcessPoolExecutor
 from contextlib import nullcontext
 
@@ -8,7 +10,8 @@ from gurobipy import GRB
 import numpy as np
 from threadpoolctl import threadpool_limits
 
-from model import DEFAULT_SOLVER_THREADS, GridPhysics, MasterProblem
+from model import DEFAULT_SOLVER_THREADS, GridPhysics, MasterProblem, PortPhysics, LOAD_PF, PV_PF, PV_Q_SIGN
+from Network.four_bus_five_corridor import FourBus
 
 AC_TOL = 1e-9
 FIXED_POINT_TOL = 1e-12
@@ -261,3 +264,94 @@ def validate_socp_region(network, budget, divisions, bounds, *, threads=DEFAULT_
             states[index] = line
             progress(completed*divisions, total)
     return dict(bounds=bounds, states=states, scan_seconds=perf_counter()-started)
+
+
+def scan_line(args, *, network_type=FourBus, budget=20000.):
+    """4. 独立扫描；同符号、同网架的两个可行端点认证中间格点。"""
+    nodes, mode, lower, upper, divisions, index = args
+    d = len(nodes)
+    states = np.empty(divisions, dtype=np.int8)
+    coordinates = lower+(np.arange(divisions)[:, None]*np.eye(d)[-1]
+                         +np.r_[index, 0.]+.5)*(upper-lower)/divisions
+    with threadpool_limits(limits=1):
+        for last_sign in ((1, -1) if mode else (1,)):
+            selection = (coordinates[:, -1] >= 0) if last_sign == 1 else (coordinates[:, -1] < 0)
+            indices = np.flatnonzero(selection)
+            if not len(indices):
+                continue
+            sign = np.where(coordinates[indices[0]] >= 0., 1, -1)
+            network = network_type(load_nodes=nodes)
+            equations = PortPhysics(network, sign) if mode else GridPhysics(network, 'socp')
+            problem = MasterProblem(equations, power=np.zeros(d), budget=budget, threads=1)
+            problem.model.setObjective(0.)  # 参考扫描只判断存在可行网架，不求最小投资。
+            with problem.model as model:
+                model.ModelName = f'scan_{index}_{last_sign}'
+                model.Params.BarQCPConvTol = 1e-10 if network_type.__name__ == 'Case33' else 1e-8
+                model.Params.NumericFocus = 0
+                model.Params.BarHomogeneous = 1
+                model.Params.Aggregate = 1 if network_type.__name__ == 'Case33' else 0
+                model.Params.ScaleFlag = 1 if network_type.__name__ == 'Case33' else 0
+                model.update()
+                fixed = [c for c in model.getConstrs() if c.ConstrName.startswith('fixed_power[')]
+                checked, intervals = {}, [(0, len(indices)-1)]
+                while intervals:
+                    first, last = intervals.pop()
+                    for k in (first, last):
+                        j = indices[k]
+                        if j not in checked:
+                            model.ModelName = f'scan_{index}_{j}'
+                            model.setAttr('RHS', fixed, coordinates[j]*sign)
+                            if network_type is FourBus:
+                                model.reset()
+                            answer = problem.solve()
+                            checked[j] = None if answer is None else answer['x']
+                            states[j] = -1 if answer is None else 1
+                    a, b = checked[indices[first]], checked[indices[last]]
+                    if a is not None and b is not None and np.array_equal(a, b):
+                        states[indices[first:last+1]] = 1
+                    elif last-first > 1:
+                        middle = (first+last)//2
+                        intervals.extend(((first, middle), (middle, last)))
+    return index, states
+
+
+def scan_path(network, budget, output=Path(__file__).resolve().parent/'results'/'scans', mode=1):
+    """按算例、模式、节点、功率因数和预算隔离扫描。"""
+    case = type(network).__name__.lower()
+    return Path(output)/f'{case}_signed'/f'mode_{mode}'/'_'.join(map(str, network.load_nodes))/(
+        f'pf_{LOAD_PF:g}_{PV_PF:g}_{PV_Q_SIGN:+g}_budget_{budget:g}.npz')
+
+
+def save_scan(path, reference):
+    path.parent.mkdir(parents=True, exist_ok=True)
+    np.savez_compressed(path, axis_lower=reference['axis_lower'], bounds=reference['bounds'],
+                        states=np.asarray(reference['states'], dtype=np.int8))
+
+
+def scan_reference(network, budget, divisions, bounds, path, *, axis_lower, mode,
+                   threads, workers, progress, force_rescan=False):
+    """复用包含请求范围的原网格；扩界或强制要求时独立重扫。"""
+    lower, upper = np.floor(axis_lower), np.ceil(bounds)
+    if path.exists():
+        with np.load(path) as saved:
+            reference = dict(axis_lower=saved['axis_lower'], bounds=saved['bounds'], states=saved['states'])
+        if not force_rescan and np.all(lower >= reference['axis_lower']) and np.all(upper <= reference['bounds']):
+            print(f'Reuse scan: {path}', flush=True)
+            return reference
+        lower, upper = np.minimum(lower, reference['axis_lower']), np.maximum(upper, reference['bounds'])
+    started = perf_counter()
+    shape = (divisions,)*len(network.load_nodes)
+    states = np.empty(shape, dtype=np.int8)
+    jobs = ((network.load_nodes, mode, lower, upper, divisions, index) for index in np.ndindex(shape[:-1]))
+    last_print = started
+    with ProcessPoolExecutor(max_workers=workers) as pool:
+        for count, (index, line) in enumerate(pool.map(partial(scan_line, network_type=type(network), budget=budget), jobs), 1):
+            states[index] = line
+            progress(count*divisions, states.size)
+            if perf_counter()-last_print > 15.:
+                print(f'Scan {count*divisions}/{states.size}, {perf_counter()-started:.1f}s', flush=True)
+                last_print = perf_counter()
+    reference = dict(axis_lower=lower, bounds=upper, states=states)
+    save_scan(path, reference)
+    print(f'Scan completed: {perf_counter()-started:.2f}s, {path}', flush=True)
+    return reference

@@ -1,73 +1,75 @@
-"""扫描按物理范围复用：原坐标保持、扩界、强制重扫与本次结果的回放。"""
+"""正负范围复用、模式隔离，以及新主线记录与扫描的端到端核对。"""
+import gzip
+import json
 from unittest.mock import patch
 
 import numpy as np
 import pytest
 
 import main
-from monitor import RunMonitor
+import vertify
+from monitor import RunMonitor, NativeWindow
 
 
 @pytest.mark.parametrize('dimension', [2, 3])
 def test_covering_scan_keeps_original_grid_when_requested_divisions_change(tmp_path, dimension):
     network = main.Case33(load_nodes=(18, 25, 30)[:dimension])
-    path = main.scan_path(network, 7, tmp_path)
+    path = vertify.scan_path(network, 7, tmp_path)
     bounds = np.array([50., 40., 30.])[:dimension]
     states = np.where(np.indices((3,)*dimension).sum(axis=0) < 3, 1, -1)
-    main.save_scan(path, dict(bounds=bounds, states=states, scan_seconds=12.5))
+    vertify.save_scan(path, dict(axis_lower=-bounds, bounds=bounds, states=states))
     original = path.read_bytes()
-
-    with patch('main.validate_socp_region', side_effect=AssertionError('覆盖范围内不应重扫')):
-        reference = main.scan_reference(network, 7, 100, bounds-.1, path,
-                                        threads=4, workers=2, progress=lambda *args: None)
+    with patch('vertify.ProcessPoolExecutor', side_effect=AssertionError('Covered range must reuse scan')):
+        reference = vertify.scan_reference(network, 7, 100, bounds-.1, path,
+            axis_lower=-bounds+.1, mode=1, threads=4, workers=2, progress=lambda *args: None)
+    np.testing.assert_array_equal(reference['axis_lower'], -bounds)
     np.testing.assert_array_equal(reference['bounds'], bounds)
     np.testing.assert_array_equal(reference['states'], states)
-    assert set(reference) == {'bounds', 'states'}
+    assert set(reference) == {'axis_lower', 'bounds', 'states'}
     assert path.read_bytes() == original
 
 
 @pytest.mark.parametrize('dimension', [2, 3])
 def test_range_expansion_and_force_rescan_preserve_covered_box(tmp_path, dimension):
     network = main.Case33(load_nodes=(18, 25, 30)[:dimension])
-    path = main.scan_path(network, 7, tmp_path)
+    path = vertify.scan_path(network, 7, tmp_path)
     bounds = np.array([10., 20., 30.])[:dimension]
-    main.save_scan(path, dict(bounds=bounds, states=np.ones((3,)*dimension), scan_seconds=1.))
-
-    def solve(network, budget, divisions, bounds, **kwargs):
-        return dict(bounds=bounds, states=-np.ones((divisions,)*dimension, dtype=np.int8), scan_seconds=2.)
-
-    with patch('main.validate_socp_region', side_effect=solve) as scan:
-        reference = main.scan_reference(network, 7, 4, np.array([10.2, 18., 31.7])[:dimension], path,
+    vertify.save_scan(path, dict(axis_lower=-bounds, bounds=bounds, states=np.ones((3,)*dimension)))
+    jobs = []
+    def scan_rows(function, requests):
+        requests = list(requests)
+        jobs.extend(requests)
+        return [(job[-1], -np.ones(job[-2], dtype=np.int8)) for job in requests]
+    with patch('vertify.ProcessPoolExecutor') as pool:
+        pool.return_value.__enter__.return_value.map.side_effect = scan_rows
+        upper = np.array([10.2, 18., 31.7])[:dimension]
+        lower = np.array([-12.2, -18., -29.])[:dimension]
+        reference = vertify.scan_reference(network, 7, 4, upper, path, axis_lower=lower, mode=1,
                                         threads=4, workers=2, progress=lambda *args: None)
-        expected = np.array([11., 20., 32.])[:dimension]
-        np.testing.assert_array_equal(scan.call_args.args[3], expected)
+        expected_upper = np.array([11., 20., 32.])[:dimension]
+        expected_lower = np.array([-13., -20., -30.])[:dimension]
+        np.testing.assert_array_equal(jobs[0][2], expected_lower)
+        np.testing.assert_array_equal(jobs[0][3], expected_upper)
         assert reference['states'].shape == (4,)*dimension
-        reference = main.scan_reference(network, 7, 6, bounds-1., path, force_rescan=True,
-                                        threads=4, workers=2, progress=lambda *args: None)
-        assert scan.call_count == 2
-        np.testing.assert_array_equal(scan.call_args.args[3], expected)
+        reference = vertify.scan_reference(network, 7, 6, bounds-1., path, axis_lower=-bounds+1., mode=1,
+            force_rescan=True, threads=4, workers=2, progress=lambda *args: None)
         assert reference['states'].shape == (6,)*dimension
     with np.load(path) as saved:
-        assert set(saved.files) == {'bounds', 'states'}
-        np.testing.assert_array_equal(saved['bounds'], expected)
+        assert set(saved.files) == {'axis_lower', 'bounds', 'states'}
+        np.testing.assert_array_equal(saved['axis_lower'], expected_lower)
+        np.testing.assert_array_equal(saved['bounds'], expected_upper)
         np.testing.assert_array_equal(saved['states'], reference['states'])
 
 
-@pytest.mark.parametrize('network,budget', [
-    (main.Case33(load_nodes=(18, 25)), 6),
-    (main.Case33(load_nodes=(25, 18)), 7),
-    (main.Case33(load_nodes=(18, 25, 30)), 7),
-    (main.FourBus(load_nodes=(1, 2)), 20000.),
-])
-def test_different_network_nodes_or_budget_do_not_share_reference(tmp_path, network, budget):
-    original = main.scan_path(main.Case33(), 7, tmp_path)
-    main.save_scan(original, dict(bounds=[5000., 5000.], states=np.ones((3, 3)), scan_seconds=1.))
-    d = len(network.load_nodes)
-    reference = dict(bounds=np.full(d, 10.), states=np.ones((2,)*d), scan_seconds=1.)
-    with patch('main.validate_socp_region', return_value=reference) as scan:
-        main.scan_reference(network, budget, 2, np.full(d, 10.), main.scan_path(network, budget, tmp_path),
-                            threads=1, workers=1, progress=lambda *args: None)
-    scan.assert_called_once()
+def test_different_network_nodes_budget_mode_and_pf_do_not_share_reference(tmp_path):
+    original = vertify.scan_path(main.Case33(), 7, tmp_path, mode=1)
+    variants = [(main.Case33(), 6, 1), (main.Case33(load_nodes=(25, 18)), 7, 1),
+                (main.Case33(load_nodes=(18, 25, 30)), 7, 1),
+                (main.FourBus(load_nodes=(1, 2)), 20000., 1), (main.Case33(), 7, 0)]
+    for network, budget, mode in variants:
+        assert vertify.scan_path(network, budget, tmp_path, mode) != original
+    with patch('vertify.LOAD_PF', .9):
+        assert vertify.scan_path(main.Case33(), 7, tmp_path, mode=1) != original
 
 
 @pytest.mark.parametrize('force', [False, True])
@@ -79,25 +81,95 @@ def test_main_passes_force_rescan_switch(force):
 
 def test_real_scan_is_reused_and_metrics_are_recomputed_for_new_result(tmp_path):
     network = main.FourBus(load_nodes=(1, 2))
-    options = dict(budget=20000., divisions=4, show_ui=False, threads=1, scan_workers=1,
+    options = dict(budget=20000., divisions=8, show_ui=False, threads=1, scan_workers=1,
                    scan_output=tmp_path/'scans')
-    # 1. 强制扫描忽略旧参考入口，保存完整物理扫描与回放。
     main.run(network, output=tmp_path/'first.json.gz', force_rescan=True,
              reference=tmp_path/'unused.json.gz', **options)
-    first = RunMonitor()
-    first.load_recording(tmp_path/'first.json.gz')
-    # 2. 改构域精度后再次运行；已有扫描覆盖，禁止调用扫描求解器。
-    with patch('main.validate_socp_region', side_effect=AssertionError('应复用已保存扫描')):
-        result = main.run(network, output=tmp_path/'second.json.gz', tau=.02, **options)
-    second = RunMonitor()
-    second.load_recording(tmp_path/'second.json.gz')
-    before, after = first.state['validation'], second.state['validation']
-    np.testing.assert_array_equal(after['bounds'], before['bounds'])
-    np.testing.assert_array_equal(after['states'], before['states'])
-    # 3. 误差必须来自本次几何与原扫描坐标，而非沿用上次误差。
-    reference = dict(bounds=np.asarray(before['bounds']), states=np.asarray(before['states']))
-    expected = RunMonitor()
-    expected.validation(reference, result)
-    assert after['metrics'] == expected.state['validation']['metrics']
-    assert after['fr_percent'] == 0.
-    assert second.state['status'] == 'completed'
+    with gzip.open(tmp_path/'first.json.gz', 'rt', encoding='utf-8') as stream:
+        first = json.load(stream)
+    with patch('vertify.ProcessPoolExecutor', side_effect=AssertionError('Must reuse saved scan')):
+        result = main.run(network, output=tmp_path/'second.json.gz', tau=.01, **options)
+    with gzip.open(tmp_path/'second.json.gz', 'rt', encoding='utf-8') as stream:
+        second = json.load(stream)
+    a = first['validation_state']['validation']
+    b = second['validation_state']['validation']
+    assert (a['bounds'], a['axis_lower'], a['states']) == (b['bounds'], b['axis_lower'], b['states'])
+    check = RunMonitor()
+    check.validation(a, result)
+    assert b['metrics'] == check.validation_state['validation']['metrics']
+    assert b['metrics']['inner']['fr_percent'] == 0.
+    restored = RunMonitor()
+    restored.load_recording(tmp_path/'second.json.gz')
+    state = restored.state
+    assert state['mode'] == 1 and state['result']['certified']
+    assert {tuple(row['sign']) for row in state['result']['inner']} == {(1, 1), (1, -1), (-1, 1), (-1, -1)}
+    assert min(row[0] for part in state['result']['inner'] for row in part['vertices']) < 0.
+    assert sum('result' in event['patch'] for event in restored.history) == 1
+    assert len(state['cut_history']) == result['counts']['cuts']
+    assert all(':' in key for key in state['schemes'])
+    for counter in ('cuts', 'sp', 'global_search'):
+        assert state[counter] == result['counts'][counter]
+    window = NativeWindow(restored)
+    try:
+        window.root.withdraw()
+        cut_indices = [i for i, event in enumerate(restored.history) if event['patch'].get('event') == 'cut']
+        for partition in ('++', '+-', '-+', '--'):
+            index = next(i for i in cut_indices if restored.frame(i)['partition'] == partition)
+            window.seek(index)
+            current = restored.frame(index)
+            scheme = current['active_scheme']
+            assert all(int(key) <= current['cuts'] for key in current['cut_history'])
+            assert window.axes['A'].get_xlim()[0] < 0 < window.axes['A'].get_xlim()[1]
+            latest = str(current['cuts'])
+            row = current['cut_history'][latest]
+            from monitor import _cut_segment
+            sign = np.asarray(row['sign'])
+            lower = np.asarray(current['axis_lower'])*(sign < 0)*1.04
+            upper = np.asarray(current['axis_bounds'])*(sign > 0)*1.04
+            segment = _cut_segment(row['cut'], current['schemes'][scheme]['x'], upper, lower)
+            if len(segment) == 2:
+                lines = window.scheme_views[scheme][1].lines
+                drawn = next(line for line in lines if line.get_gid() == f'cut-{latest}-{scheme}')
+                np.testing.assert_allclose(np.asarray(drawn.get_data()).T, segment)
+            window.seek_cut(1)
+            assert window.index == min(i for i in cut_indices if i > index)
+            window.seek_cut(-1)
+            assert window.index == index
+        window.seek(len(restored.history)-1)
+        window.seek(0)
+        assert not restored.frame(0).get('cut_history')
+        grid = window.axes['C'].collections[0].get_coordinates()
+        np.testing.assert_allclose(grid.min(axis=(0, 1)), a['axis_lower'])
+        np.testing.assert_allclose(grid.max(axis=(0, 1)), a['bounds'])
+    finally:
+        window.close()
+
+
+def test_positive_mode_is_nonnegative_and_has_independent_replay(tmp_path):
+    with patch('main.run') as run:
+        main.main('fourbus', mode=0)
+    assert run.call_args.kwargs['mode'] == 0
+    assert 'mode_0' in str(run.call_args.kwargs['output'])
+    assert main.mode == 1
+    output = main.recording_path('fourbus', tmp_path, mode=0)
+    result = main.run(main.FourBus(load_nodes=(1, 2)), output=output, mode=0,
+                      show_ui=False, scan=False, threads=1)
+    assert result['certified']
+    assert all(np.min(row['vertices']) >= -1e-8 for row in result['inner'])
+    restored = RunMonitor()
+    restored.load_recording(output)
+    assert restored.state['mode'] == 0
+    assert np.min(restored.state['axis_lower']) >= 0.
+    assert list(output.parent.iterdir()) == [output]
+
+
+def test_time_limit_retains_all_partitions_and_replay_without_scan(tmp_path):
+    output = tmp_path/'timeout.json.gz'
+    result = main.run(main.FourBus(load_nodes=(1, 2)), output=output, time_limit=0.,
+                      show_ui=False, scan=False, threads=1)
+    assert result['status'] == 'time_limit' and not result['certified']
+    assert len(result['outer']) == 4 and result['inner'] == []
+    with gzip.open(output, 'rt', encoding='utf-8') as stream:
+        data = json.load(stream)
+    assert data['version'] == 4 and data['validation_state'] == {}
+    assert len(data['history']) > 0 and list(tmp_path.iterdir()) == [output]

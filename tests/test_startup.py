@@ -39,7 +39,7 @@ class StartupTests(unittest.TestCase):
         self.assertTrue(network.required.all())
 
     def test_thread_detection_error_is_not_retried_or_hidden(self):
-        with patch('main.threadpool_limits', side_effect=OSError('GetModuleFileNameEx failed')) as configure:
+        with patch('region.threadpool_limits', side_effect=OSError('GetModuleFileNameEx failed')) as configure:
             with self.assertRaisesRegex(OSError, 'GetModuleFileNameEx failed'):
                 main.run(main.FourBus(load_nodes=(1, 2)), show_ui=False, output=None)
         configure.assert_called_once_with(limits=1)

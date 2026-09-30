@@ -7,9 +7,9 @@ from threadpoolctl import threadpool_limits
 
 from Network.four_bus_five_corridor import FourBus
 from model import GridPhysics, MasterProblem, SubProblem
-from experiments.port_subproblem import PortSubProblem
-from experiments.fourbus_signed import PortPhysics, port_bounds, port_ray, signed_values, scan_line, metrics
-from experiments.signed_replay import mesh, cut_mesh
+from model import PortSubProblem, PortPhysics, port_bounds, ray_support
+from monitor import signed_values, RunMonitor, _cut_polygon
+from vertify import scan_line
 
 
 class SignedPartitionTests(unittest.TestCase):
@@ -102,14 +102,14 @@ class SignedPartitionTests(unittest.TestCase):
             x = net.encode_plan(net.initial_plan)
             for direction in [*np.eye(3), np.ones(3)]:
                 power = direction*port_bounds(net)
-                answer = port_ray(equations, x, np.zeros(3), power, 10.)
+                answer = ray_support(equations, 20000., x, np.zeros(3), power, threads=1, time_limit=10.)
                 np.testing.assert_allclose(answer['p'], answer['ray_fraction']*power, atol=2e-6)
                 self.assertTrue(answer['feasible'])
         equations = PortPhysics(FourBus(load_nodes=(1, 2, 3)), [1, 1, 1])
         x = np.array([0, 0, 1, 1, 0, 0, 1, 0, 0, 0, 0, 0, 0, 0, 0])
-        answer = port_ray(equations, x,
+        answer = ray_support(equations, 20000., x,
             np.array([40.56558247100506, 15.775955603107535, 11.992124112103376]),
-            np.array([11.604715917462963, 33.208561013363024, .0010351113785352407]), 10.)
+            np.array([11.604715917462963, 33.208561013363024, .0010351113785352407]), threads=1, time_limit=10.)
         self.assertTrue(answer['feasible'])
 
     def test_scan_line_matches_independent_point_queries(self):
@@ -128,12 +128,14 @@ class SignedPartitionTests(unittest.TestCase):
         square = np.array([[-2., -2.], [0., -2.], [0., 0.], [-2., 0.]])
         reference = dict(axis_lower=[-2., -2.], bounds=[2., 2.], states=[[1, -1], [-1, -1]])
         result = dict(inner=[dict(vertices=square)], outer=[dict(vertices=square)])
-        self.assertEqual(metrics(reference, result)['inner']['mr_percent'], 0.)
-        self.assertEqual(metrics(reference, result)['inner']['fr_percent'], 0.)
-        face = cut_mesh([0., 1., 1., 1., 0.], [1.], np.full(3, -1.), np.ones(3))
-        self.assertGreater(len(face['faces']), 0)
-        self.assertLess(np.max(np.abs(np.array(face['points']).sum(axis=1))), 1e-10)
-        self.assertEqual(len(mesh(square, 2)['points']), 4)
+        monitor = RunMonitor()
+        monitor.validation(reference, result)
+        metrics = monitor.validation_state['validation']['metrics']['inner']
+        self.assertEqual(metrics['mr_percent'], 0.)
+        self.assertEqual(metrics['fr_percent'], 0.)
+        face = _cut_polygon([0., 1., 1., 1., 0.], [1.], np.ones(3), -np.ones(3))
+        self.assertEqual(len(face), 6)
+        self.assertLess(np.max(np.abs(face.sum(axis=1))), 1e-10)
 
     def test_scan_numerical_regression_points(self):
         cases = [([-66.284375, 80.325], 1),

@@ -7,7 +7,8 @@ import numpy as np
 import pytest
 from threadpoolctl import threadpool_limits
 
-from main import (build_sequential_region, stage_candidates, ray_support,
+from model import ray_support
+from region import (build_sequential_region, stage_candidates,
                                           register_power, ray_gain, coverage_halfspaces)
 from Network.four_bus_five_corridor import FourBus
 from Network.case33bw import Case33
@@ -149,10 +150,15 @@ def test_each_new_scheme_finishes_global_vertex_rays_before_sp_or_cut(experiment
     _, _, monitor, _ = experiment
     completed, targets = set(), []
     sweeping = None
+    origin = False
     for index, item in enumerate(monitor.history):
         event = item['patch']['event']
         state = monitor.frame(index)
         key = state.get('active_scheme')
+        if event == 'origin_start':
+            origin = True
+        elif event in ('feasible', 'residual_end'):
+            origin = False
         if event == 'initial_sweep_start':
             assert key not in completed and sweeping is None
             sweeping, targets = key, []
@@ -173,7 +179,7 @@ def test_each_new_scheme_finishes_global_vertex_rays_before_sp_or_cut(experiment
             assert len(targets) >= np.count_nonzero(~contains(vertices/bounds, initial_inner))
             completed.add(key)
             sweeping = None
-        elif event in ('point', 'cut_start', 'ray_skip'):
+        elif event in ('point', 'cut_start', 'ray_skip') and not origin:
             assert sweeping is None and key in completed
     assert completed == set(monitor.state['schemes'])
 
@@ -184,7 +190,7 @@ def test_time_limit_retains_safe_outer_and_never_marks_unknown_red():
     assert result['status'] == 'time_limit' and not result['certified']
     assert result['outer'] and 'rejected_points' not in result
     monitor = RunMonitor()
-    with threadpool_limits(limits=1), patch('main.RemainingRegionModel.solve', side_effect=TimeoutError):
+    with threadpool_limits(limits=1), patch('region.RemainingRegionModel.solve', side_effect=TimeoutError):
         result = build_sequential_region(FourBus(load_nodes=(1, 2)), budget=20000., monitor=monitor, seconds=30.)
     assert result['status'] == 'time_limit' and not result['certified']
     assert 'unknown_points' not in monitor.state and 'rejected_points' not in result
@@ -294,7 +300,7 @@ def test_midpoint_is_skipped_when_endpoints_are_certified_in_the_same_batch():
             return np.array([[0., 0.], [0., 10.], [0., 5.]])/region.bounds
         return stage_candidates(region, x)
 
-    with threadpool_limits(limits=1), patch('main.stage_candidates', side_effect=candidates):
+    with threadpool_limits(limits=1), patch('region.stage_candidates', side_effect=candidates):
         result = build_sequential_region(network, budget=20000., monitor=monitor, seconds=60.)
     checked = [monitor.frame(i)['sp_point'] for i, row in enumerate(monitor.history)
                if row['patch'].get('event') == 'point']
@@ -321,7 +327,7 @@ def test_convexity_is_used_only_within_one_scheme():
 
 def test_initial_sweep_ignores_ray_gain_threshold():
     monitor = RunMonitor()
-    with threadpool_limits(limits=1), patch('main.RemainingRegionModel.solve', side_effect=TimeoutError):
+    with threadpool_limits(limits=1), patch('region.RemainingRegionModel.solve', side_effect=TimeoutError):
         build_sequential_region(FourBus(load_nodes=(1, 2)), budget=20000., monitor=monitor,
                                 seconds=10., ray_threshold=1e6)
     sweeping, small_rays = False, 0

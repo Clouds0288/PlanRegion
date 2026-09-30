@@ -6,7 +6,7 @@ import numpy as np
 from threadpoolctl import threadpool_limits
 
 from Network.case33bw import Case33
-from experiments.fourbus_signed import PortPhysics
+from model import PortPhysics
 from model import MasterProblem
 
 
