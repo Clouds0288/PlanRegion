@@ -1,18 +1,17 @@
-"""默认二维 FourBus、线程设置及最精简的主入口。"""
+"""配置驱动的维数、线程设置及主入口。"""
 from unittest.mock import patch
 import unittest
 import numpy as np
 
 import main
 import model
-from model import DEFAULT_SOLVER_THREADS, GridPhysics, MasterProblem, SubProblem, RemainingRegionModel
-from vertify import ACPowerFlow
+from model import GridPhysics, MasterProblem, SubProblem, RemainingRegionModel
 
 
 class StartupTests(unittest.TestCase):
     def test_case33_entry_uses_two_loads_and_preserves_background(self):
         with patch('main.run') as run:
-            main.main('case33')
+            main.main('case33', dimension=2)
         network = run.call_args.args[0]
         self.assertIsInstance(network, main.Case33)
         self.assertEqual(network.load_nodes, (18, 25))
@@ -30,10 +29,10 @@ class StartupTests(unittest.TestCase):
             main.main('fourbus')
         network = run.call_args.args[0]
         self.assertIsInstance(network, main.FourBus)
-        self.assertEqual(network.load_nodes, (1, 2))
+        self.assertEqual(network.load_nodes, (1, 2, 3)[:main.DIMENSION])
         self.assertEqual(run.call_args.kwargs['budget'], 20000.)
         self.assertEqual(run.call_args.kwargs['threads'], main.SOLVER_THREADS)
-        self.assertEqual(main.CASE_TIME_LIMIT, 50.)
+        self.assertEqual(run.call_args.kwargs['time_limit'], main.CASE_TIME_LIMIT)
         self.assertEqual(network.fixed_p[2], 0.)
         self.assertEqual(network.fixed_q[2], 0.)
         self.assertTrue(network.required.all())

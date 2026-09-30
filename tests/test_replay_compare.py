@@ -9,7 +9,8 @@ def test_two_windows_seek_play_and_hold_shorter_recording(tmp_path):
         monitor, region, x = make_monitor(tmp_path/f'{index}.json.gz')
         for number in range(index+1):
             monitor.sp_start(x, [number+1., 2.], number+1)
-        monitor.stopped('time_limit')
+        monitor.finish(dict(status='time_limit', certified=False, coverage_bound=None,
+                            **region.finish(False)), region)
         assert monitor.state['coverage_complete'] is False
         assert monitor.state['result']['certified'] is False
         monitor.save()

@@ -192,10 +192,19 @@ def test_cut_lines_use_each_scheme_and_replay_never_leaks_future_cuts(tmp_path):
         window.close()
 
 
+def test_finish_requires_explicit_coverage_certificate():
+    monitor, region, _ = make_monitor()
+    before = len(monitor.history)
+    with pytest.raises(KeyError, match='certified'):
+        monitor.finish(dict(coverage_bound=0., **region.finish(True)), region)
+    assert len(monitor.history) == before
+    assert 'result' not in monitor.state
+
+
 def test_scan_updates_outside_timeline_and_final_comparison_survives_rewind(tmp_path):
     monitor, region, x = make_monitor(tmp_path/'monitor.json.gz')
     region.add_point(x, [[0., 0.], [.7, 0.], [0., .4]])
-    result = dict(coverage_bound=0., **region.finish(True))
+    result = dict(certified=True, coverage_bound=0., **region.finish(True))
     monitor.finish(result, region)
     total = len(monitor.history)
     window = NativeWindow(monitor)
@@ -302,5 +311,146 @@ def test_cut_excluding_the_whole_box_does_not_invent_a_boundary_line():
         ax = window.scheme_views['A'][1]
         assert any('本框全部排除' in text.get_text() for text in ax.texts)
         assert not any(line.get_gid() == 'cut-1-A' for line in ax.lines)
+    finally:
+        window.close()
+
+
+@pytest.mark.parametrize('dimension', [2, 3])
+def test_native_view_fits_current_domains_cuts_and_rays_when_global_box_is_loose(dimension):
+    from itertools import product
+    from copy import deepcopy
+    cube = np.array(list(product((0., 1.), repeat=dimension)))
+    positive = 10.+10.*cube
+    monitor = RunMonitor()
+    row = dict(x=[], choice={}, cost=0., sign=[1]*dimension,
+               inner=(10.+5.*cube).tolist(), outer=positive.tolist())
+    monitor._emit('initial_bounds', partition='+'*dimension,
+                  load_nodes=list(range(1, dimension+1)), bounds=[1e6]*dimension,
+                  axis_lower=[-1e6]*dimension, axis_bounds=[100.]*dimension,
+                  total_bound=dimension*1e6, global_outer=[(100.*cube).tolist(), (-1e6*cube).tolist()],
+                  schemes={'A': row}, cut_history={})
+    first = deepcopy(monitor.frame(0))
+    window = NativeWindow(monitor)
+    try:
+        window.root.withdraw()
+        window.seek(0)
+        axis = window.scheme_views['A'][1]
+        initial_limits = (-6., 106.)
+        np.testing.assert_allclose(axis.get_xlim(), initial_limits)
+        np.testing.assert_allclose(window.axes['A'].get_xlim(), initial_limits)
+        assert window.overview.get_xlim()[0] < -1e6
+        assert any(a.get_gid() == 'global-outer' for a in window.axes['A'].get_children())
+        assert any(a.get_gid() == 'overview-outer' for a in window.overview.get_children())
+        if dimension == 3:
+            window.axes['A'].view_init(31., 70.)
+            np.testing.assert_allclose(axis.get_zlim(), initial_limits)
+        smaller = positive.copy()
+        smaller[:, 0] = np.minimum(smaller[:, 0], 15.)
+        monitor._emit('cut', schemes={'A': {**row, 'outer': smaller.tolist()}},
+                      cut_history={'1': dict(cut=[15., -1.]+[0.]*(dimension-1),
+                                              scheme='A', sign=[1]*dimension)})
+        window.seek(1)
+        axis = window.scheme_views['A'][1]
+        np.testing.assert_allclose(axis.get_xlim(), initial_limits)
+        artists = axis.collections if dimension == 3 else axis.lines
+        assert any(item.get_gid() == 'cut-1-A' for item in artists)
+        monitor._emit('selection')
+        window.seek(2)
+        np.testing.assert_allclose(window.scheme_views['A'][1].get_xlim(), initial_limits)
+        monitor._emit('ray_end', phase='射线补点', active_scheme='A', stage=1, ray_fraction=.5,
+                      ray=dict(scheme='A', anchor=[10.]*dimension,
+                               target=[80.]*dimension, p=[45.]*dimension))
+        window.seek(3)
+        np.testing.assert_allclose(window.scheme_views['A'][1].get_xlim(), initial_limits)
+        assert {'ray-path', 'ray-anchor', 'ray-target', 'ray-point'} <= {
+            a.get_gid() for a in window.axes['A'].get_children()}
+        window.full_extent.set(True)
+        window.refresh_extent()
+        assert window.axes['A'].get_xlim()[0] < -1e6
+        assert not window.overview.get_visible()
+        # 展开全局只切换 A，小图仍保持分区的固定坐标。
+        np.testing.assert_allclose(window.scheme_views['A'][1].get_xlim(), initial_limits)
+        window.full_extent.set(False)
+        window.refresh_extent()
+        monitor._emit('initial_bounds', partition='-'*dimension, phase='初始化', active_scheme=None, ray=None,
+                      global_outer=[(100.*cube).tolist(), (-200.*cube).tolist()],
+                      schemes={'B': {**row, 'sign': [-1]*dimension,
+                                     'inner': (-10.*cube).tolist(), 'outer': (-200.*cube).tolist()}})
+        window.seek(4)
+        np.testing.assert_allclose(window.axes['A'].get_xlim(), [-212., 12.])
+        np.testing.assert_allclose(window.scheme_views['A'][1].get_xlim(), initial_limits)
+        window.seek(0)
+        np.testing.assert_allclose(window.axes['A'].get_xlim(), initial_limits)
+        assert window.overview.get_xlim()[0] < -1e6
+        if dimension == 3:
+            assert window.axes['A'].elev == 31. and window.axes['A'].azim == 70.
+        assert monitor.frame(0) == first
+        for canvas in window.canvases.values():
+            canvas.draw()
+    finally:
+        window.close()
+
+
+def test_global_rejections_candidates_and_ray_process_are_distinct_and_rewindable():
+    monitor, region, x = make_monitor()
+    monitor._emit('residual_end', phase='线性外域候选',
+                  global_point=dict(scheme='A', p=[80., 60.]))
+    candidate_index = len(monitor.history)-1
+    monitor.sp_start(x, [80., 60.], 1)
+    monitor.sp_end(dict(eta=.2, feasible=False))
+    rejected_index = len(monitor.history)-1
+    monitor._emit('certification_end', phase='全网架认证', query_point=[60., 70.],
+                  rejected_points=[dict(p=[20., 80.])], unknown_points=[[90., 10.]])
+    proof_index = len(monitor.history)-1
+    monitor._emit('ray_start', phase='首轮射线认证', active_scheme='A', stage=1,
+                  ray=dict(scheme='A', anchor=[10., 10.], target=[80., 60.], p=None))
+    ray_index = len(monitor.history)-1
+    window = NativeWindow(monitor)
+    try:
+        window.root.withdraw()
+        window.seek(rejected_index)
+        ax = window.axes['A']
+        assert 'candidate-rejected' in {a.get_gid() for a in ax.collections}
+        assert 'global-rejected' not in {a.get_gid() for a in ax.collections}
+        limits = ax.get_xlim(), ax.get_ylim()
+        window.seek(proof_index)
+        assert {'global-rejected', 'candidate-rejected', 'unknown-points', 'query-point'} <= {
+            a.get_gid() for a in ax.collections}
+        labels = {text.get_text() for text in ax.get_legend().get_texts()}
+        assert {'全网架不可行', '全局候选：该网架不可行'} <= labels
+        window.seek(ray_index)
+        for panel in (ax, window.scheme_views['A'][1]):
+            assert {'ray-path', 'ray-anchor', 'ray-target'} <= {a.get_gid() for a in panel.get_children()}
+            assert 'ray-point' not in {a.get_gid() for a in panel.get_children()}
+        np.testing.assert_allclose((ax.get_xlim(), ax.get_ylim()), limits)
+        window.seek(candidate_index)
+        assert not window.failed_candidates
+        assert 'candidate-rejected' not in {a.get_gid() for a in ax.collections}
+        assert 'global-rejected' not in {a.get_gid() for a in ax.collections}
+        assert 'ray-path' not in {a.get_gid() for a in ax.lines}
+        assert 'global_point' in {a.get_gid() for a in ax.collections}
+        window.canvases['A'].draw()
+    finally:
+        window.close()
+
+
+def test_validation_view_includes_feasible_cell_edges_outside_computed_region():
+    monitor, region, _ = make_monitor()
+    result = dict(certified=False, coverage_bound=1., **region.finish(False))
+    monitor.finish(result, region)
+    # 计算域在 [0, 100]，参考扫描在其左侧还有一格可行域。
+    states = -np.ones((20, 20), dtype=int)
+    states[4, 5] = 1
+    monitor.validation(dict(axis_lower=[-100., -100.], bounds=[100., 100.], states=states), result)
+    window = NativeWindow(monitor)
+    try:
+        window.root.withdraw()
+        window.seek(0)
+        ax = window.axes['C']
+        assert -71. < ax.get_xlim()[0] < -60.
+        assert -61. < ax.get_ylim()[0] < -50.
+        assert ax.get_xlim()[1] > 100.
+        assert ax.get_ylim()[1] > 100.
+        window.canvases['C'].draw()
     finally:
         window.close()

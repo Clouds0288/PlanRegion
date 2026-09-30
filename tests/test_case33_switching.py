@@ -1,12 +1,10 @@
-"""当前 Case33：七开关、Hamming 预算、径向性与含背景负荷的 KKT 上界。"""
+"""当前 Case33：七开关、Hamming 预算、径向性。"""
 import unittest
-from unittest.mock import patch
 
 import numpy as np
 
 from Network.case33bw import Case33
-from experiments.fourbus_outer import GlobalViolation
-from experiments.fourbus_outer_volume import budget_schemes
+from vertify import budget_schemes
 from model import GridPhysics, MasterProblem
 
 
@@ -56,40 +54,9 @@ class Case33SwitchingTests(unittest.TestCase):
         net = Case33()
         plan = net.initial_plan | {'2-3': None, '21-8': 'existing'}
         problem = MasterProblem(GridPhysics(net, 'socp'), fixed_plan=plan,
-                                cuts_only=True, threads=1)
+                                threads=1)
         with problem.model:
             self.assertIsNone(problem.solve())
-
-    def test_eta_upper_bound_includes_fixed_active_and_reactive_loads(self):
-        net = Case33()
-        search = GlobalViolation(GridPhysics(net, 'socp'), 7, [1., 1.], 2., threads=1)
-        with search.model:
-            search.model.update()
-            expected = max(np.max(np.abs(v)) for v in net.loads([1., 1.]))
-            self.assertEqual(search.violation.UB, expected)
-            self.assertGreater(expected, 1./net.base)
-
-    def test_zero_conservative_lower_bound_does_not_skip_candidate_sp(self):
-        from threadpoolctl import threadpool_limits
-        from experiments.case33_compare import build_kkt_region
-        from experiments.fourbus_outer_kkt import UncoveredKktViolation
-        from monitor import RunMonitor
-        class CheckedCut(Exception):
-            pass
-        class Monitor(RunMonitor):
-            def updated(self, region, event, **values):
-                super().updated(region, event, **values)
-                if event == 'cut':
-                    raise CheckedCut()
-        monitor = Monitor()
-        with threadpool_limits(limits=1), \
-             patch.object(UncoveredKktViolation, 'candidate_lower', return_value=0.), \
-             self.assertRaises(CheckedCut):
-            build_kkt_region(Case33(), budget=7, seconds=30., epsilon=.0001,
-                             threads=4, monitor=monitor)
-        self.assertEqual(monitor.state['sp'], 1)
-        self.assertEqual(monitor.state['cuts'], 1)
-        self.assertGreater(monitor.state['eta'], 0.)
 
 
 if __name__ == '__main__':

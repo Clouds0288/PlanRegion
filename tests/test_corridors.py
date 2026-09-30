@@ -102,7 +102,7 @@ def test_optional_nodes_follow_selected_paths(method):
     with pytest.raises(ValueError, match='required'):
         net.tree(net.encode_plan(missing))
     problem = MasterProblem(GridPhysics(net, method), fixed_plan=missing,
-                            power=np.zeros(2), cuts_only=True, threads=1)
+                            power=np.zeros(2), threads=1)
     with problem.model:
         assert problem.solve() is None
 

@@ -1,17 +1,26 @@
-"""独立 AC 潮流、建设方案认证与网格校核；求解失败直接报错。"""
-from time import perf_counter
-from pathlib import Path
+"""独立 AC 校核：全部合法拓扑、固定格架缓存、增量补扫与结果对比。"""
+import argparse
+from contextlib import contextmanager, nullcontext
+from concurrent.futures import ProcessPoolExecutor, as_completed
+from copy import deepcopy
+from dataclasses import asdict
 from functools import partial
-from concurrent.futures import ProcessPoolExecutor
-from contextlib import nullcontext
+from itertools import product
+import hashlib
+import json
+import os
+from pathlib import Path
+import shutil
+from time import perf_counter
+from uuid import uuid4
 
 import gurobipy as gp
 from gurobipy import GRB
 import numpy as np
 from threadpoolctl import threadpool_limits
 
-from model import DEFAULT_SOLVER_THREADS, GridPhysics, MasterProblem, PortPhysics, LOAD_PF, PV_PF, PV_Q_SIGN
-from Network.four_bus_five_corridor import FourBus
+from model import DEFAULT_SOLVER_THREADS, GridPhysics, MasterProblem, PortPhysics
+from model import PLANNING_TOL, LOAD_PF, PV_PF, PV_Q_SIGN
 
 AC_TOL = 1e-9
 FIXED_POINT_TOL = 1e-12
@@ -56,9 +65,11 @@ class ACPowerFlow:
     def violation(self, P, Q, v):
         c = self.network
         ps, qs = P[:, c.roots].sum(axis=1), Q[:, c.roots].sum(axis=1)
+        u = np.column_stack((v, np.ones(len(v))))[:, c.parent]
         # 所有项目均写为“违反量”：≤0 才满足全部限值，未启用上界产生 -inf。
         return np.maximum.reduce([
             np.max(c.vmin-v, axis=1), np.max(v-c.vmax, axis=1),
+            np.max((P*P+Q*Q)/u-c.ell_limit, axis=1),
             np.max(P-c.capacity, axis=1), ps-c.source_pmax, qs-c.source_qmax,
             np.hypot(ps, qs)-c.source_smax])
 
@@ -77,6 +88,7 @@ class ACPowerFlow:
             # ell 从零单调递增：功率是下界、电压是上界；仅这些越限能提前拒绝。
             ps, qs = P[:, c.roots].sum(axis=1), Q[:, c.roots].sum(axis=1)
             bad = (np.any(v < c.vmin-AC_TOL, axis=1)
+                   | np.any(ell[active] > c.ell_limit+AC_TOL, axis=1)
                    | np.any(P > c.capacity+AC_TOL, axis=1)
                    | (ps > c.source_pmax+AC_TOL) | (qs > c.source_qmax+AC_TOL)
                    | (np.hypot(ps, qs) > c.source_smax+AC_TOL) | np.any(u <= 0, axis=1))
@@ -104,7 +116,7 @@ class ACPowerFlow:
         Q = m.addVars(c.n, lb=0, ub=min(c.source_qmax, c.source_smax))
         v = m.addVars(c.n, lb=c.vmin.tolist(), ub=c.vmax.tolist())
         bound = min(c.source_smax**2, c.source_pmax**2+c.source_qmax**2)/c.vmin.min()
-        ell = m.addVars(c.n, lb=0, ub=bound)
+        ell = m.addVars(c.n, lb=0, ub=np.minimum(bound, c.ell_limit).tolist())
         bp, bq = [], []
         for i in range(c.n):
             up = 1. if c.parent[i] < 0 else v[int(c.parent[i])]
@@ -141,6 +153,7 @@ class ACPowerFlow:
         current = np.array([ell[i].X for i in ell])
         P, Q, v, u = self.state(power, current)
         if (np.max(np.abs(P*P+Q*Q-u*current)) > GLOBAL_AC_TOL
+                or np.max(current-self.network.ell_limit) > GLOBAL_AC_TOL
                 or self.violation(P, Q, v).max() > GLOBAL_AC_TOL):
             raise RuntimeError(f'Global AC certificate exceeds {GLOBAL_AC_TOL:g}: p={list(power)}')
         return 1
@@ -149,209 +162,577 @@ class ACPowerFlow:
         if self.model is not None:
             self.model[0].dispose()
 
-def ac_planning_query(equations, power, *, threads=DEFAULT_SOLVER_THREADS):
-    """SOCP 搜索建设方案；完整 AC 等式负责认证。"""
-    problem = MasterProblem(equations, power=power, threads=threads)
-    bound = -np.inf
-    with problem.model:
-        while True:
-            answer = problem.solve()
-            if answer is None:
-                return None
-            answer.pop('state')  # SOCP 状态不能作为独立 AC 证书返回。
-            bound = max(bound, answer['bound'])
-            answer['bound'] = bound
-            oracle = ACPowerFlow(equations.network.tree(answer['x']), threads=threads)
-            status = int(oracle.classify(power)[0])
-            if status == 1:
-                answer.update(feasible=True, status='optimal' if answer['objective']-bound <= 1e-7 else 'feasible')
-                return answer
-            problem.exclude(answer['x'])
 
-
-def classify_orthant(states, index, status):
-    """调用者须验证非负负荷、正阻抗和 vmax≥根电压；不跨方案构造凸包。"""
-    if status == 1:
-        states[tuple(slice(0,int(i)+1) for i in index)] = 1
-    elif status == -1:
-        states[tuple(slice(int(i),None) for i in index)] = -1
-
-
-def split_grid_box(lower, upper):
-    axis = int(np.argmax(upper-lower))
-    middle = (lower[axis]+upper[axis])//2
-    left, right = upper.copy(), lower.copy()
-    left[axis], right[axis] = middle, middle+1
-    return ((lower,left),(right,upper))
-
-
-def validate_ac_region(network, budgets, divisions, bounds, *, threads=DEFAULT_SOLVER_THREADS):
-    """连续构域完成后的独立 AC 网格校核；网格不参与规划域构造。"""
-    assert (np.all(network.r > 0.) and np.all(network.reactance >= 0.)
-            and np.all(network.original_p >= 0.) and np.all(network.original_q >= 0.)
-            and np.all(network.q_ratio >= 0.) and np.all(network.vmax >= 1.))
-    bounds, budgets = np.asarray(bounds), np.asarray(budgets)
-    states = np.zeros((len(budgets),)+(divisions,)*3, dtype=np.int8)
-    equations = GridPhysics(network, 'socp')
-    visited = set()
-    pending = [(j, np.zeros(3, dtype=int), np.full(3, divisions-1, dtype=int))
-               for j in reversed(range(len(budgets)))]
-    while pending:
-        j, lower, upper = pending.pop()
-        block = (j,)+tuple(slice(int(a), int(b)+1) for a, b in zip(lower, upper))
-        if np.all(states[block] != 0):
+def budget_schemes(equations, budget, threads=4):
+    """只检查建设预算、锁定线路、道路与根向树；不以零负荷筛除合法拓扑。"""
+    net = equations.network
+    options = []
+    for corridor, allowed in zip(net.corridors, net.road_allowed):
+        if not corridor.switchable:
+            selected = net.initial_plan[corridor.id]
+            if not allowed and selected is not None:
+                return np.empty((0, net.n_types), dtype=int)
+            options.append((selected,))
+        else:
+            options.append((None, *(kind.id for kind in corridor.types)) if allowed else (None,))
+    schemes = []
+    for selected in product(*options):
+        x = net.encode_plan(dict(zip((c.id for c in net.corridors), selected)))
+        if net.cost_offset+net.cost@x > budget:
             continue
-        for index in (upper, lower):
-            key = tuple(map(int, index))
-            if states[(j,)+key] != 0 or key in visited:
-                continue
-            power = (index+.5)*bounds/divisions
-            answer = ac_planning_query(equations, power, threads=threads)
-            visited.add(key)
-            labels = np.zeros(len(budgets), dtype=np.int8)
-            if answer is None:
-                labels[:] = -1
+        try:
+            net.tree(x)
+        except ValueError:
+            continue  # 该组合不是覆盖必接节点的根向树。
+        schemes.append(x)
+    return np.asarray(schemes, dtype=int).reshape(-1, net.n_types)
+
+
+def signed_ac_witness(network, x, power, *, mode=1):
+    """独立树递推只提供可行证书；不使用正负荷单调性拒绝反送功率点。"""
+    tree = network.tree(x)
+    oracle = ACPowerFlow(tree, threads=1)
+    power = np.asarray(power, dtype=float).reshape(-1, len(network.load_nodes))
+    ratio = np.where(power >= 0., np.tan(np.arccos(LOAD_PF)),
+                     PV_Q_SIGN*np.tan(np.arccos(PV_PF))) if mode else network.q_ratio
+    p = (tree.fixed_p+power@tree.E.T)/tree.base
+    q = (tree.fixed_q+(power*ratio)@tree.E.T)/tree.base
+    ell = np.zeros((len(power), tree.n))
+    feasible = np.zeros(len(power), dtype=bool)
+    residual = np.full(len(power), np.inf)
+    active = np.arange(len(power))
+    for _ in range(AC_ITERATIONS):
+        if not len(active):
+            break
+        P, Q, v, u = oracle._state(p[active], q[active], ell[active])
+        residual[active] = np.max(np.abs(P*P+Q*Q-u*ell[active]), axis=1)
+        converged = residual[active] <= FIXED_POINT_TOL
+        ps, qs = P[:, tree.roots].sum(axis=1), Q[:, tree.roots].sum(axis=1)
+        valid = (np.all(v >= tree.vmin-AC_TOL, axis=1)
+                 & np.all(v <= tree.vmax+AC_TOL, axis=1)
+                 & np.all(ell[active] <= tree.ell_limit+AC_TOL, axis=1)
+                 & np.all(P <= tree.capacity+AC_TOL, axis=1)
+                 & np.all(-P+tree.r*ell[active] <= tree.capacity+AC_TOL, axis=1)
+                 & (ps <= tree.source_pmax+AC_TOL) & (qs <= tree.source_qmax+AC_TOL)
+                 & (np.hypot(ps, qs) <= tree.source_smax+AC_TOL))
+        feasible[active[converged & valid]] = True
+        # 无正电压或迭代越界仅放弃该见证；后续完整等式模型负责未决点。
+        keep = ~converged & np.all(u > 0., axis=1) & np.all(v > 0., axis=1)
+        ell[active[keep]] = (P[keep]**2+Q[keep]**2)/u[keep]
+        active = active[keep]
+    return dict(feasible=feasible, ell=ell, residual=residual)
+
+
+def ac_interval_possible(network, x, power, *, mode=1):
+    """外扩的 AC 必要区间；False 为本树不可行，True 不构成可行证书。"""
+    tree = network.tree(x)
+    oracle = ACPowerFlow(tree, threads=1)
+    power = np.asarray(power, dtype=float).reshape(-1, len(network.load_nodes))
+    ratio = np.where(power >= 0., np.tan(np.arccos(LOAD_PF)),
+                     PV_Q_SIGN*np.tan(np.arccos(PV_PF))) if mode else network.q_ratio
+    p = (tree.fixed_p+power@tree.E.T)/tree.base
+    q = (tree.fixed_q+(power*ratio)@tree.E.T)/tree.base
+    lower = np.zeros((len(power), tree.n))
+    # Kirchhoff 电流定律和三角不等式，使用实际节点电压下限。
+    upper = (np.hypot(p, q)/np.sqrt(tree.vmin-AC_TOL)@tree.D.T)**2+AC_TOL
+    upper = np.minimum(upper, tree.ell_limit+AC_TOL)
+    possible = np.ones(len(power), dtype=bool)
+    active = np.arange(len(power))
+    for _ in range(32):
+        if not len(active):
+            break
+        Plo, Qlo, vhi, uhi = oracle._state(p[active], q[active], lower[active])
+        Phi, Qhi, vlo, ulo = oracle._state(p[active], q[active], upper[active])
+        keep = (np.all(vhi >= tree.vmin-AC_TOL, axis=1)
+                & np.all(vlo <= tree.vmax+AC_TOL, axis=1)
+                & np.all(lower[active] <= upper[active]+AC_TOL, axis=1)
+                & (Plo[:, tree.roots].sum(axis=1) <= tree.source_pmax+AC_TOL)
+                & (Qlo[:, tree.roots].sum(axis=1) <= tree.source_qmax+AC_TOL))
+        possible[active[~keep]] = False
+        active = active[keep]
+        if not len(active):
+            break
+        Plo, Qlo, Phi, Qhi = (a[keep] for a in (Plo, Qlo, Phi, Qhi))
+        ulo = np.maximum(ulo[keep], np.r_[tree.vmin, 1.][tree.parent]-AC_TOL)
+        uhi = np.minimum(uhi[keep], np.r_[tree.vmax, 1.][tree.parent]+AC_TOL)
+        pmin = np.where((Plo <= 0.) & (Phi >= 0.), 0., np.minimum(Plo**2, Phi**2))
+        qmin = np.where((Qlo <= 0.) & (Qhi >= 0.), 0., np.minimum(Qlo**2, Qhi**2))
+        lower[active] = np.maximum(lower[active], (pmin+qmin)/uhi-AC_TOL)
+        upper[active] = np.minimum(upper[active],
+            (np.maximum(Plo**2, Phi**2)+np.maximum(Qlo**2, Qhi**2))/ulo+AC_TOL)
+    return possible
+
+
+AC_CACHE_METHOD = 'ac_socp_grid_v4'
+SCAN_OUTPUT = Path(__file__).resolve().parent/'results'/'scan'
+SCAN_FIELDS = ('states', 'witness_x', 'residual', 'socp_states', 'socp_witness_x', 'socp_residual')
+
+
+def ac_network(network):
+    """冻结构域前的网络数据，AC 与 SOCP 保留相同逐线路限额。"""
+    return deepcopy(network)
+
+
+def reference_box(network, budget=None, *, mode=1, output=SCAN_OUTPUT):
+    """同限流 SOCP 的坐标全局上界包含 AC 域，供两套扫描共用。"""
+    network = ac_network(network)
+    budget = network.budgets[0] if budget is None else budget
+    path = scan_path(network, budget, output, mode)/'bounds.npz'
+    identity = ac_identity(network, budget, mode)
+    with _scan_lock(path):
+        if path.exists():
+            with np.load(path) as saved:
+                if (str(saved['identity']) == identity and str(saved['method']) == 'socp_global_bound_v1'
+                        and str(saved.get('power_unit', '')) == 'kW'):
+                    return saved['axis_lower'], saved['bounds']
+            raise ValueError(f'AC bound identity differs: {path}')
+        d = len(network.load_nodes)
+        lower, upper, supports = np.zeros(d), np.zeros(d), []
+        with threadpool_limits(limits=1):
+            for sign in product((-1, 1), repeat=d) if mode else [(1,)*d]:
+                for axis in range(d):
+                    problem = scan_problem(network, budget, sign, mode=mode, direction=np.eye(d)[axis])
+                    with problem.model as model:
+                        model.Params.TimeLimit = 60.
+                        model.Params.Presolve = 2
+                        model.optimize()
+                        if model.Status == GRB.INFEASIBLE:
+                            continue
+                        if model.Status not in (GRB.OPTIMAL, GRB.NODE_LIMIT, GRB.TIME_LIMIT) or not np.isfinite(model.ObjBound):
+                            raise RuntimeError(f'No finite SOCP coordinate bound: sign={sign}, axis={axis}, status={model.Status}')
+                        bound = float(model.ObjBound)*problem.objective_scale
+                        supports.append(dict(sign=sign, axis=axis, bound_kw=bound, status=int(model.Status)))
+                        if sign[axis] > 0:
+                            upper[axis] = max(upper[axis], bound)
+                        else:
+                            lower[axis] = min(lower[axis], -bound)
+        lower, upper = np.floor(lower-1e-4) if mode else lower, np.ceil(upper+1e-4)
+        if np.any(upper <= lower):
+            raise ValueError('Empty AC reference bounds')
+        temporary = path.with_suffix('.tmp')
+        with temporary.open('wb') as stream:
+            np.savez_compressed(stream, method='socp_global_bound_v1', identity=identity, power_unit='kW',
+                axis_lower=lower, bounds=upper, supports=json.dumps(supports))
+        temporary.replace(path)
+        return lower, upper
+
+
+def ac_identity(network, budget, mode=1):
+    network = ac_network(network)
+    payload = asdict(network)
+    # 正负模式逐点重建功率因数，构域过程中临时写入的这两个值不是 AC 条件。
+    if mode:
+        payload.pop('q_ratio')
+        payload.pop('power_limit')
+    payload.update(method=AC_CACHE_METHOD, budget=float(budget), mode=int(mode),
+                   power_factors=[LOAD_PF, PV_PF, PV_Q_SIGN],
+                   tolerances=[AC_TOL, FIXED_POINT_TOL, PLANNING_TOL],
+                   operating_arrays={key: getattr(network, key) for key in
+                                     ('r', 'reactance', 'capacity', 'ell_limit', 'cost')})
+    encoded = json.dumps(payload, sort_keys=True, default=lambda a: a.tolist(), separators=(',', ':'))
+    return hashlib.sha256(encoded.encode()).hexdigest()
+
+
+def scan_path(network, budget, output=SCAN_OUTPUT, mode=1):
+    return Path(output)/network.name/'_'.join(map(str, network.load_nodes))/ac_identity(network, budget, mode)
+
+
+def region_path(path, reference):
+    grid = np.concatenate([np.asarray(reference[key], float) for key in ('origin', 'step', 'start')]
+                          + [np.array(reference['states'].shape, float)])
+    return Path(path)/('region_'+hashlib.sha256(grid.tobytes()).hexdigest()[:16]+'.npz')
+
+
+@contextmanager
+def _scan_lock(path):
+    """OS 文件锁随进程退出释放，禁止两个扫描覆盖同一份缓存。"""
+    path.parent.mkdir(parents=True, exist_ok=True)
+    with path.with_suffix('.lock').open('a+b') as stream:
+        stream.seek(0)
+        if not stream.read(1):
+            stream.write(b'0')
+            stream.flush()
+        stream.seek(0)
+        try:
+            if os.name == 'nt':
+                import msvcrt
+                msvcrt.locking(stream.fileno(), msvcrt.LK_NBLCK, 1)
             else:
-                labels[budgets < answer['bound']-1e-7] = -1
-                labels[budgets >= answer['objective']] = 1
-            for k, status in enumerate(labels):
-                classify_orthant(states[k], index, status)
-            if np.all(states[block] != 0):
-                break
-        if np.any(states[block] == 0) and np.any(upper > lower):
-            pending.extend((j, a, b) for a, b in split_grid_box(lower, upper))
-    if np.any(states == 0):
-        raise RuntimeError(f'AC grid has {np.count_nonzero(states == 0)} unclassified cells')
-    return states
-
-
-def _scan_line(args):
-    """一个扫描行复用完整模型；只改变固定负荷等式的右端。"""
-    network, budget, divisions, bounds, index, threads = args
-    d = len(network.load_nodes)
-    with threadpool_limits(limits=1):
-        problem = MasterProblem(GridPhysics(network, 'socp'), power=np.zeros(d), budget=budget, threads=threads)
-        states = np.empty(divisions, dtype=np.int8)
-        with problem.model as model:
-            model.Params.NumericFocus = 3
-            model.Params.Presolve = 0 if network.name == 'four_bus_five_corridor' else -1
-            model.Params.BarHomogeneous = 1
-            model.Params.Aggregate = 0
-            model.Params.ScaleFlag = 0
-            model.update()
-            fixed = [row for row in model.getConstrs() if row.ConstrName.startswith('fixed_power[')]
-            for j in range(divisions):
-                power = (np.asarray((*index, j))+.5)*bounds/divisions
-                model.setAttr('RHS', fixed, power)
-                states[j] = 1 if problem.solve() is not None else -1
-    return index, states
-
-
-def validate_socp_region(network, budget, divisions, bounds, *, threads=DEFAULT_SOLVER_THREADS,
-                         workers=1, progress=lambda completed, total: None):
-    """独立 d 维扫描：逐点固定 p，完整 SOCP 的全部 x、y 自由。"""
-    started = perf_counter()
-    bounds = np.asarray(bounds, dtype=float)
-    d = len(network.load_nodes)
-    states = np.empty((divisions,)*d, dtype=np.int8)
-    total = divisions**d
-    progress(0, total)
-    jobs = ((network, budget, divisions, bounds, index, 1 if workers > 1 else threads)
-            for index in np.ndindex((divisions,)*(d-1)))
-    with ProcessPoolExecutor(max_workers=workers) if workers > 1 else nullcontext() as pool:
-        lines = pool.map(_scan_line, jobs) if workers > 1 else map(_scan_line, jobs)
-        for completed, (index, line) in enumerate(lines, 1):
-            states[index] = line
-            progress(completed*divisions, total)
-    return dict(bounds=bounds, states=states, scan_seconds=perf_counter()-started)
-
-
-def scan_line(args, *, network_type=FourBus, budget=20000.):
-    """4. 独立扫描；同符号、同网架的两个可行端点认证中间格点。"""
-    nodes, mode, lower, upper, divisions, index = args
-    d = len(nodes)
-    states = np.empty(divisions, dtype=np.int8)
-    coordinates = lower+(np.arange(divisions)[:, None]*np.eye(d)[-1]
-                         +np.r_[index, 0.]+.5)*(upper-lower)/divisions
-    with threadpool_limits(limits=1):
-        for last_sign in ((1, -1) if mode else (1,)):
-            selection = (coordinates[:, -1] >= 0) if last_sign == 1 else (coordinates[:, -1] < 0)
-            indices = np.flatnonzero(selection)
-            if not len(indices):
-                continue
-            sign = np.where(coordinates[indices[0]] >= 0., 1, -1)
-            network = network_type(load_nodes=nodes)
-            equations = PortPhysics(network, sign) if mode else GridPhysics(network, 'socp')
-            problem = MasterProblem(equations, power=np.zeros(d), budget=budget, threads=1)
-            problem.model.setObjective(0.)  # 参考扫描只判断存在可行网架，不求最小投资。
-            with problem.model as model:
-                model.ModelName = f'scan_{index}_{last_sign}'
-                model.Params.BarQCPConvTol = 1e-10 if network_type.__name__ == 'Case33' else 1e-8
-                model.Params.NumericFocus = 0
-                model.Params.BarHomogeneous = 1
-                model.Params.Aggregate = 1 if network_type.__name__ == 'Case33' else 0
-                model.Params.ScaleFlag = 1 if network_type.__name__ == 'Case33' else 0
-                model.update()
-                fixed = [c for c in model.getConstrs() if c.ConstrName.startswith('fixed_power[')]
-                checked, intervals = {}, [(0, len(indices)-1)]
-                while intervals:
-                    first, last = intervals.pop()
-                    for k in (first, last):
-                        j = indices[k]
-                        if j not in checked:
-                            model.ModelName = f'scan_{index}_{j}'
-                            model.setAttr('RHS', fixed, coordinates[j]*sign)
-                            if network_type is FourBus:
-                                model.reset()
-                            answer = problem.solve()
-                            checked[j] = None if answer is None else answer['x']
-                            states[j] = -1 if answer is None else 1
-                    a, b = checked[indices[first]], checked[indices[last]]
-                    if a is not None and b is not None and np.array_equal(a, b):
-                        states[indices[first:last+1]] = 1
-                    elif last-first > 1:
-                        middle = (first+last)//2
-                        intervals.extend(((first, middle), (middle, last)))
-    return index, states
-
-
-def scan_path(network, budget, output=Path(__file__).resolve().parent/'results'/'scans', mode=1):
-    """按算例、模式、节点、功率因数和预算隔离扫描。"""
-    case = type(network).__name__.lower()
-    return Path(output)/f'{case}_signed'/f'mode_{mode}'/'_'.join(map(str, network.load_nodes))/(
-        f'pf_{LOAD_PF:g}_{PV_PF:g}_{PV_Q_SIGN:+g}_budget_{budget:g}.npz')
+                import fcntl
+                fcntl.flock(stream.fileno(), fcntl.LOCK_EX | fcntl.LOCK_NB)
+        except OSError as exc:
+            raise RuntimeError(f'AC cache is in use: {path}') from exc
+        try:
+            yield
+        finally:
+            stream.seek(0)
+            if os.name == 'nt':
+                msvcrt.locking(stream.fileno(), msvcrt.LK_UNLCK, 1)
+            else:
+                fcntl.flock(stream.fileno(), fcntl.LOCK_UN)
 
 
 def save_scan(path, reference):
+    """一个功率区域同时保存 AC、SOCP 标签与证书。"""
+    if reference.get('method') != AC_CACHE_METHOD:
+        raise ValueError('Only identified AC references can enter the AC cache')
+    path = Path(path)
     path.parent.mkdir(parents=True, exist_ok=True)
-    np.savez_compressed(path, axis_lower=reference['axis_lower'], bounds=reference['bounds'],
-                        states=np.asarray(reference['states'], dtype=np.int8))
+    temporary = path.with_name(path.name+'.'+uuid4().hex+'.tmp')
+    fields = ('axis_lower', 'bounds', 'origin', 'step', 'start')+SCAN_FIELDS
+    try:
+        with temporary.open('wb') as stream:
+            np.savez_compressed(stream, **{key: reference[key] for key in fields},
+                method=AC_CACHE_METHOD, metadata=json.dumps(reference['metadata'], ensure_ascii=False))
+            stream.flush()
+            os.fsync(stream.fileno())
+        temporary.replace(path)
+    finally:
+        temporary.unlink(missing_ok=True)
 
 
-def scan_reference(network, budget, divisions, bounds, path, *, axis_lower, mode,
-                   threads, workers, progress, force_rescan=False):
-    """复用包含请求范围的原网格；扩界或强制要求时独立重扫。"""
-    lower, upper = np.floor(axis_lower), np.ceil(bounds)
-    if path.exists():
-        with np.load(path) as saved:
-            reference = dict(axis_lower=saved['axis_lower'], bounds=saved['bounds'], states=saved['states'])
-        if not force_rescan and np.all(lower >= reference['axis_lower']) and np.all(upper <= reference['bounds']):
-            print(f'Reuse scan: {path}', flush=True)
-            return reference
-        lower, upper = np.minimum(lower, reference['axis_lower']), np.maximum(upper, reference['bounds'])
+class ACReferenceMismatch(ValueError):
+    """参考来源或物理配置不同；区别于同一配置的数据损坏或证书冲突。"""
+
+
+def load_scan(path, identity=None):
+    with np.load(path, allow_pickle=False) as saved:
+        if str(saved.get('method', '')) != AC_CACHE_METHOD or 'metadata' not in saved:
+            raise ACReferenceMismatch(f'Not an identified AC cache: {path}')
+        answer = {key: saved[key].copy() for key in
+                  ('axis_lower', 'bounds', 'origin', 'step', 'start')+SCAN_FIELDS}
+        answer.update(method=AC_CACHE_METHOD, metadata=json.loads(str(saved['metadata'])))
+    if identity is not None and answer['metadata']['identity'] != identity:
+        raise ACReferenceMismatch(f'AC cache physical identity differs: {path}')
+    shape = np.array(answer['states'].shape)
+    d = len(shape)
+    if (d not in (2, 3) or np.any(shape <= 0) or not np.isin(answer['states'], [-1, 0, 1]).all()
+            or any(answer[key].shape != (d,) for key in ('axis_lower', 'bounds', 'origin', 'step', 'start'))
+            or not np.isfinite(answer['step']).all() or np.any(answer['step'] <= 0)
+            or not np.array_equal(answer['start'], np.rint(answer['start']))
+            or answer['residual'].shape != tuple(shape)
+            or answer['witness_x'].shape != (*shape, answer['metadata']['n_types'])):
+        raise ValueError(f'Malformed AC grid: {path}')
+    if (not np.allclose(answer['axis_lower'], answer['origin']+answer['start']*answer['step'], atol=1e-8, rtol=0)
+            or not np.allclose(answer['bounds'], answer['axis_lower']+shape*answer['step'], atol=1e-8, rtol=0)):
+        raise ValueError(f'AC grid coordinates disagree: {path}')
+    return answer
+
+
+def _empty_ac_grid(network, budget, mode, origin, step, start, shape):
+    lower = origin+start*step
+    return dict(method=AC_CACHE_METHOD, axis_lower=lower, bounds=lower+np.array(shape)*step,
+        origin=origin, step=step, start=start, states=np.zeros(shape, dtype=np.int8),
+        witness_x=np.zeros((*shape, network.n_types), dtype=np.int8), residual=np.full(shape, np.nan),
+        socp_states=np.zeros(shape, dtype=np.int8),
+        socp_witness_x=np.zeros((*shape, network.n_types), dtype=np.int8), socp_residual=np.full(shape, np.nan),
+        metadata=dict(identity=ac_identity(network, budget, mode), network=network.name,
+            network_fingerprint=network.fingerprint, load_nodes=list(network.load_nodes),
+            budget=float(budget), mode=int(mode), n_types=network.n_types,
+            power_factors=[LOAD_PF, PV_PF, PV_Q_SIGN],
+            current_limit_a=(np.sqrt(network.ell_limit)*network.base/(np.sqrt(3)*network.voltage_kv)).tolist(),
+            imported_sources=[], errors=[]))
+
+
+def _reuse_ac_points(source, target):
+    """复制同配置、同坐标的两套标签；两种扫描分别复用已完成点。"""
+    if source['metadata']['identity'] != target['metadata']['identity']:
+        return 0
+    indices = np.argwhere((source['states'] != 0) | (source['socp_states'] != 0))
+    power = source['axis_lower']+(indices+.5)*source['step']
+    mapped = (power-target['axis_lower'])/target['step']-.5
+    rounded = np.rint(mapped)
+    good = (np.all(np.abs(mapped-rounded) <= 1e-8, axis=1)
+            & np.all(rounded >= 0, axis=1) & np.all(rounded < target['states'].shape, axis=1))
+    old, new = tuple(indices[good].T), tuple(rounded[good].astype(int).T)
+    count = 0
+    for prefix in ('', 'socp_'):
+        values, previous = source[prefix+'states'][old], target[prefix+'states'][new]
+        if np.any((values != 0) & (previous != 0) & (previous != values)):
+            raise ValueError('Conflicting scan certificates at identical power coordinates')
+        transfer = (values != 0) & ((previous == 0)
+            | (~np.isfinite(target[prefix+'residual'][new]) & np.isfinite(source[prefix+'residual'][old])))
+        count += int(np.count_nonzero((values != 0) & (previous == 0)))
+        selected_old, selected_new = tuple(a[transfer] for a in old), tuple(a[transfer] for a in new)
+        for key in ('states', 'witness_x', 'residual'):
+            target[prefix+key][selected_new] = source[prefix+key][selected_old]
+    target['metadata']['imported_sources'] = sorted(set(target['metadata']['imported_sources'])
+        | set(source['metadata']['imported_sources']))
+    return count
+
+
+def import_ac_reference(network, budget, source, path=None, *, mode=1):
+    """导入显式指定的同物理配置区域；AC 与 SOCP 数据始终成对保存。"""
+    path = scan_path(network, budget, mode=mode) if path is None else Path(path)
+    incoming = load_scan(source, ac_identity(network, budget, mode))
+    incoming['metadata']['imported_sources'].append(str(Path(source).resolve()))
+    destination = region_path(path, incoming)
+    with _scan_lock(path/'scan'):
+        count = sum(np.count_nonzero(incoming[key]) for key in ('states', 'socp_states'))
+        if destination.exists():
+            current = load_scan(destination)
+            count = _reuse_ac_points(incoming, current)
+            incoming = current
+        save_scan(destination, incoming)
+    return int(count)
+
+
+def scan_problem(network, budget, sign, *, mode=1, ac=False, power=None, direction=None):
+    """共用原始约束装配；AC 只改变电流关系，SOCP 保留锥不等式。"""
+    equations = PortPhysics(deepcopy(network), sign) if mode else GridPhysics(deepcopy(network), 'socp')
+    problem = MasterProblem(equations, power=power, budget=budget, direction=direction, threads=1)
+    model = problem.model
+    model.Params.NumericFocus = 3 if ac and network.name == 'case33bw' else 1
+    model.Params.Presolve = (0 if ac else 2) if network.name == 'case33bw' else -1
+    if power is not None:
+        model.setObjective(0.)
+        if not ac:
+            eta = model.addVar(name='eta')
+            for constraint in model.getConstrs():
+                if constraint.ConstrName.startswith(('active_balance[', 'reactive_balance[', 'voltage_drop[')):
+                    expression = model.getRow(constraint)-constraint.RHS
+                    model.addConstr(expression <= eta, name=constraint.ConstrName+'_upper')
+                    model.addConstr(expression >= -eta, name=constraint.ConstrName+'_lower')
+                    model.remove(constraint)
+            model.setObjective(eta)
+    if ac:
+        model.Params.NonConvex = 2
+        model.update()
+        for constraint in model.getQConstrs():
+            if constraint.QCName.startswith('current_cone['):
+                constraint.QCSense = '='
+    model.update()
+    return problem
+
+
+def scan_line(args, *, network, budget, mode=1, ac=False):
+    """独立逐点全拓扑求解；没有构域割、拓扑筛选或数值失败重试。"""
+    indices, coordinates = args
+    states = np.zeros(len(indices), dtype=np.int8)
+    witness_x = np.zeros((len(indices), network.n_types), dtype=np.int8)
+    residual = np.full(len(indices), np.nan)
+    signs = np.where(coordinates >= 0, 1, -1)
+    with threadpool_limits(limits=1):
+        for sign in np.unique(signs, axis=0):
+            selected = np.flatnonzero(np.all(signs == sign, axis=1))
+            problem = scan_problem(network, budget, sign, mode=mode, ac=ac, power=np.zeros(len(sign)))
+            with problem.model as model:
+                fixed = [c for c in model.getConstrs() if c.ConstrName.startswith('fixed_power[')]
+                for j in selected:
+                    model.ModelName = f'{"ac" if ac else "socp"}_point_{coordinates[j].tolist()}'
+                    model.setAttr('RHS', fixed, abs(coordinates[j]) if mode else coordinates[j])
+                    answer = problem.solve(time_limit=60.)
+                    if answer is None or (not ac and model.ObjBound > PLANNING_TOL):
+                        states[j] = -1
+                        continue
+                    residual[j] = model.MaxVio
+                    if not ac:
+                        residual[j] += model.ObjVal
+                        if residual[j] > PLANNING_TOL:
+                            raise RuntimeError(f'{model.ModelName}: SOCP residual={residual[j]}')
+                    if ac:
+                        tree = problem.equations.network.tree(answer['x'])
+                        ell = answer['state'][problem.equations.ell_slice][tree.type_indices]
+                        P, Q, v, u = ACPowerFlow(tree).state(coordinates[j], ell)
+                        residual[j] = float(np.max(np.abs(P*P+Q*Q-u*ell)))
+                        violation = float(max(np.max(tree.vmin-v), np.max(v-tree.vmax), np.max(ell-tree.ell_limit),
+                            np.max(P-tree.capacity), np.max(-P+tree.r*ell-tree.capacity),
+                            P[:, tree.roots].sum()-tree.source_pmax, Q[:, tree.roots].sum()-tree.source_qmax,
+                            np.hypot(P[:, tree.roots].sum(), Q[:, tree.roots].sum())-tree.source_smax))
+                        if max(residual[j], violation) > PLANNING_TOL:
+                            raise RuntimeError(f'{model.ModelName}: AC residual={residual[j]}, violation={violation}')
+                    states[j], witness_x[j] = 1, answer['x']
+    return dict(indices=indices, states=states, witness_x=witness_x, residual=residual,
+                global_calls=len(indices), errors=[])
+
+
+def ac_scan_line(args, *, network, budget, schemes, mode=1):
+    """独立树递推提供 AC 见证；必要区间排除后未决点求完整 AC 等式。"""
+    indices, coordinates = args
+    states = np.zeros(len(indices), dtype=np.int8)
+    witness_x = np.zeros((len(indices), network.n_types), dtype=np.int8)
+    residual = np.full(len(indices), np.nan)
+    possible = np.ones(len(indices), bool) if schemes is None else np.zeros(len(indices), bool)
+    with threadpool_limits(limits=1):
+        for x in (() if schemes is None else schemes):
+            remaining = np.flatnonzero(states == 0)
+            if not len(remaining):
+                break
+            answer = signed_ac_witness(network, x, coordinates[remaining], mode=mode)
+            good = remaining[answer['feasible']]
+            states[good], witness_x[good], residual[good] = 1, x, answer['residual'][answer['feasible']]
+            remaining = remaining[~answer['feasible']]
+            if len(remaining):
+                possible[remaining] |= ac_interval_possible(network, x, coordinates[remaining], mode=mode)
+    states[(states == 0) & ~possible] = -1
+    remaining = np.flatnonzero(states == 0)
+    if len(remaining):
+        answer = scan_line((indices[remaining], coordinates[remaining]), network=network, budget=budget, mode=mode, ac=True)
+        states[remaining], witness_x[remaining], residual[remaining] = answer['states'], answer['witness_x'], answer['residual']
+    return dict(indices=indices, states=states, witness_x=witness_x, residual=residual,
+                global_calls=len(remaining), errors=[])
+
+
+def scan_ac_reference(network, budget, reference, path=None, *, workers=20, mode=1,
+                      progress=lambda completed, total: None, force_rescan=False):
+    """固定格架的区域缓存，同时补齐独立 AC 与 SOCP；每批完成即保存。"""
+    network = ac_network(network)
+    path = scan_path(network, budget, mode=mode) if path is None else Path(path)
+    lower, upper = np.asarray(reference['axis_lower'], float), np.asarray(reference['bounds'], float)
+    shape, refinement = tuple(reference['shape']), reference.get('refinement', 1)
     started = perf_counter()
-    shape = (divisions,)*len(network.load_nodes)
-    states = np.empty(shape, dtype=np.int8)
-    jobs = ((network.load_nodes, mode, lower, upper, divisions, index) for index in np.ndindex(shape[:-1]))
-    last_print = started
-    with ProcessPoolExecutor(max_workers=workers) as pool:
-        for count, (index, line) in enumerate(pool.map(partial(scan_line, network_type=type(network), budget=budget), jobs), 1):
-            states[index] = line
-            progress(count*divisions, states.size)
-            if perf_counter()-last_print > 15.:
-                print(f'Scan {count*divisions}/{states.size}, {perf_counter()-started:.1f}s', flush=True)
-                last_print = perf_counter()
-    reference = dict(axis_lower=lower, bounds=upper, states=states)
-    save_scan(path, reference)
-    print(f'Scan completed: {perf_counter()-started:.2f}s, {path}', flush=True)
-    return reference
+    identity = ac_identity(network, budget, mode)
+    with _scan_lock(path/'scan'):
+        sources = sorted(path.glob('region_*.npz'), key=lambda p: p.stat().st_mtime_ns)
+        previous = load_scan(sources[-1], identity) if sources else None
+        origin, step, start = lower.copy(), (upper-lower)/np.array(shape), np.zeros(len(shape), int)
+        if previous is not None:
+            lower, upper = np.minimum(lower, previous['axis_lower']), np.maximum(upper, previous['bounds'])
+            origin, step = previous['origin'].copy(), previous['step'].copy()
+            if refinement > 1:
+                origin += .5*step*(1-1/refinement)
+                step /= refinement
+            start = np.floor((lower-origin)/step+1e-8).astype(int)
+            end = np.ceil((upper-origin)/step-1e-8).astype(int)
+            if not mode:
+                start = np.maximum(start, np.ceil(-origin/step-.5-1e-8).astype(int))
+            shape = tuple(end-start)
+        answer = _empty_ac_grid(network, budget, mode, origin, step, start, shape)
+        states = answer['states']
+        destination = region_path(path, answer)
+        if force_rescan:
+            if destination.exists():
+                shutil.copy2(destination, path/('before_'+uuid4().hex+'.npz'))
+        else:
+            for source in sources:
+                _reuse_ac_points(load_scan(source, identity), answer)
+        ac_pending, socp_pending = (np.flatnonzero(answer[key].ravel() == 0) for key in ('states', 'socp_states'))
+        pending = np.union1d(ac_pending, socp_pending)
+        reused = states.size-len(pending)
+        progress(2*states.size-len(ac_pending)-len(socp_pending), 2*states.size)
+        if len(pending):
+            save_scan(destination, answer)
+            schemes = budget_schemes(GridPhysics(deepcopy(network), 'socp'), budget, threads=1) if len(ac_pending) else None
+            functions = {'': partial(ac_scan_line, network=network, budget=budget, schemes=schemes, mode=mode),
+                         'socp_': partial(scan_line, network=network, budget=budget, mode=mode)}
+            jobs = []
+            for prefix, missing in (('', ac_pending), ('socp_', socp_pending)):
+                for offset in range(0, len(missing), 128):
+                    indices = missing[offset:offset+128]
+                    cells = np.column_stack(np.unravel_index(indices, shape))
+                    jobs.append((prefix, (indices, answer['axis_lower']+(cells+.5)*step)))
+            completed = 2*answer['states'].size-len(ac_pending)-len(socp_pending)
+            last_print = perf_counter()
+            try:
+                with ProcessPoolExecutor(max_workers=workers) if workers > 1 else nullcontext() as pool:
+                    if pool:
+                        futures = {pool.submit(functions[prefix], job): prefix for prefix, job in jobs}
+                        lines = ((futures[future], future.result()) for future in as_completed(futures))
+                    else:
+                        lines = ((prefix, functions[prefix](job)) for prefix, job in jobs)
+                    for prefix, line in lines:
+                        indices = line['indices']
+                        for key in ('states', 'residual'):
+                            answer[prefix+key].ravel()[indices] = line[key]
+                        answer[prefix+'witness_x'].reshape(-1, network.n_types)[indices] = line['witness_x']
+                        completed += len(indices)
+                        save_scan(destination, answer)
+                        progress(completed, 2*answer['states'].size)
+                        if perf_counter()-last_print > 15:
+                            print(f'AC/SOCP {completed}/{2*answer["states"].size} labels, reused paired points={reused}', flush=True)
+                            last_print = perf_counter()
+            except BaseException:
+                save_scan(destination, answer)
+                raise
+        else:
+            save_scan(destination, answer)
+        answer.update(scan_seconds=perf_counter()-started, reused_points=reused, computed_points=len(pending),
+            ac_computed_points=len(ac_pending), socp_computed_points=len(socp_pending), cache_path=str(destination))
+        print(f'AC/SOCP completed: {answer["states"].size} points, reused={reused}, '
+              f'AC computed={len(ac_pending)}, SOCP computed={len(socp_pending)}', flush=True)
+        return answer
+
+
+
+
+def export_comparison(network, budget, result, ac_reference, output):
+    """导出同坐标的实验、AC、SOCP 标签及三组遗漏率/多余率。"""
+    from monitor import RunMonitor
+    from region import contains, halfspaces
+    states = np.asarray(ac_reference['states'])
+    socp_states = np.asarray(ac_reference['socp_states'])
+    if ac_reference.get('method') != AC_CACHE_METHOD or not np.isin(states, [-1, 1]).all():
+        raise ValueError('Comparison requires a complete identified AC reference')
+    mode = ac_reference['metadata'].get('mode', 1)
+    if ac_reference['metadata']['identity'] != ac_identity(network, budget, mode):
+        raise ACReferenceMismatch('Comparison AC physical identity differs')
+    monitor = RunMonitor()
+    monitor.validation(ac_reference, result)
+    output = Path(output)
+    output.mkdir(parents=True, exist_ok=True)
+    lower, upper = np.asarray(ac_reference['axis_lower']), np.asarray(ac_reference['bounds'])
+    indices = np.indices(states.shape).reshape(states.ndim, -1).T
+    power = lower+(indices+.5)*(upper-lower)/np.array(states.shape)
+    labels = {}
+    with threadpool_limits(limits=1):
+        for key in ('inner', 'outer'):
+            labels[key] = np.zeros(len(power), dtype=bool)
+            for row in result[key]:
+                labels[key] |= contains(power, halfspaces(row['vertices']))
+    np.savez_compressed(output/'comparison.npz', comparison_method='paired_scan_v2', power=power,
+        ac_states=states.ravel(), socp_states=socp_states.ravel(), **labels, load_nodes=network.load_nodes, budget=budget,
+        current_limit_a=np.sqrt(network.ell_limit)*network.base/(np.sqrt(3)*network.voltage_kv),
+        axis_lower=lower, bounds=upper, shape=states.shape, ac_identity=ac_reference['metadata']['identity'])
+    with (output/'comparison.csv').open('w', encoding='utf-8', newline='') as stream:
+        np.savetxt(stream, np.column_stack([power, states.ravel(), socp_states.ravel(), labels['inner'], labels['outer']]),
+            delimiter=',', comments='', fmt=['%.9f']*states.ndim+['%d']*4,
+            header=','.join([*(f'p_{node}_kw' for node in network.load_nodes), 'ac_state', 'socp_state', 'inner', 'outer']))
+    summary = dict(comparison_method='paired_scan_v2', network=network.name,
+        load_nodes=list(network.load_nodes), budget=budget, shape=list(states.shape), cells=int(states.size),
+        axis_lower_kw=lower.tolist(), bounds_kw=upper.tolist(), power_unit='kW',
+        ac_identity=ac_reference['metadata']['identity'], ac_cache=ac_reference.get('cache_path'),
+        current_limit_a=ac_reference['metadata'].get('current_limit_a'),
+        socp_feasible=int(np.count_nonzero(socp_states == 1)),
+        ac_feasible=int(np.count_nonzero(states == 1)), result_status=result['status'],
+        result_certified=result['certified'], reused_points=ac_reference.get('reused_points', 0),
+        computed_points=ac_reference.get('computed_points', 0),
+        metrics=monitor.validation_state['validation']['metrics'],
+        comparisons=monitor.validation_state['validation']['comparisons'])
+    (output/'summary.json').write_text(json.dumps(summary, ensure_ascii=False, indent=2), encoding='utf-8')
+    return summary
+
+
+def main():
+    from Network.case33bw import Case33, CURRENT_LIMIT
+    from Network.four_bus_five_corridor import FourBus
+    from monitor import RunMonitor
+    parser = argparse.ArgumentParser(description=__doc__)
+    parser.add_argument('recording', type=Path, help='为已有构域记录补算同限流 AC / SOCP 校验')
+    parser.add_argument('--workers', type=int, default=20)
+    parser.add_argument('--divisions', type=int)
+    parser.add_argument('--refine', type=int, default=1, help='按整数倍加密已有格点，旧坐标仍复用')
+    parser.add_argument('--force-rescan', action='store_true')
+    parser.add_argument('--output', type=Path)
+    args = parser.parse_args()
+    monitor = RunMonitor(output=args.recording)
+    monitor.load_recording(args.recording)
+    state, result = monitor.state, monitor.state['result']
+    network = (Case33(load_nodes=tuple(state['load_nodes']), current_limit=CURRENT_LIMIT)
+               if state['network'] == 'case33bw' else FourBus(load_nodes=tuple(state['load_nodes'])))
+    budget, mode = state['budget'], state['mode']
+    path = scan_path(network, budget, mode=mode)
+    lower, upper = reference_box(network, budget, mode=mode)
+    lower, upper = np.minimum(lower, result['axis_lower']), np.maximum(upper, result['axis_bounds'])
+    divisions = args.divisions or (160 if len(network.load_nodes) == 2 else 80)
+    reference = scan_ac_reference(network, budget,
+        dict(axis_lower=lower, bounds=upper, shape=(divisions,)*len(lower), refinement=args.refine),
+        path, workers=args.workers, mode=mode, progress=monitor.scanning, force_rescan=args.force_rescan)
+    monitor.validation_state.pop('error', None)
+    monitor.validation(reference, result)
+    monitor.save()
+    output = args.output or args.recording.parent/(args.recording.name.removesuffix('.json.gz')+'_comparison')
+    print(json.dumps(export_comparison(network, budget, result, reference, output), ensure_ascii=False, indent=2))
+
+
+if __name__ == '__main__':
+    main()

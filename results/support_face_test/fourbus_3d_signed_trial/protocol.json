@@ -1,0 +1,33 @@
+{
+  "network": "fourbus",
+  "load_nodes": [
+    1,
+    2,
+    3
+  ],
+  "mode": 1,
+  "budget": 20000.0,
+  "tau": 0.005,
+  "epsilon_geom": 1e-08,
+  "threads": 20,
+  "seconds": 300.0,
+  "repetitions": 1,
+  "divisions_requested": 80,
+  "source_hashes": {
+    "main.py": "d0d5ee1df56c62f1788593cd6ff9aaa9a5ed9b15cec48c35a9fb93a7c525098b",
+    "model.py": "02f6c823802c6ff4cf1f36e1d4d26aa331bb093da926907fa3015b4f5a96e84b",
+    "region.py": "3a135cc23f66b213ff33913ef251cc009684e0e811fd69e606d2b322b351e99a",
+    "monitor.py": "bc9783623f51b44a67b12eeecd658315d7664ebfa260a311f1dad389579cc65b",
+    "vertify.py": "3c1838238785bd6b775604d4eb94504493d56d0c43ea56f2ca6a1ffa79b81589",
+    "Network/four_bus_five_corridor.py": "1916fef6b611fd9a09cab0ee6604a1798c88937466d664c00e2caf0201edf8f3",
+    "experiments/test_support_face_certification_fourbus_2d.py": "96e3bc6937a4292ec9e5d1583db772c1449303c300fb716ae4e0643b37ff5d83",
+    "experiments/compare_support_face_fourbus_3d.py": "0e12bb5b9f92a9ec8b006d0b95f580cdb20e8b0f520a33cd2a5a9b274a0ceca9"
+  },
+  "timing_scope": "end-to-end construction with native recording, excludes scan and final save",
+  "baseline_settings": {
+    "CUT_THRESHOLD": 0.02,
+    "CUT_PATIENCE": 3,
+    "POINT_TOL": 0.01,
+    "RAY_THRESHOLD": 0.0001
+  }
+}

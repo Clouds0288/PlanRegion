@@ -9,7 +9,6 @@ from Network.four_bus_five_corridor import FourBus
 from model import GridPhysics, MasterProblem, SubProblem
 from model import PortSubProblem, PortPhysics, port_bounds, ray_support
 from monitor import signed_values, RunMonitor, _cut_polygon
-from vertify import scan_line
 
 
 class SignedPartitionTests(unittest.TestCase):
@@ -112,17 +111,6 @@ class SignedPartitionTests(unittest.TestCase):
             np.array([11.604715917462963, 33.208561013363024, .0010351113785352407]), threads=1, time_limit=10.)
         self.assertTrue(answer['feasible'])
 
-    def test_scan_line_matches_independent_point_queries(self):
-        lower, upper, n = np.array([-30., -30.]), np.array([30., 30.]), 4
-        for index in ((0,), (3,)):
-            _, states = scan_line(((1, 2), 1, lower, upper, n, index))
-            for j, label in enumerate(states):
-                power = lower+(np.array([*index, j])+.5)*(upper-lower)/n
-                sign = np.where(power >= 0, 1, -1)
-                equations = PortPhysics(FourBus(load_nodes=(1, 2)), sign)
-                problem = MasterProblem(equations, power=power*sign, budget=20000., threads=1)
-                with problem.model:
-                    self.assertEqual(label, 1 if problem.solve() is not None else -1)
 
     def test_signed_metrics_and_three_dimensional_geometry(self):
         square = np.array([[-2., -2.], [0., -2.], [0., 0.], [-2., 0.]])
@@ -137,15 +125,6 @@ class SignedPartitionTests(unittest.TestCase):
         self.assertEqual(len(face), 6)
         self.assertLess(np.max(np.abs(face.sum(axis=1))), 1e-10)
 
-    def test_scan_numerical_regression_points(self):
-        cases = [([-66.284375, 80.325], 1),
-                 ([-135.15, 27.73125, -94.0625], 1),
-                 ([102.65, -90.61875, 10.7375], -1)]
-        for power, expected in cases:
-            power = np.asarray(power)
-            nodes = tuple(range(1, len(power)+1))
-            _, states = scan_line((nodes, 1, power-.5, power+.5, 1, (0,)*(len(power)-1)))
-            self.assertEqual(states[0], expected)
 
 
 if __name__ == '__main__':

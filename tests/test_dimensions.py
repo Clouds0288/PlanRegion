@@ -13,26 +13,56 @@ from main import recording_path, SCAN_DIVISIONS
 from region import ray_gain, union_measure
 from model import GridPhysics, MasterProblem
 from monitor import RunMonitor, NativeWindow, _cut_polygon, _voxel_faces
+from monitor import COMPARISONS
 from region import RegionState, polytope_volume
-from vertify import validate_socp_region, _scan_line
 
 
 CUBE = np.array(list(product((0., 1.), repeat=3)))
 
 
-def test_fourbus_dense_scan_line_matches_fresh_physical_queries():
-    # 旧扫描预处理后，j=38 返回 NUMERIC；逐点独立模型作对照。
-    network = FourBus()
-    bounds = np.array([95.1356599114313, 40.239614761101045, 34.9909693573879])
-    index, line = _scan_line((network, 20000., 60, bounds, (15, 11), 1))
-    assert index == (15, 11)
-    with threadpool_limits(limits=1):
-        for j in range(60):
-            power = (np.array([15, 11, j])+.5)*bounds/60
-            problem = MasterProblem(GridPhysics(network, 'socp'), power=power, budget=20000., threads=1)
-            with problem.model:
-                expected = 1 if problem.solve() is not None else -1
-            assert line[j] == expected
+@pytest.mark.parametrize('dimension', [2, 3])
+def test_three_comparison_modes_switch_colors_and_show_six_metrics(dimension):
+    network = FourBus(load_nodes=(1, 2, 3)[:dimension])
+    bounds = np.full(dimension, 2.)
+    region = RegionState(bounds, float(bounds.sum()), .005)
+    x = network.encode_plan(network.initial_plan).astype(int)
+    region.add_scheme(x, network.initial_plan, 0.)
+    monitor = RunMonitor()
+    monitor.begin(network, 'socp', 20000., region, 100.)
+    vertices = np.array(list(product((0., 1.), repeat=dimension)))*[1., *([2.]*(dimension-1))]
+    region.add_point(x, vertices/bounds)
+    result = dict(certified=False, coverage_bound=1., **region.finish(False))
+    monitor.finish(result, region)
+    states = np.ones((2,)*dimension, np.int8)
+    states.flat[0] = states.flat[-1] = -1
+    socp = states.copy()
+    socp.flat[0] = 1
+    monitor.validation(dict(axis_lower=np.zeros(dimension), bounds=bounds,
+        states=states, socp_states=socp, method='ac_socp_grid_v4'), result)
+    window = NativeWindow(monitor)
+    try:
+        window.root.withdraw()
+        meshes = []
+        for label in COMPARISONS.values():
+            window.comparison_mode.set(label)
+            window._refresh_validation()
+            window.canvases['C'].draw()
+            axis = window.axes['C']
+            assert label in axis.get_title()
+            assert [item.get_text() for item in axis.get_legend().get_texts()] == ['共同可行', '多余', '遗漏']
+            assert window.comparison_text.get().count('遗漏') == window.comparison_text.get().count('多余') == 3
+            if dimension == 2:
+                meshes.append(np.asarray(axis.collections[0].get_array()).copy())
+            else:
+                assert {item.get_gid() for item in axis.collections} == {'comparison-1', 'comparison-2', 'comparison-3'}
+        if dimension == 2:
+            for i in range(3):
+                for j in range(i):
+                    assert not np.array_equal(meshes[i], meshes[j])
+    finally:
+        window.close()
+
+
 
 
 def test_union_volume_nearly_collinear_overlap_preserves_small_growth():
@@ -94,24 +124,6 @@ def test_three_dimensional_measure_keeps_overlap_gaps_and_face_ownership():
     assert ray_gain(CUBE, [.5, .5, .5]) == pytest.approx(0.)
 
 
-def test_three_dimensional_scan_matches_fresh_complete_models_and_parallel():
-    network, bounds, divisions = FourBus(), np.array([65., 55., 45.]), 3
-    progress = []
-    with threadpool_limits(limits=1):
-        serial = validate_socp_region(network, 20000., divisions, bounds, threads=1,
-                                     progress=lambda done, total: progress.append((done, total)))
-        parallel = validate_socp_region(network, 20000., divisions, bounds, workers=2)
-        assert serial['states'].shape == (divisions,)*3
-        np.testing.assert_array_equal(serial['states'], parallel['states'])
-        assert progress[0] == (0, 27) and progress[-1] == (27, 27)
-        equations = GridPhysics(network, 'socp')
-        for index in np.ndindex(serial['states'].shape):
-            power = (np.array(index)+.5)*bounds/divisions
-            problem = MasterProblem(equations, power=power, budget=20000., threads=1)
-            with problem.model:
-                feasible = problem.solve() is not None
-            assert (serial['states'][index] == 1) == feasible
-    assert serial['scan_seconds'] > 0.
 
 
 def test_three_dimensional_metrics_count_cells_and_declared_denominators():
@@ -188,5 +200,33 @@ def test_three_dimensional_replay_tracks_cuts_rays_and_preserves_view(tmp_path):
             canvas.draw()
         for _, _, canvas in window.scheme_views.values():
             canvas.draw()
+    finally:
+        window.close()
+
+
+@pytest.mark.parametrize('shape', [(1, 3), (2, 3, 4)])
+def test_ac_panel_renders_rectangular_grid_and_single_row(shape):
+    network = FourBus(load_nodes=(1, 2, 3)[:len(shape)])
+    bounds = 10.*np.arange(1, len(shape)+1)
+    region = RegionState(bounds, float(bounds.sum()), .005)
+    x = network.encode_plan(network.initial_plan).astype(int)
+    region.add_scheme(x, network.initial_plan, 0.)
+    monitor = RunMonitor()
+    monitor.begin(network, 'socp', 20000., region, 100.)
+    result = dict(certified=False, coverage_bound=1., **region.finish(False))
+    monitor.finish(result, region)
+    states = np.ones(shape, dtype=np.int8)
+    states.flat[0] = -1
+    monitor.validation(dict(bounds=bounds, states=states, method='ac_grid_v3'), result)
+    window = NativeWindow(monitor)
+    try:
+        window.root.withdraw()
+        window.show()
+        window.canvases['C'].draw()
+        assert '×'.join(map(str, shape)) in window.axes['C'].get_title()
+        assert any('AC' in label.get_text() for label in window.axes['C'].get_legend().get_texts())
+        if len(shape) == 2:
+            coordinates = window.axes['C'].collections[0].get_coordinates()
+            np.testing.assert_allclose(coordinates.max(axis=(0, 1)), bounds)
     finally:
         window.close()

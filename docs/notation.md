@@ -1,5 +1,179 @@
 # 数学符号与代码变量规范
 
+## 扫描缓存归档目录迁移（2026-09-30）
+
+`SCAN_OUTPUT` 与 `scan_path` 的默认根目录从单数 `result/scan` 迁移到项目统一结果目录 `results/scan`。缓存文件的物理身份摘要、区域摘要、NPZ 字段、单位、形状和复用规则均不改变；已有 `result/scan` 内容原样移动，不重新解释或重算。显式传入 `output` 的调用仍以调用方路径为准。
+
+## 同限流 AC / SOCP 配对扫描（2026-09-30）
+
+最新口径：Case33 主线、SOCP 扫描和 AC 扫描均使用每条候选线路 200 A。新增 [CURRENT_LIMIT](../Network/case33bw.py) 为主入口及独立校验命令的统一配置，单位 A，可为标量或按原始线路顺序排列的数组；Case33 构造函数的显式参数及原缺省 inf 接口保留。`ac_network` 只复制输入，不再删除电流上限；`ac_identity` 包含完整逐线路 ell_limit。旧不限流数据及旧格式保留原位，不作为新条件下的参考。
+
+保留 `scan_ac_reference` 的调用名称和 `states/witness_x/residual` 的 AC 含义；它现同时补齐同坐标的 SOCP 参考。新增 `socp_states`、`socp_witness_x`、`socp_residual`，形状与 AC 对应字段相同，±1/0 的含义不变。缓存版本 `AC_CACHE_METHOD='ac_socp_grid_v4'`。`scan_path` 显式迁移为物理配置目录；目录内 `region_<格架摘要>.npz` 每份包含一个功率区域的两套参考，区域摘要覆盖 origin/step/start/shape。`cache_path` 仍为实际 NPZ 文件路径。扩界及加密复用已扫描的相同坐标；AC 和 SOCP 分别补零标签，不相互推定标签。
+
+| 新增量 | 固定代码映射 | 契约 |
+|---|---|---|
+| 共用点模型 | [scan_problem](../vertify.py) | 使用既有 MasterProblem；ac=True 时仅将 current_cone 改为等式，其他约束相同；不引入构域割或已发现拓扑限制 |
+| 完整固定点判定 | [scan_line](../vertify.py) | 输入展平 indices 及真实 kW coordinates；ac=False 为独立 MISOCP，ac=True 为完整 AC；原残差门槛不变，求解异常直接传播 |
+| 扫描最小违反量 η | [scan_problem.eta](../vertify.py) | 非负标幺量；仅 SOCP 固定点问题将功率平衡、压降等式的绝对残差约束为 ≤η 并最小化 η。η=0 恰为原模型；ObjBound>PLANNING_TOL 才排除，ObjVal+MaxVio≤PLANNING_TOL 才接受。其余硬约束、拓扑与预算不变；AC 等式及范围支撑问题不使用 η |
+| 区域文件位置 | [region_path](../vertify.py) | 配置目录与 origin/step/start/shape 唯一确定文件；AC 与 SOCP 共用几何 |
+| 配对参考字段 | [SCAN_FIELDS](../vertify.py) | states/witness_x/residual 为 AC，socp_states/socp_witness_x/socp_residual 为 SOCP |
+| 三组比较 | [comparison_metrics](../monitor.py) | 输入计算域、参考域布尔格点；MR=#(reference且非computed)/#reference，FR=#(computed且非reference)/#computed，百分比；空分母为 None |
+| 比较模式 | [COMPARISONS](../monitor.py) | result_ac、result_socp、socp_ac；实验域默认最终内域 G′，outer 保留原含义 |
+| 六项指标 | [RunMonitor.validation:comparisons](../monitor.py) | 上述三组各自 mr_percent/fr_percent，并保留计数；原 metrics 内外域对 AC 的字段含义不变 |
+
+`reference_box` 改求同限流 SOCP 模型的坐标全局上界，单位 kW，以覆盖 AC 与 SOCP 的共同扫描范围。`migrate_ac_scans` 的旧全目录自动导入退役，`import_ac_reference` 只导入显式提供的同版本、同物理身份区域文件。导出 comparison_method=`paired_scan_v2`，NPZ/CSV 包含 power、ac_states、socp_states、inner、outer；summary.comparisons 为六项主要指标。前端按三组模式切换共同可行（蓝）、多余（橙）、遗漏（红），不将凸包空洞填充为可行。
+
+原 RunMonitor.validation 的 mr_percent/fr_percent/missed_cells/extra_cells/reference_cells/computed_cells 六个字典字段构造移到 comparison_metrics，字段名称、单位和含义不变。
+
+连续锥求解新增 [solve_conic.cone_scale](../model.py)，无量纲，有限限流时取 `clip(1/ellmax,1,100)`，无人工限流时保留原 100 倍缩放。等价锥为 `||(2√s P,2√s Q,v−s ell)||₂≤v+s ell`；原电流不等式、状态布局和 1e-8 认证门槛不变，射线已有锥裕量仍按同一 s 缩放。有限限流模型从第一次求解即使用 Clarabel 的 faer 线性代数、1e-8 正则化和 0.95 步长上限，无数值重试。
+
+射线已有 `RAY_CONE_MARGIN=1e-6` 同时从有限电流的 ell 变量上界中扣除，避免边界数值误差越限；SP 的 margin=0 不收缩。仅求射线内域见证时使用该微小裕量，验收仍检查原 200 A 约束，主问题及 AC/SOCP 扫描仍采用原限额。
+
+逐线路均有限额时，`PortSubProblem.solve` 从第一次求解直接复用既有 `SubProblem.solve` 的 Gurobi 连续 SOCP 实现；保留同一个 PortPhysics、eta 目标、割生成和结果字段。有限电流与近零功率边界曾使 Clarabel SP 的原始锥残差超过 1e-8，因此按模型配置固定选择该求解路径，不做失败重试或换解器。射线仍使用上文的连续锥实现。
+
+以下旧 AC 不限流及独立 SOCP 退役条款由本节覆盖，原符号、单位、状态布局的其余约定不变。
+
+## AC 单一入口与可扩展缓存迁移（2026-09-30）
+
+按用户要求，独立校验统一到 `vertify.py`。`signed_ac_witness`、`ac_interval_possible`、`ac_scan_line`、`scan_ac_reference`、`export_comparison` 从 ac_validation.py 原名迁入；`budget_schemes` 从 experiments/fourbus_outer_volume.py 原名迁入。删除 ac_validation.py 及独立 SOCP 扫描/连续锥审计实验入口，历史结果不修改。原 `scan_reference`、`scan_line`、`_scan_line`、`validate_socp_region`、`ac_planning_query`、`validate_ac_region`、`classify_orthant`、`split_grid_box` 和 `_save_ac_scan` 显式退役；其历史登记保留为退役记录。主线构域的 MISOCP 与原始证书检查不变。
+
+AC 标签是在全部预算内合法径向拓扑上取并集，不能只使用构域发现的拓扑。单树递推仅提供可行见证，全部树的 AC 必要区间排除或完整可变拓扑 AC 等式不可行证书才给 -1。无证、数值错误、超时保持 0 并保存，不发布完整误差率。`use_socp_exclusions` 参数及其分支删除；AC 不读取 SOCP 标签，不用正负端点凸性填充。`mode=0` 使用原 q_ratio，`mode=1` 按真实功率正负使用 LOAD_PF/PV_PF/PV_Q_SIGN。
+
+| 新增或扩展量 | 固定代码映射 | 单位、形状及契约 |
+|---|---|---|
+| 独立 AC 数据副本 | [ac_network](../vertify.py) | 复制网架，Case33 的人工 ell_limit 设为 inf；其他物理限制、开关和预算不变 |
+| AC 参考包络 | [reference_box](../vertify.py) | 返回 axis_lower/bounds，真实 kW `(d,)`；对无人工限流的完整 AC 等式模型求各符号区坐标全局上界并缓存，不调用 SOCP 扫描。可采用节点/时间上限终止时求解器已认证的有限 ObjBound，不采用可行解目标值作为包络；数值失败不采信。与当次构域限额无关 |
+| AC 缓存版本 | [AC_CACHE_METHOD](../vertify.py) | `ac_grid_v3`；旧 SOCP 文件不具备该身份 |
+| 缓存物理身份 | [ac_identity](../vertify.py) | 原始网络、运行界、功率因数、模式、节点顺序、拓扑预算及校验版本；不含构域 tau、时间、线程或人工限流 |
+| 固定格点格架 | [scan_ac_reference.origin](../vertify.py)、[scan_ac_reference.step](../vertify.py)、[scan_ac_reference.start](../vertify.py) | origin/step `(d,)` kW，start `(d,)` 整数；p=origin+(start+index+0.5)*step。扩界只增减 start/shape，不移动旧坐标 |
+| 网格标签 | [scan_ac_reference.states](../vertify.py) | `(n1,...,nd)`，不要求各轴格数相同；1 可行，-1 已证不可行，0 未决。完整参考不得含 0 |
+| 格点批处理 | [ac_scan_line](../vertify.py) | args=(展平索引,真实 power)，返回索引、states、witness_x、residual、global_calls 和 errors；每点独立，不跳过内部点 |
+| 可行证书 | [ac_scan_line:witness_x](../vertify.py)、[ac_scan_line:residual](../vertify.py) | witness_x `(batch,t)` 二元建设向量；residual `(batch,)` 电流等式残差。历史导入未保存证书时以 NaN 残差和来源记录明确区分 |
+| 历史 AC 导入 | [import_ac_reference](../vertify.py) | 只接受身份核对通过的 ac_independent_v2 或 ac_grid_v3 数据，保留原坐标；配置不明、含 SOCP 排除或有限人工电流参考不整批导入 |
+
+`scan_ac_reference` 保留 network/budget/reference/path 名称，reference 使用 axis_lower/bounds/shape 描述首次网格。路径默认 `result/scan/<case>/<节点>/<身份摘要>.npz`。已有缓存包含请求时直接复用；部分覆盖则沿原步长扩大包围盒并复制全部已完成点，只提交未知点。改变 shape 不隐式改变旧格架；显式 refinement 时使用嵌套点阵并只补算新点。强制重算先留存旧文件再重新校验，不删除历史证据。缓存由主进程原子保存，独占文件锁避免并发覆盖，批次完成和异常退出均落盘。
+
+主入口及实验只把最终 inner/outer 成员标签与 AC 标签比较。导出 comparison.npz/CSV 保留 power、ac_states、inner、outer 和 load_nodes；删除 socp_states 字段，comparison_method=`model_vs_ac_v1`。回放 validation 保存 AC 身份；旧无 AC 身份的回放不能作为新 AC 缓存导入，历史显示明确保留旧参考种类。显示及指标按 `(bounds-axis_lower)/states.shape` 逐轴取步长，不再假设正方形/立方体。MR 和 FR 分母及 kW 单位不变。
+
+以下各节保留历史迁移契约；涉及扫描入口、SOCP 排除、缓存路径和对比字段时，以本节最新迁移为准。
+
+## 算法电流上限与固定 AC 参考（2026-09-30）
+
+按用户确认，本对照的 CURRENT_LIMITS 仅为 MISOCP 的人工收紧参数；AC 固定使用 `Case33(current_limit=inf)`，保留 AC 电流等式、电压、源端、功率因数、背景负荷、开关预算等其他条件。AC 电流由物理等式确定，未松弛等式。下节 210 A / 400 A 的“双方同限额”口径及历史文件保持为历史结果，不代表本节的新比较。
+
+共同扫描范围改由无人工限流 SOCP 的四个符号分区轴向上界生成，覆盖固定 AC 参考域，且不依赖 CURRENT_LIMITS。默认仍为 160×160 单元中心。所有组只生成/复用同一个 AC 参考；MR(I)=|A0\S_I|/|A0|，FR(I)=|S_I\A0|/|S_I|，分母为零时存 None，不写成 0%。
+
+显式接口扩展：`scan_ac_reference(..., use_socp_exclusions=False)` 的 reference 可以仅含 axis_lower、bounds、shape；也接受既有 states 的形状，但不读取其标签或 ell_limit。此模式仅按 AC 网架及网格确定结果，缓存使用 `method='ac_independent_v2'`、AC 的 fingerprint/ell_limit/预算/功率因数/坐标身份，不再保存或比较 SOCP 标签。默认 True 保留旧的完整 SOCP 标签、相同限额与排除规则。
+
+显式输出迁移：新结果 `comparison_method='fixed_ac_v1'`，默认目录 `results/validation_case33_2d_fixed_ac_<各组安培值>`。NPZ 保留 power `(N,2)` kW、current_limits `(m,)` A、socp_states/ac_states `(m,d,d)` ±1；ac_states 的 m 份内容必须完全相同，新增 ac_current_limit_a=inf 表示无人工上限。JSON 中 ac_current_limit_a=null 明确表示无人工上限，并标记 ac_reference_shared=True。CSV 改为 `p_18_kw,p_25_kw,ac_reference_state,socp_<I1>A,...`，只存一列固定 AC；列名、报告及图题随配置生成，不再写死 210/400。原 math/state 字段、单位、索引及阈值不变。
+
+## Case33 二维 210 A / 400 A 电流约束对照（2026-09-30）
+
+仅比较节点 `(18,25)`、mode=1、开关预算 7 下的 210 A 和 400 A 两组假设线路限额。37 条候选线路（含联络线）采用同一组指定上限；不是 IEEE 33 原始额定数据。阻抗、背景负荷、功率因数、电压与源端限值沿用主线。
+
+| 新增量 | 固定代码映射 | 单位、形状、产生与消费 |
+|---|---|---|
+| I_max，输入线路电流幅值上限 | [Case33.__init__.current_limit](../Network/case33bw.py) | A，标量或可广播到 37 条线路；默认 inf 兼容既有数据 |
+| ell_lim=(I_max/I_b)^2，热电流平方上限 | [TypeParameters.ell_limit](../Network/__init__.py) → [Network.ell_limit](../Network/__init__.py) → [OperatingTree.ell_limit](../Network/__init__.py) | p.u.²；型号标量、完整 `(t,)`、树局部 `(n_tree,)`；I_b=base/(sqrt(3)*voltage_kv)，单位 A。与有功 capacity 和派生 ellmax 分开 |
+| 带参数网架的扫描输入 | 已退役：`vertify.py::scan_line.network` | 可选完整 Network；扫描进程保留限额，不再只按类名重建默认网架 |
+| 是否用 SOCP 不可行标签排除 AC 点 | 已退役：`ac_validation.py::scan_ac_reference.use_socp_exclusions`、已退役：`ac_validation.py::_save_ac_scan.use_socp_exclusions` | 默认 True 兼容原校验；本对照为 False，整个网格均由 AC 递推、必要区间或完整 AC 等式核验，SOCP 标签不参与 AC 判定 |
+
+SOCP 的 ellmax 与 ell_limit 取较小值，既有 `current_max` 实施 ell<=ellmax*x。独立 AC 递推与全局等式解均检查相同 ell_limit；必要区间传播也使用该上限。未选线路电流为零。原状态切片、p 的 kW 单位和正负号不变。
+
+扫描文件新增可选 ell_limit 元数据；缺失仅等价于全部 inf。有限限额的扫描路径增加限额摘要，复用与断点恢复均检查精确限额。AC 缓存同时检查 use_socp_exclusions；旧缓存该字段缺失等价于 True。
+
+有限电流上限的 Case33 扫描首次建模固定 `Presolve=0, NumericFocus=3`，保留原 PLANNING_TOL。400 A 二维网格的 `(0,128)` 点 `(-13348.946875,1509.084375)` kW 在原预处理下返回 NUMERIC、无解；单独关闭聚合仍在 `(7,87)` 点失败。关闭预处理且提高数值精度后正常获得原模型证书，并与固定网架的独立连续锥核验对照；这也避免 `(67,17)` 点原 MaxVio=2.30335e-8 的不合格候选。无限流历史扫描保留原设置；不作失败重试或接受门槛放宽。
+
+独立入口 `experiments/compare_case33_current.py` 在 400 A 的四个符号分区求轴向 SOCP 上界，构造两组共同的 160×160 单元中心网格。输出 comparison.npz：power `(N,2)` kW，current_limits `(2,)` A，socp_states/ac_states `(2,160,160)`、±1；轴顺序为节点 18、25。遗漏=AC 可行且 SOCP 不可行，遗漏率分母为 AC 可行点；多余=SOCP 可行且 AC 不可行，多余率分母为 SOCP 可行点。统计仅代表该网格，不作为连续域体积的精确值。
+
+400 A 的混合整数扫描存在数值性假不可行标签，因此本对照对全部 SOCP 负标签追加独立连续锥核验：已退役：`experiments/audit_case33_current.py::socp_interval_possible` 仅使用电流上限、线性功率/电压区间与 SOCP 不等式推出必要界，不采用 AC 等式或 AC 的 Kirchhoff 电流幅值上界。区间未排除的固定网架由既有 PortSubProblem 按原 PLANNING_TOL 核验；覆盖预算内全部合法网架。原正标签已有完整可行证书，保留；发现的漏判正标签写入单独 `socp_verified_210A.npz` / `socp_verified_400A.npz`，并用核验后的标签计算比较结果。两组物理约束、网格和 AC 独立性不变。
+
+## 主线仅保留完整 physical MISOCP（2026-09-30）
+
+`RemainingRegionModel` 删除 `mode` 形参及 `self.mode`，固定建立包含全部建设变量、运行变量和 SOCP 约束的全局查漏模型；调用方不再传入 `mode='physical'`，线性物理模型不接受为该查询的输入。`MasterProblem` 删除 `cuts_only` 形参，始终装配 `operation` / `state`，成功返回的候选均携带原始完整运行证书。旧 light/cuts_only 路径退役，不增加兼容分支；下文历史记录中的这些选项不再表示现行接口。主入口的正负功率 `mode=0/1` 不受此迁移影响。
+
+保留原 `x/p/state` 布局、单位及 `bound/complete/feasible` 结果含义：剩余域有未覆盖见证时 `feasible=True`；已获覆盖或不可行证书时 `x=p=None, feasible=False`。覆盖余量目标、扩边 `tau`、联合割布局、精度和超时判据不变。
+
+独立校验辅助函数 `budget_schemes` 仅在小算例中按建设预算、锁定线路、道路及根向树条件枚举拓扑，不调用删去物理约束的 MP，也不按零负荷可行性筛除拓扑；它不参与主线构域。原 `threads` 形参保留以兼容调用方，纯拓扑检查无需求解线程。历史结果和源码快照保持原样。
+
+## 支持面实验改用完整 physical 查漏（2026-09-30）
+
+按用户要求，`discover_schemes` 的全局查询固定为 `RemainingRegionModel` 的完整 physical MISOCP：保留全部合法二元建设变量、运行变量及原 SOCP 约束，直接寻找扩张内域并集之外的物理见证。删除实验中的 light 候选→固定 x,p 的 SP→共享割循环；全局返回的见证在模型释放前用原约束直接代入复核，只有残差 <= PLANNING_TOL 才接纳。没有建设方案枚举，也不以忽略失败或放宽容差换取完成。
+
+结果 schema 迁为 `support-face-fourbus-physical-v3`，coverage.mode=`physical`。旧 `global_milp_calls` 字段保留但恒为 0；新增 [discover_schemes:global_physical_calls](../experiments/test_support_face_certification_fourbus_2d.py) 统计完整 physical 查询。旧 discovery_sp_calls、discovery_cut_lp_calls、discovery_sp_seconds 保留但恒为 0。conditional_support_cuts 仍只表示有效的条件支持界割；这些界可加强完整模型，不替代物理约束。逐方案支持面认证、归一化、状态布局、面余量与上界停止条件保持原义。
+
+回放明确标识完整物理查漏和已经复核的物理见证，不再显示 light 候选核验事件。新结果默认写入 `fourbus_2d_physical` / `fourbus_3d_signed_physical`，既有 light 运行记录和报告保持原样。旧文段中的 light 流程仅描述该迁移前版本。
+
+## 支持面实验的三维正负功率扩展（2026-09-30）
+
+显式维度迁移：原二维实验文件名及二维入口保留；其支持面核心接受 d=2/3。inner/outer/point 为 `(N,d)` / `(d,)`，faces 为 `(F,d+1)`，offset 始终取最后一列，三维面日志增加 normal_3。缓存盒改为 `[0,1]^d`；initial_support_calls 为 d+1，原 area 字段保留，数值为 d 维测度，单位 kW^d。expanded_polygon 原名保留并扩展为 d 维半空间交。
+
+新增独立入口 `experiments/compare_support_face_fourbus_3d.py`，使用与主线相同的 PortPhysics、port_bounds 和 8 个符号分区。分区内部 p 是非负幅值，真实导出功率为 sign*p；负荷 PF=0.95、光伏 PF=1，原模型所有预算和物理限值不变。分区枚举只枚举 8 个功率符号，不枚举建设方案；每个分区仍由 light MILP 按需发现 x。bounds 采用各节点端口界，total_bound 来自全局总幅值 MP2。符号分区之间不取凸包。
+
+[initial_bounds.bounds](../experiments/test_support_face_certification_fourbus_2d.py) 与 [SupportReplay.__init__.bounds](../experiments/test_support_face_certification_fourbus_2d.py) 为可选归一化 kW 向量；缺省保持旧非负模式。[SupportReplay.__init__.monitor](../experiments/test_support_face_certification_fourbus_2d.py) 可注入原生分区记录器。新增 [certify_scheme.deadline](../experiments/test_support_face_certification_fourbus_2d.py)、[discover_schemes.deadline](../experiments/test_support_face_certification_fourbus_2d.py)、[initial_bounds.deadline](../experiments/test_support_face_certification_fourbus_2d.py) 为 perf_counter 同源绝对截止时刻，默认无穷；到期保留未认证结果，不放宽精度。对照总时限与主线相同，并沿用主线的剩余时间均分规则。独立扫描只在两种构域完成后使用，采用相同真实坐标网格，不能参与构域或停止。
+
+## Case33 三维扫描数值修复（2026-09-30）
+
+`scan_line` 的 Case33 模型首次求解固定 `NumericFocus=1`，其余扫描设置不变。原点 `p=(-2042.04375,-4903.3375,2060.03125)` kW 在 `NumericFocus=0` 下虽然返回 OPTIMAL，但 `current_cone[8-9,existing]` 违反量为 2.99298e-7，未达到 `PLANNING_TOL=1e-8`，因此原扫描正确拒绝了该解。新设置不放宽接受门槛、不重试、不改变数学模型；FourBus 保留原设置。构域认证和 SOCP 独立扫描不等同于 AC 电流等式认证。
+
+扫描每 15 秒原子保存 `.partial.npz`：`states=0` 仅表示未计算，完整缓存仍只有 ±1。仅相同范围、形状的部分网格可续算；强制重扫不复用部分结果。完整文件写成后删除部分文件，历史失败回放保留备份。
+
+## 带符号 AC 事后参考与对比（2026-09-30）
+
+新增 `ac_validation.py`，仅事后读取 Case33 主线结果，不参与构域。负荷/光伏 PF、固定背景、全部合法开关及预算均与主线一致。先用独立树递推寻找满足 AC 等式及限值的见证；递推失败或越限只表示未获证，不能判不可行。已有完整 SOCP 扫描的不可行证书可排除 AC 点；其余未获见证点由放开全部合法网架的非凸 AC 电流等式模型求解，只有 INFEASIBLE 才写 -1，数值失败和超时仍报错。AC 不使用凸性填充中间点。
+
+| 新增量 | 固定代码映射 | 单位与定义 |
+|---|---|---|
+| 独立带符号 AC 见证 | [signed_ac_witness](../vertify.py) | 输入 power 为真实 kW，输出 feasible、ell、residual；ell 为树局部 `(batch,n_tree)` 电流平方，residual 为原电流等式最大绝对残差。feasible=False 不代表不可行 |
+| AC 必要区间检查 | [ac_interval_possible](../vertify.py) | 固定树时支路电流为下游节点电流之和，故 ell_i <= (sum_j D_ij abs(dP_j+i*dQ_j)/sqrt(vmin_j))²。由 ell 区间传播 P/Q 和 v/u，再用 ell=(P²+Q²)/u 收紧；外扩 AC_TOL。只有必要区间与运行限值不相交才排除该树，全部预算内合法树都排除才判 AC 不可行；返回 True 仍为未决 |
+| AC 行求解 | [ac_scan_line](../vertify.py) | 在 SOCP 同一网格上补齐 AC 标签；states 仅为 ±1，保持索引和真实 kW 坐标 |
+| AC 网格参考 | [scan_ac_reference](../vertify.py) | 输出 axis_lower/bounds/states，附 method='ac_equality'；路径与 SOCP 分离 |
+| 可直接读取的对比数据 | [export_comparison](../vertify.py) | `comparison.npz` 包含 power（kW，`(N,d)`）、socp_states/ac_states（±1）、inner/outer（布尔成员标签），按 C 顺序展平，load_nodes 规定功率列；CSV 为相同逐点内容 |
+
+独立 AC 见证仍采用 `AC_TOL=1e-9` 限值和 `FIXED_POINT_TOL=1e-12` 电流等式门槛；全局 AC 候选同时检查所建模型 MaxVio 和独立树递推残差，均不超过 `PLANNING_TOL=1e-8`。未取得全域覆盖证书的原 result.certified=False 原样保留；完成校验不改写为构域认证成功。
+
+AC 参考对 Case33 的 12 个全部预算内径向方案进行必要区间排除和可行见证搜索，仍未定的点交给完整非凸等式模型。这是事后参考的加速，不将方案枚举或参考标签引入主线构域。AC 文件同时保存 method/network/load_nodes/budget/power_factors 和对应 socp_states，续算须全部一致。
+
+## 主线清理与旧接口退役（2026-09-30）
+
+当前唯一构域主线为 `main.run → region.build_region → region.build_sequential_region`。删除已退出主线的 `continuous.py`、`survey.py`、旧对照实验、HTML 展示及其专用测试；保留支持面认证实验、其配套测试和主线数值回归。`experiments/fourbus_outer_volume.py` 仅保留原名、原逻辑的 `budget_schemes`，供独立拓扑回归使用；当前支持面实验不再调用它。
+
+`plot.py` 仅保留主线仍使用的 `_clip_face`、`union_volume`；旧 BenchmarkResult、网页、勘察图和重复报告接口退役。`RegionState` 删除旧构域专用的 covering_schemes、witness_support、inner_halfspaces、progress，以及随之失去消费者的 revision、inner_box 缓存；当前选点仍用同网架 inner_equations，查漏仍用 coverage_halfspaces。测试直接检查这些活动几何接口，不为测试保留生产侧旧算法接口。旧 Notebook 联合迭代 `tests.planning_checks.joint_benders` 及其算法对照测试同时退役；独立固定网架物理核对、原始残差和全域割有效性回归仍保留。
+
+`RunMonitor` 删除旧 progress 回调桥接 follow / _notify / callback、旧实验专用 stopped / certification_start / certification_end / support_start / support_end。finish 必须读取结果中显式的 certified，不再把缺失字段默认视为认证成功。当前初始化、SP、射线、割、分区结束、失败与扫描的增量记录仍使用原生 version=4；已有 version=3/4 回放读取规则保留。超时仍保留有效内外域且 certified=False；物理残差、求解状态、有效割与全局覆盖上界检查不变，没有添加失败重试或备用求解器。
+
+下文所有退役登记项保留其原代码名、单位、形状和定义，并标注“已退役”；这些旧接口整体删除，没有同义替换。主线现有数学字段、状态布局及结果格式均不改名。历史源码可由清理前提交 `fe98f7e` 追溯，历史结果不改写。`main.py` 已有用户配置为 DIMENSION=3、CASE_TIME_LIMIT=300、SOLVER_THREADS=20，本次保留。
+
+## 独立实验：FourBus 二维逐方案支持面认证（2026-09-30）
+
+`experiments/test_support_face_certification_fourbus_2d.py` 在 FourBus(load_nodes=(1,2)) 上按需发现方案，复用 GridPhysics 的完整非负负荷 SOCP；不修改主线或 SP 割。2026-09-30 显式迁移：删除实验入口的全部方案枚举，初始总负荷 MP2 选择第一个方案，之后只有全局线性外域搜索发现的未覆盖点经固定 x,p 的完整 SOCP 核验可行，才登记新方案。搜索保留全部合法二元 x，不加入逐方案 no-good 排除。公共 `bounds` 与主线 mode=0 相同，为每轴 network.power_limit（kW）。内部 inner/outer/point 使用 xi=p/bounds，导出的 inner/outer/violating_points/初始顶点均为 kW。原点用零潮流、单位电压和零固定负荷解析认证；其余内域点须代入完整模型的线性、二次、变量界、整数和原始锥约束检查，门槛仍为 PLANNING_TOL。
+
+| 新增量 / 定义 | 固定代码映射 | 单位、形状与使用边界 |
+|---|---|---|
+| h_x(a)=max a@xi 的缓存 | [SupportOracle.support_cache](../experiments/test_support_face_certification_fourbus_2d.py) | 键为完整 scheme_key 与带朝向的 round(a/||a||,10)；值含 lb/ub/point/state/status/solve_seconds/normal。缓存支持值，不缓存截距或某次面结论 |
+| 全部面几何上界、覆盖余量 | [geometry_margins](../experiments/test_support_face_certification_fourbus_2d.py) | 一次 outer_vertices@A.T 后按顶点轴取最大；返回 face_upper 与 (1-tau)*face_upper+b，无量纲；包含负法向及低维仿射面 |
+| 近方向复用的安全上界 | [cached_support](../experiments/test_support_face_certification_fourbus_2d.py) | 原 UB 加 max_{xi in [0,1]^2}(a-a_cached)@xi，再乘原法向长度；LB 由已认证 point 在新方向重算，正反方向不合并 |
+| 固定方案支持目标 | [SupportOracle.solve](../experiments/test_support_face_certification_fourbus_2d.py) | 直接把 problem.model 目标设为 sum(a_i*p_i/bounds_i)，绕开 MP 内部 /base 缩放；ObjVal/ObjBound 均为归一化支持值，二元变量不松弛 |
+| 数值上界外扩保护 | [BOUND_PAD](../experiments/test_support_face_certification_fourbus_2d.py) | 1e-10 无量纲，仅向上放宽可靠 ObjBound；不替代 GEOMETRY_TOL 或 PLANNING_TOL，不声称精确算术证明 |
+| 原始模型代入复核 | [audit_incumbent](../experiments/test_support_face_certification_fourbus_2d.py) | 包含 MaxVio 和原约束直接代入的最大违反量；不重新优化、不修补候选；不合格候选不进入 inner |
+| 支持面判定 | [classify_support](../experiments/test_support_face_certification_fourbus_2d.py) | UB 面余量<=epsilon_geom 才 SUPPORT_CERTIFIED；通过物理复核的实际点越界才 VIOLATED；其余 UNRESOLVED。TIME_LIMIT 仅保留有效界和合格点，不自动成功或失败 |
+| 逐方案充分证书 | [certify_scheme](../experiments/test_support_face_certification_fourbus_2d.py) | 当前所有半空间均通过才 certified；每次补点立即废弃旧面。outer 裁剪仅用可靠支持 UB，开关关闭可作消融 |
+| MP2 初始方案 | [initial_bounds](../experiments/test_support_face_certification_fourbus_2d.py) | 返回值由 bounds/axis_bounds/total_bound 显式扩展为第四项总负荷 MP2 的完整 answer；唯一调用方 run_experiment 同步更新 |
+| 固定方案支持界的条件联合割 | [conditional_support_cut](../experiments/test_support_face_certification_fourbus_2d.py) | 对参考 x0，Delta=sum(x0)+(1-2*x0)@x；M=max(0,max_box(a@xi)-ub)，约束 ub+M*Delta-a@xi>=0；仅在 x=x0 时收紧，其他二元 x 由公共盒自动满足。返回原布局 [alpha,beta_p,delta_x]，负荷系数使用 kW |
+| 按需发现与全局覆盖证明 | [discover_schemes](../experiments/test_support_face_certification_fourbus_2d.py) | 复用 RemainingRegionModel(mode='light') 搜索联合割外域中扩张内域并集之外的 x,p；不可行候选只产生原 SubProblem 联合割，可行新方案交给 certify_scheme。不枚举或排除 x，未见方案始终保留在 MILP 中 |
+| 未覆盖外域余量上界 | [discover_schemes:bound](../experiments/test_support_face_certification_fourbus_2d.py) | 沿用 RemainingRegionModel 的归一化 max-min 面余量上界；只有 light 模型不可行或全局 bound<=epsilon_geom 才 complete。已知方案全部 certified 不能独立推出全局认证 |
+| 全局发现次数上限 | [run_experiment.max_discovery_iterations](../experiments/test_support_face_certification_fourbus_2d.py) | 默认 200；限制 light MILP 调用次数，触顶保留未认证状态；与每个方案的 max_iterations 分开 |
+
+`faces_seen` 是每次全量几何检查的面访问数（同一面跨轮可能重复），另记 `unique_faces`；`geometry_certified/faces_seen` 为累计几何率，`final_geometry_certification_ratio` 为最终一轮比率，不能混为独立面的比例。`support_calls` 含每方案三个初始支持方向及后续 cache miss，二者分项记录；全局 MP2 初始化、light MILP 发现、候选 SOCP/取割 LP、参考扫描和可选 physical 对照调用分别统计。旧 enumeration_mip_calls/enumeration_seconds 字段保留且新运行恒为零。面积乘 prod(bounds) 后为 kW²。
+
+扫描独立调用 validate_socp_region，固定负荷而放开全部合法 x/y；扫描不反馈停止判据。missing_rate=扫描可行但扩张内域并集未覆盖的点数/扫描可行点数，false_inner_rate=扫描不可行却在内域并集的点数/内域并集格点数；无分母写 null。扩张域按全部面 (1-tau)*a@xi+b<=epsilon_geom 精确裁剪绘制，另与非负公共盒相交；扩张域本身不是物理可行域。
+
+可选对照在完全相同的最终内域并集上调用未改动的 RemainingRegionModel(mode='physical')，同时报告最终几何复核时间与全流程认证时间；这是终止查询对照，不是两种完整构域算法的速度比。新 schema 为 support-face-fourbus-2d-v2：schemes 仅表示实际发现并构域的方案，discovery_history/cuts/coverage 保存线性外域搜索证据；global_certified 要求全部已登记方案认证且 coverage.complete=True。全局结论为全部合法方案的 D_x 被已发现方案的扩张内域并集覆盖，不能写成每个未发现方案都有独立 I_x。异常、未决和时限不足保留未认证状态。旧 v1 全枚举数据与源码快照保留历史意义，不用于声称新版本性能；默认输出迁至 results/support_face_test/fourbus_2d_adaptive。默认 tau 读取 main.REGION_TAU；实验固定二维与非负 SOCP，不读取主入口的案例/维数/正负模式设置。
+
+实验原生回放：`--record` / [run_experiment.record](../experiments/test_support_face_certification_fourbus_2d.py) 默认 False；开启后由 [SupportReplay](../experiments/test_support_face_certification_fourbus_2d.py) 在实际执行时提交 RunMonitor version=4 增量帧，保存至实验输出目录的 monitor.json.gz，直接用 `python monitor.py <记录>` 回放。initial_bounds、certify_scheme、discover_schemes 新增可选 replay 参数，只发送记录，不读取前端状态参与选点或停止。未改物理模型、算法判据及主线前端；计时包含开启录制后的开销。
+
+录制 geometry / support 字段继续用归一化法向、LB/UB 与余量；显示的 inner/outer/point 和割系数沿用原生 kW 契约。原生 sp 只统计候选 SOCP，support_calls 另计固定方案支持求解；cut_history 包含实际采用的条件支持割及共享 SP 割，kind 区分 support/shared。仅实际开始构域的方案登记 A/B 等标签；尚未认证的全局候选标为“候选”，不伪造成新方案或物理可行点。局部快照记录实际 inner/outer；共享 SP 割同步裁剪已登记方案的展示外域，不反馈局部构域器。全局搜索的 phase 明确为线性外域查漏，不能套用主线“完整物理可行点”的描述。最终外包络取已发现内域的允许扩张并集，未获全局证书则保留安全公共盒；扫描只进入独立 validation_state，回退帧不泄漏未来网架、点或割。
+
 ## 正负功率合并主线（2026-09-30）
 
 `main.py` 的 [mode](../main.py) 默认 1：0 仅计算非负负荷（含零边界），1 计算负光伏至正负荷。模式 0 保留 `GridPhysics`；模式 1 使用固定功率因数符号分区。p、state、联合割、认证阈值和分区坐标转换不变。
@@ -13,6 +187,10 @@
 回放继续采用现有 monitor.py 原生窗口和 version=4 增量记录，路径 `results/mainline/mode_<模式>/<case>_<节点>.json.gz`。`signed_values` 迁入 monitor.py，负责真实功率与割系数转换；实验 `combine_history` 由 [RunMonitor.partition_frame](../monitor.py) 的即时增量记录替代，不再保留第二份局部历史。废止实验网页 `export_replay` / `mesh` / `cut_mesh` 及独立 `metrics`，使用原生绘图与校验。没有新增回放脚本、网页或格式。
 
 version=4 新增可选字段：顶层状态 `mode`、`partition`、`axis_lower` 和 `global_outer`；网架与割的 `sign` 表示其固定符号分区。真实功率单位仍为 kW；网架 ID 加符号前缀，割 ID 为全局递增编号。旧记录缺少 `axis_lower` 时仍从零显示。[_cut_segment.axis_lower](../monitor.py) / [_cut_polygon.axis_lower](../monitor.py) 只扩展显示盒下界，割只在所属分区有效。逐帧、逐割、播放和扫描对照共用原生前端。
+
+原生视口按分区初始化的 `initial_bounds` 事件确定外包络范围，初始化完成后固定，四周保留 6% 留白；网架面板沿用所属分区的范围。仅回放到当前帧已出现的包络与证据，不使用未来初始化信息。图 A 始终绘制真实外包络（不以已知网架外域并集替代），当前分区细节和完整全局总览并存；“主图展开全局”只切换 A，构域结束后 A 显示最终全局域。扫描视口包含最终域和参考可行格的完整边缘。上述视口不写回 `bounds`、`axis_bounds`、`axis_lower` 或录制数据，不改变搜索域、单位及几何。
+
+过程显示区分记录中的 `rejected_points`（全网架不可行证据）与全局候选的固定网架 SP 否决（只证明当前 `(x,p)` 不可行）。后者由当前帧及之前的 `global_point`、`sp_point`、`feasible=False` 事件推导为显示标记，不新增录制字段、不改求解器停止判据。射线显示原有 `ray.anchor/target/p`，未返回认证点时不虚构端点；二维、三维和网架小图共用该图层。
 
 最终 result 只存一次，保留状态、轴界、认证内外域、计数和总耗时；扫描指标仅存 validation_state。分区证书保留在 partition_end 帧；未完成时保留安全外包络，不宣称认证完成。删除已并入的实验入口、网页和重复说明，历史结果不改写。
 
@@ -77,11 +255,11 @@ SP 评价点在求解前统一朝同网架认证凸包重心内移至多 POINT_T
 
 | 新增量 / 接口 | 固定代码映射 | 定义 |
 |---|---|---|
-| 强制重新扫描开关 | [FORCE_RESCAN](../main.py)、[run.force_rescan](../main.py)、[scan_reference.force_rescan](../vertify.py) | 默认 False；True 时完整重算扫描，覆盖该算例、节点和预算的扫描文件 |
+| 强制重新扫描开关 | [FORCE_RESCAN](../main.py)、[run.force_rescan](../main.py)、已退役：`vertify.py::scan_reference.force_rescan` | 默认 False；True 时完整重算扫描，覆盖该算例、节点和预算的扫描文件 |
 | 独立扫描目录 | [SCAN_OUTPUT](../main.py)、[run.scan_output](../main.py) | 默认 results/scans；与构域回放目录 OUTPUT 分开 |
 | 扫描文件位置 | [scan_path](../vertify.py) | 算例名 / 有序负荷节点 / budget_预算.npz；不同维数、节点顺序及预算分开保存 |
 | 保存参考网格 | [save_scan](../vertify.py) | 只写入既有 bounds、states；扫描下限统一为零，单位 kW；不保存旧构域的误差指标 |
-| 范围复用与扫描 | [scan_reference](../vertify.py) | 逐轴请求上限不超过已有 bounds 时复用原网格；否则对新旧范围的包围盒重新扫描，上限向上取整到 kW，避免数值微差重复扫描；强制重算同样保留已覆盖的范围 |
+| 范围复用与扫描 | 已退役：`vertify.py::scan_reference` | 逐轴请求上限不超过已有 bounds 时复用原网格；否则对新旧范围的包围盒重新扫描，上限向上取整到 kW，避免数值微差重复扫描；强制重算同样保留已覆盖的范围 |
 
 复用保留扫描原有 bounds 与 states 坐标，不缩放、不插值，也不把旧标签移到新格点。divisions 仅在实际重新扫描时生效；已覆盖范围内改变格数不会自动重扫，需 FORCE_RESCAN=True。独立文件不记录耗时，复用时沿用回放已有的 scan_seconds=None 口径，实际新扫描仍记录其耗时；每次仍按本次构域结果重算 inner/outer 的遗漏率和多余率。物理参数修改后由用户显式要求重扫，不作模型哈希认证。
 
@@ -161,8 +339,8 @@ Case33 的动态负荷节点由文件顶部 LOAD_NODES 配置，默认 (18,25)�
 | d 维凸域并集测度 | [union_measure](../region.py) | 归一化坐标下二维面积或三维体积；二维用多边形布尔并，三维用既有 union_volume |
 | 输出测度单位 | 已退役：`build_sequential_region:measure_unit`（2026-09-29 主线精简） | kW² 或 kW³；回放 settings 同步保存 |
 | 按节点配置定位回放 | [recording_path](../main.py) | 文件名 case_节点序列.json.gz，例如 case33_18_25_30.json.gz；二维和三维不相互覆盖，旧文件不改写 |
-| 扫描张量与耗时 | [validate_socp_region:states](../vertify.py)、[validate_socp_region:scan_seconds](../vertify.py) | states.shape=(divisions,)*d，索引顺序与 load_nodes 一致，1/-1 为完整 SOCP 可行/不可行；扫描秒数独立于构域计时 |
-| 扫描统计计数 | [RunMonitor.validation:missed_cells](../monitor.py)、[RunMonitor.validation:extra_cells](../monitor.py)、[RunMonitor.validation:reference_cells](../monitor.py)、[RunMonitor.validation:computed_cells](../monitor.py) | 各自 inner/outer 指标下保存，MR=100*missed/reference，FR=100*extra/computed；原 mr_percent/fr_percent 不变 |
+| 扫描张量与耗时 | 已退役：`vertify.py::validate_socp_region:states`、已退役：`vertify.py::validate_socp_region:scan_seconds` | states.shape=(divisions,)*d，索引顺序与 load_nodes 一致，1/-1 为完整 SOCP 可行/不可行；扫描秒数独立于构域计时 |
+| 扫描统计计数 | [comparison_metrics:missed_cells](../monitor.py)、[comparison_metrics:extra_cells](../monitor.py)、[comparison_metrics:reference_cells](../monitor.py)、[comparison_metrics:computed_cells](../monitor.py) | 各自 inner/outer 指标下保存，MR=100*missed/reference，FR=100*extra/computed；原 mr_percent/fr_percent 不变 |
 | 三维割面截多边形 | [_cut_polygon](../monitor.py) | 将联合割代入指定 x，与显示盒的十二条棱求交；仅绘图，坐标 kW |
 | 三维凸域绘图 | [_draw_3d](../monitor.py) | 分网架绘制真实凸域表面及低维认证集；不跨网架构造凸包 |
 | 扫描体素边界 | [_voxel_faces](../monitor.py) | 按真实 states 的六邻接边界生成体素面，坐标 kW，不对参考网格作平滑或插值 |
@@ -344,7 +522,7 @@ y=(P,Q,\ell,v,s^+,s^-),\qquad n_y=3t+n+2m.
 | 建设选型、负荷 | [MasterProblem.choices](../model.py)、[MasterProblem.loads](../model.py) | `[e,k]` / `[i]`；[MasterProblem.x](../model.py)、[MasterProblem.power](../model.py) 是共享变量的 MVar 视图 |
 | 有功、无功、电流平方、电压平方 | [GridPhysics.add_operation.P](../model.py)、[GridPhysics.add_operation.Q](../model.py)、[GridPhysics.add_operation.ell](../model.py)、[GridPhysics.add_operation.v](../model.py) | 根电压 `v[network.root] = 1` 是常数，不进入状态向量 |
 | 正、负开断压降余量 | [GridPhysics.add_operation.plus](../model.py)、[GridPhysics.add_operation.minus](../model.py) | 求解器名称 `drop_plus/drop_minus`；数学符号 \(s^+/s^-\) |
-| 完整运行对象、状态 | [MasterProblem.operation](../model.py)、[MasterProblem.state](../model.py) | `cuts_only=True` 时均为 `None` |
+| 完整运行对象、状态 | [MasterProblem.operation](../model.py)、[MasterProblem.state](../model.py) | 始终装配完整运行对象及共享变量视图；旧 `cuts_only` 的空状态路径已退役 |
 
 不要因采用 `tupledict`、`MVar` 或 NumPy 就改数学量名称；转换严格使用 `type_keys`、`nodes`、`load_nodes`、`corridors` 顺序。
 
@@ -435,15 +613,15 @@ SP 直接使用 `eta` 目标、`Aggregate=0`、`ScaleFlag=0`、`BarQCPConvTol=1e
 | 数学量 | 固定映射 | 单位 / 形状 |
 |---|---|---|
 | \(b^{\rm box}\) | [RegionState.bounds](../region.py)，由总负荷上界构造或由算例给定有效盒界 | kW，`(d,)`，公共正数坐标尺度 |
-| \(b^{\rm axis}(\mathcal B)\) | [RegionState.axis_bounds](../region.py)、[RemainingRegionModel.__init__.axis_bounds](../model.py)、[build_continuous_region:axis_bounds](../continuous.py) | kW，`(d,)`；方向 MP2 全局上界，限制本预算的搜索域 |
+| \(b^{\rm axis}(\mathcal B)\) | [RegionState.axis_bounds](../region.py)、[RemainingRegionModel.__init__.axis_bounds](../model.py)、已退役：`continuous.py::build_continuous_region:axis_bounds` | kW，`(d,)`；方向 MP2 全局上界，限制本预算的搜索域 |
 | \(w\)，方向目标 \(w^Tp\) | [MasterProblem.direction](../model.py)、[MasterProblem.__init__.direction](../model.py) | 无量纲，`(d,)`；默认全 1，轴向初始化取单位向量 |
 | \(p_\Sigma^{\rm ub}\) | [RegionState.total_bound](../region.py) | kW；由输入总量上界和 MP2 全局上界收紧 |
-| \(\tau\)、\(s_\tau=1-\tau\) | [RegionState.tau](../region.py)、[build_continuous_region.tau](../continuous.py) | 无量纲；linear 为 0 |
+| \(\tau\)、\(s_\tau=1-\tau\) | [RegionState.tau](../region.py)、已退役：`continuous.py::build_continuous_region.tau` | 无量纲；linear 为 0 |
 | \(I_x,O_x\) | [RegionState.add_scheme:inner](../region.py)、[RegionState.add_scheme:outer](../region.py)，存在 `records[tuple(x)]` | 归一化顶点 `(n_vertices,d)`，分别为认证内域、候选外域 |
 | \((F_x,g_x)\) | [RegionState.inner_equations](../region.py) / [halfspaces](../region.py) 返回 `[F_x, g_x]` | `(n_faces,d+1)`；`F_x @ xi + g_x <= 0` |
 | 裁剪常数、系数 | [clip_polytope.constant](../region.py)、[clip_polytope.coefficient](../region.py) | `constant + coefficient @ xi >= 0`，与半空间内侧约定相反 |
 | \(\gamma\)，未覆盖量 | [RemainingRegionModel.__init__.delta](../model.py)，求解器名称 `uncovered_distance` | 内部乘 [RemainingRegionModel.distance_scale](../model.py)，返回前还原 |
-| \(\overline\gamma\)，全局覆盖上界 | [build_continuous_region:coverage_bound](../continuous.py) | 无量纲；不是负荷上界 |
+| \(\overline\gamma\)，全局覆盖上界 | 已退役：`continuous.py::build_continuous_region:coverage_bound` | 无量纲；不是负荷上界 |
 
 `bounds` 是向量；查询结果 `bound` 是目标的标量全局界；`lb/ub` 是运行变量盒。三者不得互相重命名或复用含义。
 
@@ -461,7 +639,7 @@ SP 直接使用 `eta` 目标、`Aggregate=0`、`ScaleFlag=0`、`BarQCPConvTol=1e
 
 固定方案的割转换为归一化裁剪：\(\alpha+\delta^Tx+(\beta\odot b^{\rm box})^T\xi\ge0\)。跨方案只取并集，不能混合顶点取凸包。
 
-展示层 [region_geometry:x](../plot.py) 原样导出型号向量的独立列表，顺序与 `network.type_keys`、联合割的 `delta` 一致；几何顶点仍为 kW。这是回放格式的可选新增字段，旧记录缺少 `x` 时只显示原生成方案的条件切面，不推测其他方案的截面。最终结果中未保存的单方案外域不能视为不可行。页面的“已证覆盖”仅用一个三维凸内域包含整个候选外域这一充分条件（归一化面余量容差 `1e-10`），不反馈求解器，不替代全局覆盖证书。
+展示层 已退役：`plot.py::region_geometry:x` 原样导出型号向量的独立列表，顺序与 `network.type_keys`、联合割的 `delta` 一致；几何顶点仍为 kW。这是回放格式的可选新增字段，旧记录缺少 `x` 时只显示原生成方案的条件切面，不推测其他方案的截面。最终结果中未保存的单方案外域不能视为不可行。页面的“已证覆盖”仅用一个三维凸内域包含整个候选外域这一充分条件（归一化面余量容差 `1e-10`），不反馈求解器，不替代全局覆盖证书。
 
 覆盖目标统一写作
 
@@ -481,11 +659,11 @@ SP 直接使用 `eta` 目标、`Aggregate=0`、`ScaleFlag=0`、`BarQCPConvTol=1e
 
 [MasterProblem.__init__.power](../model.py)、[MasterProblem.__init__.min_total](../model.py)、[MasterProblem.solve.radial_gap_kw](../model.py) 均用 kW；[MasterProblem.__init__.budget](../model.py) 用投资单位。没有固定负荷和最低总量时是 MP2（最大化 `direction @ p`，默认总负荷）；有任一条件时是 MP1（最低投资）。割作为 [MasterProblem.__init__.cuts](../model.py) 传入；[MasterProblem.solve.incumbent](../model.py) 与 [MasterProblem.solve.start](../model.py) 延续原有初始解语义，前者优先。方向初始化不传 `incumbent`，避免其成本上界限制另一方向的合法网架。
 
-主流程直接创建模型并调用 `solve`，不保留 `planning_query`。MP 的运行证书和目标间隙在 `MasterProblem.solve` 中判断；超时、无候选、异常终止或精度超限直接报错，不再调用 SP 补救或改写答案。明确不可行仍返回 `None`，主动设置的目标停止允许返回已获证候选。`cuts_only=True` 仍不包含运行证书。
+主流程直接创建模型并调用 `solve`，不保留 `planning_query`。MP 的运行证书和目标间隙在 `MasterProblem.solve` 中判断；超时、无候选、异常终止或精度超限直接报错，不再调用 SP 补救或改写答案。明确不可行仍返回 `None`，主动设置的目标停止允许返回已获证候选。所有成功候选均包含完整运行证书。
 
 | 字段 | 定义位置 | 固定语义 |
 |---|---|---|
-| `x`、`p`、`state` | [MasterProblem.solve:x](../model.py)、[MasterProblem.solve:p](../model.py)、[MasterProblem.solve:state](../model.py) | 型号向量、kW 负荷、完整运行向量；`cuts_only` 的 `state=None`；未找到候选改为异常 |
+| `x`、`p`、`state` | [MasterProblem.solve:x](../model.py)、[MasterProblem.solve:p](../model.py)、[MasterProblem.solve:state](../model.py) | 型号向量、kW 负荷、完整运行向量；成功候选不返回空运行状态；未找到候选改为异常 |
 | `objective` | [MasterProblem.solve:objective](../model.py) | MP2 为 `direction @ p`，kW；默认全 1 时仍为总负荷；MP1 为投资 |
 | `bound` | [MasterProblem.solve:bound](../model.py) | MP2 为全局上界，MP1 为全局下界；单位随目标变化 |
 | `feasible`、`status` | [MasterProblem.solve:feasible](../model.py)、[MasterProblem.solve:status](../model.py) | `optimal/feasible`；质量不合格改为异常，旧 `unknown` 记录保留；不等同于独立 AC 认证 |
@@ -496,21 +674,21 @@ SP 直接使用 `eta` 目标、`Aggregate=0`、`ScaleFlag=0`、`BarQCPConvTol=1e
 
 [ACPowerFlow](../vertify.py) 接收选定的 `OperatingTree`；其属性虽然叫 `network`，索引是树局部索引。`state(power, ell)` 返回 `(P,Q,v,u)`：均为 `(batch,n_tree)`，功率朝根向外；`v/u` 分别为受端 / 送端电压平方。内部 [ACPowerFlow._state.p](../vertify.py)、[ACPowerFlow._state.q](../vertify.py) 表示标幺节点负荷 \(d^P,d^Q\)，不作为 kW 接口传播。
 
-`ell` 是电流平方，AC 残差为 \(P^2+Q^2-u\ell\)。[ACPowerFlow.classify](../vertify.py) 输出 `1/-1`（可行 / 已证不可行），未收敛直接报错，不转用全局模型；[ac_planning_query](../vertify.py) 返回经过 AC 校核的方案答案，并删除 SOCP 的 `'state'`，避免充作 AC 证书。`global_status` 仅供显式交叉核验，未获证同样报错。
+`ell` 是电流平方，AC 残差为 \(P^2+Q^2-u\ell\)。[ACPowerFlow.classify](../vertify.py) 输出 `1/-1`（可行 / 已证不可行），未收敛直接报错，不转用全局模型；已退役：`vertify.py::ac_planning_query` 返回经过 AC 校核的方案答案，并删除 SOCP 的 `'state'`，避免充作 AC 证书。`global_status` 仅供显式交叉核验，未获证同样报错。
 
 ### 8.3 连续域结果和网格
 
 | 字段 / 量 | 代码定义 | 单位 / 布局 |
 |---|---|---|
-| `max_total`、`max_total_bound` | [build_continuous_region:max_total](../continuous.py)、[build_continuous_region:max_total_bound](../continuous.py) | 最大总负荷的可行值、全局上界，kW；未获值可为 `None` |
+| `max_total`、`max_total_bound` | 已退役：`continuous.py::build_continuous_region:max_total`、已退役：`continuous.py::build_continuous_region:max_total_bound` | 最大总负荷的可行值、全局上界，kW；未获值可为 `None` |
 | `max_point`、`max_choice`、`max_cost`（2.1 退役） | 原 `build_continuous_region` 字段；迁移至 [RunMonitor.seed](../monitor.py)、[RunMonitor._geometry](../monitor.py)，见第 33 节 | 初始化 kW 点、具名方案与费用不再重复写入最终结果 |
 | `inner`、`outer`、`vertices` | [RegionState.finish:inner](../region.py)、[RegionState.finish:outer](../region.py)、[RegionState.finish:vertices](../region.py) | 最终顶点为 kW；`inner` 各项另含 `choice/cost`；`outer` 为全局外包络 |
-| `status`、`counts`、`timing` | [build_continuous_region:status](../continuous.py)、[build_continuous_region:counts](../continuous.py)、[build_continuous_region:timing](../continuous.py) | 成功返回 `certified`，未完成改为异常；旧 `unknown/time_limit` 记录保留；`sp/cuts` 次数；`total_seconds` 秒 |
-| 三态网格 | [BenchmarkResult.states](../plot.py) | `(len(METHODS), n_budgets, N_g, N_g, N_g)`，`-1/0/1` |
-| 方法轴顺序 | [METHODS](../plot.py) | `('socp','hybrid','ac','linear')`；不要猜下标 |
-| 配置及元数据 | [BenchmarkResult.metadata](../plot.py) | `schema_version`、`network_fingerprint`、`load_nodes`、`bounds`、`budgets` 等 |
-| 每轴网格数 \(N_g\)、网格宽度 | [DIVISIONS](../main.py)、[BenchmarkResult.spacing](../plot.py) | 网格中心为 `(index + 0.5) * bounds / divisions`，kW |
-| 展示比较标签 | [comparison_labels](../plot.py) | `0` 域外、`1` 多余、`2` 遗漏、`3` 重合、`4` 未确定；不是三态 `states` |
+| `status`、`counts`、`timing` | 已退役：`continuous.py::build_continuous_region:status`、已退役：`continuous.py::build_continuous_region:counts`、已退役：`continuous.py::build_continuous_region:timing` | 成功返回 `certified`，未完成改为异常；旧 `unknown/time_limit` 记录保留；`sp/cuts` 次数；`total_seconds` 秒 |
+| 三态网格 | 已退役：`plot.py::BenchmarkResult.states` | `(len(METHODS), n_budgets, N_g, N_g, N_g)`，`-1/0/1` |
+| 方法轴顺序 | 已退役：`plot.py::METHODS` | `('socp','hybrid','ac','linear')`；不要猜下标 |
+| 配置及元数据 | 已退役：`plot.py::BenchmarkResult.metadata` | `schema_version`、`network_fingerprint`、`load_nodes`、`bounds`、`budgets` 等 |
+| 每轴网格数 \(N_g\)、网格宽度 | [DIVISIONS](../main.py)、已退役：`plot.py::BenchmarkResult.spacing` | 网格中心为 `(index + 0.5) * bounds / divisions`，kW |
+| 展示比较标签 | 已退役：`plot.py::comparison_labels` | `0` 域外、`1` 多余、`2` 遗漏、`3` 重合、`4` 未确定；不是三态 `states` |
 
 `state` 单数专指物理运行向量；`states` 复数为分类网格；主流程的 `region` 是 `RegionState` 几何对象。`choice` 保持外部具名方案，不能变成压缩整数编码。JSON 中非有限值转为 `null`；预算中的 `null` 读回 `inf`，其余上下界须保留未知语义，不能普遍将 `null` 变为零。
 
@@ -518,11 +696,11 @@ SP 直接使用 `eta` 目标、`Aggregate=0`、`ScaleFlag=0`、`BarQCPConvTol=1e
 
 | 数学量 | 输出字段 | 定义及单位 |
 |---|---|---|
-| \(V_{\rm inner},V_{\rm outer}\) | [region_metrics:inner_volume](../plot.py)、[region_metrics:outer_volume](../plot.py) | 各自并集体积，kW³；重叠部分只计一次 |
-| \(g_V\) | [region_metrics:volume_gap](../plot.py) | `(outer-inner)/outer`，比例；外域体积为零时实现返回 0 |
-| FR | [disagreement:fr_percent](../plot.py) | \(100\mu(\mathcal R\setminus\mathcal A)/\mu(\mathcal R)\)，百分数 |
-| MR | [disagreement:mr_percent](../plot.py) | \(100\mu(\mathcal A\setminus\mathcal R)/\mu(\mathcal A)\)，百分数 |
-| 区域误差 | [disagreement:region_error_percent](../plot.py) | \(100\mu(\mathcal R\triangle\mathcal A)/\mu(\mathcal R\cup\mathcal A)\)，百分数 |
+| \(V_{\rm inner},V_{\rm outer}\) | 已退役：`plot.py::region_metrics:inner_volume`、已退役：`plot.py::region_metrics:outer_volume` | 各自并集体积，kW³；重叠部分只计一次 |
+| \(g_V\) | 已退役：`plot.py::region_metrics:volume_gap` | `(outer-inner)/outer`，比例；外域体积为零时实现返回 0 |
+| FR | 已退役：`plot.py::disagreement:fr_percent` | \(100\mu(\mathcal R\setminus\mathcal A)/\mu(\mathcal R)\)，百分数 |
+| MR | 已退役：`plot.py::disagreement:mr_percent` | \(100\mu(\mathcal A\setminus\mathcal R)/\mu(\mathcal A)\)，百分数 |
+| 区域误差 | 已退役：`plot.py::disagreement:region_error_percent` | \(100\mu(\mathcal R\triangle\mathcal A)/\mu(\mathcal R\cup\mathcal A)\)，百分数 |
 
 网格估计不等于连续几何证明；历史 AC 未确定点由 `disagreement_interval` 保留区间，新运行的 AC 未收敛则报错。FR/MR 的空分母返回 `None`，空并集的区域误差返回 0。不要把 `volume_gap` 比例值直接按 `*_percent` 显示。
 
@@ -539,8 +717,8 @@ SP 直接使用 `eta` 目标、`Aggregate=0`、`ScaleFlag=0`、`BarQCPConvTol=1e
 | MP2 目标间隙容差 | [MasterProblem.solve.radial_gap_kw](../model.py) | `1e-3` kW；保留既有参数名，仅用于目标间隙判定，不再修改负荷，不是 `tau` |
 | 单次 MP / SP / 剩余域 / AC 时限 | [MP_TIME_LIMIT](../model.py)、[SP_TIME_LIMIT](../model.py)、[RESIDUAL_TIME_LIMIT](../model.py)、[AC_TIME_LIMIT](../vertify.py) | 秒；SP 按方法取值 |
 | 整体时限、线程 | [CASE_TIME_LIMIT](../main.py)、[SOLVER_THREADS](../main.py)、[DEFAULT_SOLVER_THREADS](../model.py) | 秒、正整数；混合阶段共享整体时限 |
-| 全局搜索间隔、AC 迭代上限 | [REFINEMENT_CHECKS](../continuous.py)、[AC_ITERATIONS](../vertify.py) | 正整数；前者为自上次全局搜索以来的 SP 次数，活动见证处理完后生效 |
-| 算例 / 升级数 / 预算 / 剩余域模式 | 原 `NETWORK/UPGRADE_COUNT/BUDGETS` 入口于 2.1 退役；当前 [main](../main.py)、[BUDGET](../main.py)、[RESIDUAL_MODE](../continuous.py)，见第 33 节 | 默认二维 FourBus、单预算；其他算例仍可单独使用其类 |
+| 全局搜索间隔、AC 迭代上限 | 已退役：`continuous.py::REFINEMENT_CHECKS`、[AC_ITERATIONS](../vertify.py) | 正整数；前者为自上次全局搜索以来的 SP 次数，活动见证处理完后生效 |
+| 算例 / 升级数 / 预算 / 剩余域模式 | 原 `NETWORK/UPGRADE_COUNT/BUDGETS` 入口于 2.1 退役；当前 [main](../main.py)、[BUDGET](../main.py)、已退役：`continuous.py::RESIDUAL_MODE`，见第 33 节 | 默认二维 FourBus、单预算；其他算例仍可单独使用其类 |
 
 数值取值以对应代码常量为准；调整时同步本表及结果元数据说明。不得将不同语义的容差合成一个通用 `tol` 后改变认证口径。
 
@@ -643,8 +821,8 @@ python -m unittest tests.test_notation -v
 |---|---|---|
 | 五节点候选案例 | [Concept5](../Network/concept5.py) | 完全沿用第 10.9 节的 4 条既有线与 A–F 六条候选路线，预算 4，p=(p1,p2)；不增加型号或改变参数 |
 | 道路允许掩码 b_e^road | [Network.road_allowed](../Network/__init__.py)、[Concept5.__init__.allowed_roads](../Network/concept5.py) | 布尔 `(m,)`；默认全部允许；MP 加 z_e≤b_e^road，SP 不加道路掩码，因此物理联合割可跨信息状态复用 |
-| 初始共享联合割 | [build_continuous_region.cuts](../continuous.py) | 与既有 `cuts` 相同的数组列表；传入后复制，不修改调用方；仅同一物理模型及有效盒界可复用 |
-| 需求域缓存 | [DomainCache](../survey.py) | 按请求的道路允许集合求解，不预枚举建设方案；仅本次运行内缓存，记录各次冷启动及共享割耗时 |
+| 初始共享联合割 | 已退役：`continuous.py::build_continuous_region.cuts` | 与既有 `cuts` 相同的数组列表；传入后复制，不修改调用方；仅同一物理模型及有效盒界可复用 |
+| 需求域缓存 | 已退役：`survey.py::DomainCache` | 按请求的道路允许集合求解，不预枚举建设方案；仅本次运行内缓存，记录各次冷启动及共享割耗时 |
 | 比较面积误差 | `symmetric_difference_area`、`area_error_upper` | kW²；分别为新旧数值内域对称差、利用双方数值内外界得到的上界 |
 | 面积停止精度 | `domain_area_tolerance` | kW²；数值面积区间须达标才能比较信息价值；不覆盖勘察停止容差 5 kW² |
 | 参考计算 | `reference_directory`、`reference_seconds` | 历史比较输出字段，已退役；原值随历史结果保留，正式运行不依赖参考结果文件 |
@@ -660,17 +838,17 @@ python -m unittest tests.test_notation -v
 
 | 迁移对象 | 活动定义 / 处理 | 保持或变化 |
 |---|---|---|
-| 按需对偶构域 | [DomainCache](../survey.py)、[polygon_union](../survey.py) | 从 concept5_dual 提取，名称、字段、预算及割共享规则不变 |
-| 面积增量与评分 | [increase_bounds](../survey.py)、[candidate_values](../survey.py) | 从旧勘察实验提取，形参、概率权重和全部结果键保持不变 |
-| 信息状态与观测 | [information_state](../survey.py)、[simulate_surveys](../survey.py) | 确认/乐观域、两种观测分支及停止证书不变 |
-| 非凸见证 | [nonconvexity_witness](../survey.py) | 形参和 p_a/p_b/p_mid/plan_a/plan_b 保留；solved 改由本次已发现方案组装，方案编号对应本次 schemes.json，不能索引旧枚举表 |
-| 正式五节点入口 | [run_survey](../survey.py) | 新增正式编排入口；替代已退役的 run_comparison 实验入口，不读取旧结果、测试目录或参考面积 |
-| 计算参数 | [BUDGET](../survey.py)、[STOPPING_AREA_TOLERANCE](../survey.py)、[DOMAIN_AREA_TOLERANCE](../survey.py)、[SURVEY_REALIZATION](../survey.py) | 预算 4、勘察停止 5 kW²、数值面积区间 0.5 kW²；示例观测仍为 A/C/E 可用、B/D 不可用、F 未赋真值 |
-| 结果格式 | [run_survey:query_count](../survey.py)、[run_survey:joint_cut_count](../survey.py) | 既有数值含义不变；protocol.schema=survey-v1。reference_directory/reference_seconds 等旧比较字段不进入新结果；比较由测试夹具独立执行 |
+| 按需对偶构域 | 已退役：`survey.py::DomainCache`、已退役：`survey.py::polygon_union` | 从 concept5_dual 提取，名称、字段、预算及割共享规则不变 |
+| 面积增量与评分 | 已退役：`survey.py::increase_bounds`、已退役：`survey.py::candidate_values` | 从旧勘察实验提取，形参、概率权重和全部结果键保持不变 |
+| 信息状态与观测 | 已退役：`survey.py::information_state`、已退役：`survey.py::simulate_surveys` | 确认/乐观域、两种观测分支及停止证书不变 |
+| 非凸见证 | 已退役：`survey.py::nonconvexity_witness` | 形参和 p_a/p_b/p_mid/plan_a/plan_b 保留；solved 改由本次已发现方案组装，方案编号对应本次 schemes.json，不能索引旧枚举表 |
+| 正式五节点入口 | 已退役：`survey.py::run_survey` | 新增正式编排入口；替代已退役的 run_comparison 实验入口，不读取旧结果、测试目录或参考面积 |
+| 计算参数 | 已退役：`survey.py::BUDGET`、已退役：`survey.py::STOPPING_AREA_TOLERANCE`、已退役：`survey.py::DOMAIN_AREA_TOLERANCE`、已退役：`survey.py::SURVEY_REALIZATION` | 预算 4、勘察停止 5 kW²、数值面积区间 0.5 kW²；示例观测仍为 A/C/E 可用、B/D 不可用、F 未赋真值 |
+| 结果格式 | 已退役：`survey.py::run_survey:query_count`、已退役：`survey.py::run_survey:joint_cut_count` | 既有数值含义不变；protocol.schema=survey-v1。reference_directory/reference_seconds 等旧比较字段不进入新结果；比较由测试夹具独立执行 |
 | 输出文件 | results.json、domains.json、cuts.json、schemes.json、audit.json、protocol.json、trace.csv、all_candidates.csv | 数值结果及状态字段不改名；独立 AC 点核查和数值区间写入 audit.json。历史 comparison.json 不改写 |
 | 图件入口 | survey_plot.py | 移动原绘图函数，不再导入实验目录或用户机器上的技能脚本；绘图只读取已计算结果 |
 | 旧基准报告入口 | `plot.save_benchmark_report` | 仅被已退役的两个 benchmark 脚本调用，随实验入口归档；已生成的历史报告保留 |
-| 核心测试依赖 | [joint_benders](../tests/planning_checks.py)、[affordable_designs](../tests/planning_checks.py) | 从临时 benchmark 脚本提取，原名称、形参和逻辑保留；只用于测试，正式主线不导入 |
+| 核心测试依赖 | 已退役：`tests/planning_checks.py::joint_benders`、[affordable_designs](../tests/planning_checks.py) | 从临时 benchmark 脚本提取，原名称、形参和逻辑保留；只用于测试，正式主线不导入 |
 
 所有历史实验的符号、单位与输出说明仍可在冻结契约追溯。清理范围、归档定位和保留结构见 [清理记录](cleanup.md)。
 
@@ -690,7 +868,7 @@ python -m unittest tests.test_notation -v
 
 ## 20. 1.6 整理迁移：勘察绘图统一入口
 
-`survey_plot.py` 合并至 `plot.py` 并删除。勘察绘图只对外提供 [render_survey](../plot.py)，原 `concept_figure/history_figure` 的图形组装合并到该函数，几何绘制和曲线绘制仅作为函数内部的共用辅助步骤。原脚本命令改为 `python plot.py --results <结果目录>`。
+`survey_plot.py` 合并至 `plot.py` 并删除。勘察绘图只对外提供 已退役：`plot.py::render_survey`，原 `concept_figure/history_figure` 的图形组装合并到该函数，几何绘制和曲线绘制仅作为函数内部的共用辅助步骤。原脚本命令改为 `python plot.py --results <结果目录>`。
 
 `render_survey(result, output)` 的参数及 PDF/SVG/PNG 文件名保持不变；输入仍为 `survey-v2` 结果，`p_a/p_b/p_mid`、区域坐标、面积、评分、观测顺序和全部数值字段均不变。保留前两节的历史接口说明用于追溯，不保留旧模块转发或第二套绘图接口。
 
@@ -739,17 +917,17 @@ python -m unittest tests.test_notation -v
 
 | 符号 / 定义 | 固定代码映射 | 单位、形状、产生和消费位置 |
 |---|---|---|
-| SP 线性行系数、右端 | [export_sp](../experiments/fourbus_outer.py) 的 `sp_y/sp_eta/sp_x/sp_p/sp_rhs` | 行数为原线性行加 2*len(y)；列序分别为既有 y、eta、x、p；系数沿用原标幺残差与 kW 输入 |
+| SP 线性行系数、右端 | 已退役：`experiments/fourbus_outer.py::export_sp` 的 `sp_y/sp_eta/sp_x/sp_p/sp_rhs` | 行数为原线性行加 2*len(y)；列序分别为既有 y、eta、x、p；系数沿用原标幺残差与 kW 输入 |
 | 锥仿射映射 | `cone_y/cone_constant/cone_slices` | 各锥依次堆叠头及尾；列按既有 y；由 `operation.cones` 导出，交给完整锥对偶 |
-| μ：线性 <= 行的非负乘子 | [GlobalViolation.row_dual](../experiments/fourbus_outer.py) | `(n_rows,)`，归一化 `-sp_eta @ row_dual <= 1`；不是已有取割 LP 的带符号 `dual` |
-| s：自对偶 Lorentz 锥乘子 | [GlobalViolation.cone_dual](../experiments/fourbus_outer.py) | 堆叠锥维数；头非负，尾自由；满足每个锥约束及 `sp_y.T @ μ = cone_y.T @ s` |
-| 候选点的保守对偶下界 | [GlobalViolation.candidate_lower](../experiments/fourbus_outer.py) | eta 尺度；将 μ 取非负并归一化、将 s 的头提升至不小于尾的范数，再用 y 的有限盒补偿驻点残差，保证 `objective` 是下界而非未经检查的数值目标 |
-| x_j (sp_x.T μ)_j | [GlobalViolation.choice_term](../experiments/fourbus_outer.py) | `(t,)`；用二元指示约束精确表示，不人为截断无界乘子 |
-| R：全局最大最小违反量 | [GlobalViolation.violation](../experiments/fourbus_outer.py) | 标量，沿用 SP 原始 eta 尺度；目标为 max R，R <= μᵀ(sp_x x+sp_p p-sp_rhs)−sᵀcone_constant；不能解释为 kW 或几何距离 |
-| G 候选下界与全局上界 | [GlobalViolation.solve:objective](../experiments/fourbus_outer.py)、[GlobalViolation.solve:bound](../experiments/fourbus_outer.py) | 同 R；objective 由 `candidate_lower` 计算，bound 取本轮求解器界、历史有效界和解析界的最小值，并约束后续 G。外域只收缩，故旧上界仍有效；候选下界不能用来判断停止 |
-| 总负荷方向上界 | [run_experiment.total_bound](../experiments/fourbus_outer.py) | kW，来自全 1 方向 MP2 的 bound；`axis_bounds` 沿用第 24 节定义 |
-| 外域停止阈值 ε | [run_experiment.epsilon](../experiments/fourbus_outer.py) | 原始 eta 尺度，不是 PLANNING_TOL、tau 或 kW；只认证残差精度，不认证面积误差或 AC 可行性 |
-| 已有有效联合割 | [run_experiment.cuts](../experiments/fourbus_outer.py) | 沿用既有 `(1+d+t,)` 数组列表；仅复用同一 FourBus 物理模型的割，默认空；`initial_cut_count` 记录继承条数，不继承旧 G 的目标或上界 |
+| μ：线性 <= 行的非负乘子 | 已退役：`experiments/fourbus_outer.py::GlobalViolation.row_dual` | `(n_rows,)`，归一化 `-sp_eta @ row_dual <= 1`；不是已有取割 LP 的带符号 `dual` |
+| s：自对偶 Lorentz 锥乘子 | 已退役：`experiments/fourbus_outer.py::GlobalViolation.cone_dual` | 堆叠锥维数；头非负，尾自由；满足每个锥约束及 `sp_y.T @ μ = cone_y.T @ s` |
+| 候选点的保守对偶下界 | 已退役：`experiments/fourbus_outer.py::GlobalViolation.candidate_lower` | eta 尺度；将 μ 取非负并归一化、将 s 的头提升至不小于尾的范数，再用 y 的有限盒补偿驻点残差，保证 `objective` 是下界而非未经检查的数值目标 |
+| x_j (sp_x.T μ)_j | 已退役：`experiments/fourbus_outer.py::GlobalViolation.choice_term` | `(t,)`；用二元指示约束精确表示，不人为截断无界乘子 |
+| R：全局最大最小违反量 | 已退役：`experiments/fourbus_outer.py::GlobalViolation.violation` | 标量，沿用 SP 原始 eta 尺度；目标为 max R，R <= μᵀ(sp_x x+sp_p p-sp_rhs)−sᵀcone_constant；不能解释为 kW 或几何距离 |
+| G 候选下界与全局上界 | 已退役：`experiments/fourbus_outer.py::GlobalViolation.solve:objective`、已退役：`experiments/fourbus_outer.py::GlobalViolation.solve:bound` | 同 R；objective 由 `candidate_lower` 计算，bound 取本轮求解器界、历史有效界和解析界的最小值，并约束后续 G。外域只收缩，故旧上界仍有效；候选下界不能用来判断停止 |
+| 总负荷方向上界 | 已退役：`experiments/fourbus_outer.py::run_experiment.total_bound` | kW，来自全 1 方向 MP2 的 bound；`axis_bounds` 沿用第 24 节定义 |
+| 外域停止阈值 ε | 已退役：`experiments/fourbus_outer.py::run_experiment.epsilon` | 原始 eta 尺度，不是 PLANNING_TOL、tau 或 kW；只认证残差精度，不认证面积误差或 AC 可行性 |
+| 已有有效联合割 | 已退役：`experiments/fourbus_outer.py::run_experiment.cuts` | 沿用既有 `(1+d+t,)` 数组列表；仅复用同一 FourBus 物理模型的割，默认空；`initial_cut_count` 记录继承条数，不继承旧 G 的目标或上界 |
 
 FourBus 中零潮流、v=1、压降松弛为零满足全部 SP 硬约束，故 eta* <= max(p)/base（该算例无固定负荷且 q_ratio < 1）。G 使用这条解析上界，不使用任意乘子大 M。固定方案去掉未选型号的零变量和冗余锥后，松弛等式问题有严格可行点；完整锥对偶用于表达最小 SP 值。实验须数值核对固定候选的原始与对偶值、割的全局有效性；求解器上界及结论受数值容差约束。
 
@@ -762,13 +940,13 @@ FourBus 中零潮流、v=1、压降松弛为零满足全部 SP 硬约束，故 e
 
 | 符号 / 定义 | 固定代码映射 | 单位、形状及含义 |
 |---|---|---|
-| 三维扫描点及间距 | [scan_grid.power](../experiments/fourbus_outer_scan.py)、[scan_grid.grid_step](../experiments/fourbus_outer_scan.py) | kW，`(N,3)` 与标量；均匀体素中心，网格箱向上取整覆盖轴向上界 |
-| 逐点 SOCP 参考标签 | [scan_grid.reference](../experiments/fourbus_outer_scan.py) | `(N,)`；1 表示完整模型可行，-1 表示全局判定不可行；异常或质量不合格直接停止，不计为不可行 |
-| 首次被负荷投影外域排除的轮次 | [scan_grid.first_exclusion](../experiments/fourbus_outer_scan.py) | `(N,)`；0 表示初始化已排除，k 表示第 k 条割后首次排除，K+1 表示最终仍保留；固定 p、放开全部 x 查询联合割投影，利用嵌套性二分查找 |
-| 负荷比例 w 与径向容量 ρ | [scan_rays.weights](../experiments/fourbus_outer_scan.py)、[scan_rays.radial_total](../experiments/fourbus_outer_scan.py) | w 无量纲、非负且和为 1；ρ 为 kW，p=ρw；每条射线分别最大化完整 SOCP 与联合割外域中的总负荷 |
-| 方向扫描参考、外域容量 | [scan_rays.reference_total](../experiments/fourbus_outer_scan.py)、[scan_rays.outer_total](../experiments/fourbus_outer_scan.py) | kW，两个独立优化问题；同时保存各自全局上界。差值是相同负荷比例的总量差，不是欧氏距离 |
-| 候选 SP 最优违反量 | [candidate_eta](../experiments/fourbus_outer_scan.py) | 固定历史 x,p 后重新求原始 SOCP 的最小 eta，沿用原始残差尺度；是事后复核，不能作为原运行时已计算的记录 |
-| 有效历史 G 上界 | [run_scan.effective_bound](../experiments/fourbus_outer_scan.py) | eta 尺度；跨 61+20 轮取已有有效界的累积最小值。续算程序本身未继承此界，图注明确区别原记录和后处理 |
+| 三维扫描点及间距 | 已退役：`experiments/fourbus_outer_scan.py::scan_grid.power`、已退役：`experiments/fourbus_outer_scan.py::scan_grid.grid_step` | kW，`(N,3)` 与标量；均匀体素中心，网格箱向上取整覆盖轴向上界 |
+| 逐点 SOCP 参考标签 | 已退役：`experiments/fourbus_outer_scan.py::scan_grid.reference` | `(N,)`；1 表示完整模型可行，-1 表示全局判定不可行；异常或质量不合格直接停止，不计为不可行 |
+| 首次被负荷投影外域排除的轮次 | 已退役：`experiments/fourbus_outer_scan.py::scan_grid.first_exclusion` | `(N,)`；0 表示初始化已排除，k 表示第 k 条割后首次排除，K+1 表示最终仍保留；固定 p、放开全部 x 查询联合割投影，利用嵌套性二分查找 |
+| 负荷比例 w 与径向容量 ρ | 已退役：`experiments/fourbus_outer_scan.py::scan_rays.weights`、已退役：`experiments/fourbus_outer_scan.py::scan_rays.radial_total` | w 无量纲、非负且和为 1；ρ 为 kW，p=ρw；每条射线分别最大化完整 SOCP 与联合割外域中的总负荷 |
+| 方向扫描参考、外域容量 | 已退役：`experiments/fourbus_outer_scan.py::scan_rays.reference_total`、已退役：`experiments/fourbus_outer_scan.py::scan_rays.outer_total` | kW，两个独立优化问题；同时保存各自全局上界。差值是相同负荷比例的总量差，不是欧氏距离 |
+| 候选 SP 最优违反量 | 已退役：`experiments/fourbus_outer_scan.py::candidate_eta` | 固定历史 x,p 后重新求原始 SOCP 的最小 eta，沿用原始残差尺度；是事后复核，不能作为原运行时已计算的记录 |
+| 有效历史 G 上界 | 已退役：`experiments/fourbus_outer_scan.py::run_scan.effective_bound` | eta 尺度；跨 61+20 轮取已有有效界的累积最小值。续算程序本身未继承此界，图注明确区别原记录和后处理 |
 | 扫描体积估计 | `grid_step**3 * count` | kW³；体素中心分类的数值估计，不是内/外域连续体积证书；跨方案射线边界的连线/曲面也仅用于显示插值 |
 
 完整迭代链须校验续算前缀割与原 61 条逐项一致。图中方案编号 S01… 按初始化及候选首次出现编号，仅表示实际访问的方案；G 候选的方案不等于已通过 SP 认证的方案。不把其他试运行拼接进这条迭代链。
@@ -781,21 +959,21 @@ FourBus 中零潮流、v=1、压降松弛为零满足全部 SP 硬约束，故 e
 
 | 数学量 / 定义 | 固定代码映射 | 单位、形状与使用位置 |
 |---|---|---|
-| 负荷块上下界 | [CornerViolation.solve_box.box_lower](../experiments/fourbus_outer_partition.py)、[CornerViolation.solve_box.box_upper](../experiments/fourbus_outer_partition.py) | kW，`(d,)`；约束 `problem.power`，保持 p 为外域交集见证的原语义 |
-| theta=sp_p.T mu | [CornerViolation.theta](../experiments/fourbus_outer_partition.py) | `(d,)`，eta/kW；保留全部原始对偶约束和聚合等式；由 eta 归一化推出上下界，不任意截断乘子 |
-| 角点选择位 b | [CornerViolation.corner_bits](../experiments/fourbus_outer_partition.py) | 二元 `(d,)`；c=box_lower+(box_upper-box_lower)*b；一次 MISOCP 隐式选择全部 2**d 个角点 |
-| t_j=b_j theta_j | [CornerViolation.corner_term](../experiments/fourbus_outer_partition.py) | `(d,)`；有有效 theta 界的精确二元乘积线性化；不含连续双线性项 |
-| 实际评估角点 c | [CornerViolation.solve_box:corner](../experiments/fourbus_outer_partition.py) | kW，`(d,)`；与返回键 p 区分，角点本身不要求满足当前割 |
-| 角点下界 / 块上界 | [CornerViolation.solve_box:objective](../experiments/fourbus_outer_partition.py)、[CornerViolation.solve_box:bound](../experiments/fourbus_outer_partition.py) | eta 尺度；objective 只是在角点的对偶下界，不能当作外域反例；bound 取父块有效界、解析界及求解器全局界的最小值 |
-| 块内真实候选 | [CornerViolation.witness](../experiments/fourbus_outer_partition.py) | 固定角点模型返回的 x 和乘子，在同一块与外域内最大化对偶负荷线性项；返回既有 x/p 字段，调用原 SP 检查 |
-| 分块全局上界 | [run_trial:bound](../experiments/fourbus_outer_partition.py) | 所有待处理块及已认证块有效界的最大值；分裂子块继承父界，加割后旧界仍有效；不得跨不相交块传递较小的局部界 |
-| 对照运行时间 | [run_trial:seconds](../experiments/fourbus_outer_partition.py) | 秒；包含本方法建模、求解、SP、切割与保存，不包含两方法共享且单列的 MP2 初始化；形参 seconds 是整体时限 |
+| 负荷块上下界 | 已退役：`experiments/fourbus_outer_partition.py::CornerViolation.solve_box.box_lower`、已退役：`experiments/fourbus_outer_partition.py::CornerViolation.solve_box.box_upper` | kW，`(d,)`；约束 `problem.power`，保持 p 为外域交集见证的原语义 |
+| theta=sp_p.T mu | 已退役：`experiments/fourbus_outer_partition.py::CornerViolation.theta` | `(d,)`，eta/kW；保留全部原始对偶约束和聚合等式；由 eta 归一化推出上下界，不任意截断乘子 |
+| 角点选择位 b | 已退役：`experiments/fourbus_outer_partition.py::CornerViolation.corner_bits` | 二元 `(d,)`；c=box_lower+(box_upper-box_lower)*b；一次 MISOCP 隐式选择全部 2**d 个角点 |
+| t_j=b_j theta_j | 已退役：`experiments/fourbus_outer_partition.py::CornerViolation.corner_term` | `(d,)`；有有效 theta 界的精确二元乘积线性化；不含连续双线性项 |
+| 实际评估角点 c | 已退役：`experiments/fourbus_outer_partition.py::CornerViolation.solve_box:corner` | kW，`(d,)`；与返回键 p 区分，角点本身不要求满足当前割 |
+| 角点下界 / 块上界 | 已退役：`experiments/fourbus_outer_partition.py::CornerViolation.solve_box:objective`、已退役：`experiments/fourbus_outer_partition.py::CornerViolation.solve_box:bound` | eta 尺度；objective 只是在角点的对偶下界，不能当作外域反例；bound 取父块有效界、解析界及求解器全局界的最小值 |
+| 块内真实候选 | 已退役：`experiments/fourbus_outer_partition.py::CornerViolation.witness` | 固定角点模型返回的 x 和乘子，在同一块与外域内最大化对偶负荷线性项；返回既有 x/p 字段，调用原 SP 检查 |
+| 分块全局上界 | 已退役：`experiments/fourbus_outer_partition.py::run_trial:bound` | 所有待处理块及已认证块有效界的最大值；分裂子块继承父界，加割后旧界仍有效；不得跨不相交块传递较小的局部界 |
+| 对照运行时间 | 已退役：`experiments/fourbus_outer_partition.py::run_trial:seconds` | 秒；包含本方法建模、求解、SP、切割与保存，不包含两方法共享且单列的 MP2 初始化；形参 seconds 是整体时限 |
 
 原始双线性基线使用既有 GlobalViolation，不更改候选或停止策略。两方法共享初始化、预算、epsilon、线程、单次及整体时限；均只在全局上界不超过 epsilon 时报告认证。达到实验时限保留未认证状态，不作为失败补救。新增割来自同一个原 SP；区域仍为 SOCP 联合外域，不宣称 AC 或几何精度证书。
 
 角点模型固定设置 `NonConvex=0`、`MIPGap=0`、`MIPGapAbs=1e-7`。初始原生 MISOCP 试验尝试过 `PreMIQCPForm=2`（锥分解预处理），首个块可解但后续块仍数值失败，因此不作为正式比较方法。正式循环不含失败后重试。
 
-继续分块时，原生 MISOCP 即使采用上述设置仍出现数值终止。因此比较实验预先选用 [PolyhedralCornerViolation](../experiments/fourbus_outer_partition.py)：用 `s_head >= +/-s_tail[i]` 初始化锥外逼近，反复解 MILP 后补充 `s_head >= direction @ s_tail`，其中 direction 的范数不超过 1。全部平面均对完整对偶锥有效，MILP 的全局界仍是保守上界；候选下界继续用原完整锥投影与状态盒残差修正。这个循环是明确的锥外逼近算法，不是数值失败后切换求解器。`oa_iterations` 记录本次角点查询内部的 MILP 求解数，`oa_planes` 记录累计追加锥切面数。所有角点共享这些有效锥切面；块上界仅在同一块及其子块之间继承。
+继续分块时，原生 MISOCP 即使采用上述设置仍出现数值终止。因此比较实验预先选用 已退役：`experiments/fourbus_outer_partition.py::PolyhedralCornerViolation`：用 `s_head >= +/-s_tail[i]` 初始化锥外逼近，反复解 MILP 后补充 `s_head >= direction @ s_tail`，其中 direction 的范数不超过 1。全部平面均对完整对偶锥有效，MILP 的全局界仍是保守上界；候选下界继续用原完整锥投影与状态盒残差修正。这个循环是明确的锥外逼近算法，不是数值失败后切换求解器。`oa_iterations` 记录本次角点查询内部的 MILP 求解数，`oa_planes` 记录累计追加锥切面数。所有角点共享这些有效锥切面；块上界仅在同一块及其子块之间继承。
 
 新增锥切面的整行固定乘 1000，以避免很接近的相邻切面在绝对线性约束容差下失去分辨率；不改变乘子变量或目标尺度。原始锥候选下界仍按未缩放的锥范数修正，`PLANNING_TOL` 不变。
 
@@ -803,7 +981,7 @@ FourBus 中零潮流、v=1、压降松弛为零满足全部 SP 硬约束，故 e
 
 `experiments/fourbus_partition_report.py` 读取两方法的实际运行轨迹，并复用第 26 节独立 SOCP 射线参考。`reference_total/outer_total`、`max_radial_difference/mean_radial_difference/min_radial_difference` 保持原名称和 kW 含义；固定负荷比例下的容量差不等于全局 eta 上界。对全部新割在无预算限制的完整 SOCP 可行域上最小化割余量，逐候选复算原始 min eta，分别检查全局割有效性及候选下界/块上界关系。核查和绘图耗时不计入方法运行时间。
 
-[match_boundary_accuracy](../experiments/fourbus_partition_report.py) 利用加入割后外域嵌套的性质，对两种方法的割前缀分别二分查询，在全部相同 861 条参考射线上寻找最大容量差首次不超过基线最终值的割数量（比较容差 `comparison_tolerance_kw=1e-5` kW）；`accuracy_match` 的 `cut_count/seconds/checked_prefixes` 对应分块法，`baseline_cut_count/baseline_seconds/baseline_checked_prefixes` 对应基线，`target_max_radial_difference` 是共同误差标准。时间取原运行中生成该条割的时刻，不把事后扫描耗时计入，也不把基线首次达标之后的时间算作其达标耗时。`speed_ratio` 是两者首次达标时间之比，仅对应这组有限射线，不是全局连续认证速度。
+已退役：`experiments/fourbus_partition_report.py::match_boundary_accuracy` 利用加入割后外域嵌套的性质，对两种方法的割前缀分别二分查询，在全部相同 861 条参考射线上寻找最大容量差首次不超过基线最终值的割数量（比较容差 `comparison_tolerance_kw=1e-5` kW）；`accuracy_match` 的 `cut_count/seconds/checked_prefixes` 对应分块法，`baseline_cut_count/baseline_seconds/baseline_checked_prefixes` 对应基线，`target_max_radial_difference` 是共同误差标准。时间取原运行中生成该条割的时刻，不把事后扫描耗时计入，也不把基线首次达标之后的时间算作其达标耗时。`speed_ratio` 是两者首次达标时间之比，仅对应这组有限射线，不是全局连续认证速度。
 
 ## 28. FourBus 单次割的外域体积停滞实验
 
@@ -811,13 +989,13 @@ FourBus 中零潮流、v=1、压降松弛为零满足全部 SP 硬约束，故 e
 
 | 数学量 / 定义 | 固定代码映射 | 单位、形状与使用位置 |
 |---|---|---|
-| 全部预算内合法建设向量 | [budget_schemes](../experiments/fourbus_outer_volume.py)、[ProjectedOuterVolume.schemes](../experiments/fourbus_outer_volume.py) | 二元 `(N,t)`；仅小规模 FourBus 的精确体积测量枚举 x，复用原拓扑预算模型逐方案排除；全局搜索 G 不使用这份列表 |
-| 各方案当前外域顶点 | [ProjectedOuterVolume.polytopes](../experiments/fourbus_outer_volume.py) | 每项 `(n_vertices,3)`，坐标为 p/axis_bounds；逐条联合割裁剪，所有合法方案均保留 |
-| V_k：第 k 条割后的投影外域并集体积 | [ProjectedOuterVolume.outer_volume](../experiments/fourbus_outer_volume.py)、[ProjectedOuterVolume.add_cut:outer_volume](../experiments/fourbus_outer_volume.py) | kW³；复用 `union_volume` 扣除重叠，按 `prod(axis_bounds)` 恢复单位；浮点连续多面体几何，非体素/随机估计 |
-| 单条割减少的体积 | [ProjectedOuterVolume.add_cut:volume_reduction](../experiments/fourbus_outer_volume.py) | V_(k-1)-V_k，kW³ |
-| 单条割的相对体积减少 | [ProjectedOuterVolume.add_cut:volume_reduction_ratio](../experiments/fourbus_outer_volume.py) | (V_(k-1)-V_k)/V_(k-1)，无量纲，以加割前的当前体积为分母 |
-| 体积停滞阈值 | [run_trial.volume_threshold](../experiments/fourbus_outer_partition.py) | 本次实验为 0.001，即 0.1%；首条满足严格小于的割即停止，不额外增加连续次数或预热轮数 |
-| 体积测量时间 | [ProjectedOuterVolume.add_cut:volume_seconds](../experiments/fourbus_outer_volume.py)、[run_trial:volume_seconds](../experiments/fourbus_outer_partition.py) | 秒；逐割量和累计量。累计含本方法的枚举/几何初始化，包含在 run_trial 原有 seconds 中 |
+| 全部预算内合法建设向量 | [budget_schemes](../vertify.py)、已退役：`experiments/fourbus_outer_volume.py::ProjectedOuterVolume.schemes` | 二元 `(N,t)`；仅小规模 FourBus 的精确体积测量枚举 x，复用原拓扑预算模型逐方案排除；全局搜索 G 不使用这份列表 |
+| 各方案当前外域顶点 | 已退役：`experiments/fourbus_outer_volume.py::ProjectedOuterVolume.polytopes` | 每项 `(n_vertices,3)`，坐标为 p/axis_bounds；逐条联合割裁剪，所有合法方案均保留 |
+| V_k：第 k 条割后的投影外域并集体积 | 已退役：`experiments/fourbus_outer_volume.py::ProjectedOuterVolume.outer_volume`、已退役：`experiments/fourbus_outer_volume.py::ProjectedOuterVolume.add_cut:outer_volume` | kW³；复用 `union_volume` 扣除重叠，按 `prod(axis_bounds)` 恢复单位；浮点连续多面体几何，非体素/随机估计 |
+| 单条割减少的体积 | 已退役：`experiments/fourbus_outer_volume.py::ProjectedOuterVolume.add_cut:volume_reduction` | V_(k-1)-V_k，kW³ |
+| 单条割的相对体积减少 | 已退役：`experiments/fourbus_outer_volume.py::ProjectedOuterVolume.add_cut:volume_reduction_ratio` | (V_(k-1)-V_k)/V_(k-1)，无量纲，以加割前的当前体积为分母 |
+| 体积停滞阈值 | 已退役：`experiments/fourbus_outer_partition.py::run_trial.volume_threshold` | 本次实验为 0.001，即 0.1%；首条满足严格小于的割即停止，不额外增加连续次数或预热轮数 |
+| 体积测量时间 | 已退役：`experiments/fourbus_outer_volume.py::ProjectedOuterVolume.add_cut:volume_seconds`、已退役：`experiments/fourbus_outer_partition.py::run_trial:volume_seconds` | 秒；逐割量和累计量。累计含本方法的枚举/几何初始化，包含在 run_trial 原有 seconds 中 |
 
 `status='volume_stagnation'` 是用户指定的启发式停止，`certified=False`；不能写成残差认证、真实域体积误差 <0.1% 或连续域无遗漏证书。一条割可能只收紧单个网架的截面，而被其他方案覆盖，导致投影体积没有变化。共享 MP2 初始化时间另列，算法总耗时为 `seconds+initial_seconds`；事后有效割审核与 861 条 SOCP 参考射线核查不计入算法耗时。此精确体积实现的方案枚举只用于小算例比较，不声称可直接扩展到大量建设变量。
 
@@ -829,11 +1007,11 @@ FourBus 中零潮流、v=1、压降松弛为零满足全部 SP 硬约束，故 e
 
 | 数学量 / 定义 | 固定代码映射 | 单位、形状与边界 |
 |---|---|---|
-| e(w)=100[ρ_outer(w)−ρ_ref(w)]/ρ_ref(w) | [make_threshold_report.radial_difference_percent](../experiments/fourbus_threshold_report.py) | %，每方法 `(861,)`；微小负数保留，不截断数据 |
-| 射线相对误差均值、最大值、95 分位 | [make_threshold_report:mean_radial_difference_percent](../experiments/fourbus_threshold_report.py)、[make_threshold_report:max_radial_difference_percent](../experiments/fourbus_threshold_report.py)、[make_threshold_report:p95_radial_difference_percent](../experiments/fourbus_threshold_report.py) | %；均值为 861 条离散射线等权均值，不声称按球面面积均匀加权 |
-| V_mesh=Σ_T abs(det(p_T0,p_T1,p_T2))/6 | [make_threshold_report.mesh_volume](../experiments/fourbus_threshold_report.py) | kW³；以全部射线前沿点和原点组成三角锥的体积和，仅为插值表面的体积估计 |
-| 三角网格体积相对高估 | [make_threshold_report:mesh_volume_difference_percent](../experiments/fourbus_threshold_report.py) | 100(V_outer,mesh−V_ref,mesh)/V_ref,mesh，%；不是连续真实域体积的精确误差，也不是认证内域或停止判据 |
-| 含共享初始化的总时间 | [make_threshold_report:total_seconds](../experiments/fourbus_threshold_report.py) | `seconds+initial_seconds`，秒；独立扫描、审割和绘图均不计入算法耗时 |
+| e(w)=100[ρ_outer(w)−ρ_ref(w)]/ρ_ref(w) | 已退役：`experiments/fourbus_threshold_report.py::make_threshold_report.radial_difference_percent` | %，每方法 `(861,)`；微小负数保留，不截断数据 |
+| 射线相对误差均值、最大值、95 分位 | 已退役：`experiments/fourbus_threshold_report.py::make_threshold_report:mean_radial_difference_percent`、已退役：`experiments/fourbus_threshold_report.py::make_threshold_report:max_radial_difference_percent`、已退役：`experiments/fourbus_threshold_report.py::make_threshold_report:p95_radial_difference_percent` | %；均值为 861 条离散射线等权均值，不声称按球面面积均匀加权 |
+| V_mesh=Σ_T abs(det(p_T0,p_T1,p_T2))/6 | 已退役：`experiments/fourbus_threshold_report.py::make_threshold_report.mesh_volume` | kW³；以全部射线前沿点和原点组成三角锥的体积和，仅为插值表面的体积估计 |
+| 三角网格体积相对高估 | 已退役：`experiments/fourbus_threshold_report.py::make_threshold_report:mesh_volume_difference_percent` | 100(V_outer,mesh−V_ref,mesh)/V_ref,mesh，%；不是连续真实域体积的精确误差，也不是认证内域或停止判据 |
+| 含共享初始化的总时间 | 已退役：`experiments/fourbus_threshold_report.py::make_threshold_report:total_seconds` | `seconds+initial_seconds`，秒；独立扫描、审割和绘图均不计入算法耗时 |
 
 两张图统一坐标范围、视角及百分比色标；a 为三维射线前沿的三角网格插值比较，b 为完整负荷比例三角形上的相对容量误差。跨网架的点只用于明确标注的插值显示，不取凸包、不作为认证区域。原始点、参考求解器界、实际停止轨迹及全部相对误差保存以供复核。
 
@@ -845,10 +1023,10 @@ FourBus 中零潮流、v=1、压降松弛为零满足全部 SP 硬约束，故 e
 
 | 数学量 / 定义 | 固定代码映射 | 单位、形状与用途 |
 |---|---|---|
-| ρ_region(w)=max{ρ>=0:ρw 属于给定多面体并集} | [region_radial_capacity](../experiments/fourbus_mainline_comparison.py) | kW，逐射线先计算各多面体的可行区间，再取最大上端点；保留不同方案并集，不混合顶点取凸包 |
-| 主线认证内域的逐射线总负荷 | [run_mainline_comparison.inner_total](../experiments/fourbus_mainline_comparison.py) | kW，`(861,)`；与已有 `outer_total/reference_total` 的边界总量意义一致 |
-| 100(ρ_ref−ρ_inner)/ρ_ref 的最大、平均值 | [run_mainline_comparison:max_inner_difference_percent](../experiments/fourbus_mainline_comparison.py)、[run_mainline_comparison:mean_inner_difference_percent](../experiments/fourbus_mainline_comparison.py) | %；主线认证内域低估，分块法没有相应内域，不编造该指标 |
-| 实际含初始化算法时间 | [run_mainline_comparison:total_seconds](../experiments/fourbus_mainline_comparison.py) | 秒；主线直接取 `timing.total_seconds`，分块取 `seconds+initial_seconds`；事后几何射线分析不计入 |
+| ρ_region(w)=max{ρ>=0:ρw 属于给定多面体并集} | 已退役：`experiments/fourbus_mainline_comparison.py::region_radial_capacity` | kW，逐射线先计算各多面体的可行区间，再取最大上端点；保留不同方案并集，不混合顶点取凸包 |
+| 主线认证内域的逐射线总负荷 | 已退役：`experiments/fourbus_mainline_comparison.py::run_mainline_comparison.inner_total` | kW，`(861,)`；与已有 `outer_total/reference_total` 的边界总量意义一致 |
+| 100(ρ_ref−ρ_inner)/ρ_ref 的最大、平均值 | 已退役：`experiments/fourbus_mainline_comparison.py::run_mainline_comparison:max_inner_difference_percent`、已退役：`experiments/fourbus_mainline_comparison.py::run_mainline_comparison:mean_inner_difference_percent` | %；主线认证内域低估，分块法没有相应内域，不编造该指标 |
+| 实际含初始化算法时间 | 已退役：`experiments/fourbus_mainline_comparison.py::run_mainline_comparison:total_seconds` | 秒；主线直接取 `timing.total_seconds`，分块取 `seconds+initial_seconds`；事后几何射线分析不计入 |
 
 其余射线容量差、相对误差、三角网格体积估计继续采用第 26、29 节名称和定义。参考射线复用同一未变化物理模型的第 29 节独立求解数据；所有重复运行均计算误差，保存逐次结果和中位数/范围。图形使用其中耗时位于中位数的实际运行展示三维域，误差曲线保留全部重复运行，耗时图显示全部观测值。
 
@@ -860,13 +1038,13 @@ FourBus 中零潮流、v=1、压降松弛为零满足全部 SP 硬约束，故 e
 
 | 数学量 / 定义 | 固定代码映射 | 单位、形状与用途 |
 |---|---|---|
-| eta*(x,p)，原始 SOCP 最优违反量 | [ScoredSubProblem.solve:eta](../experiments/fourbus_vertex_priority.py) | 原 SP 残差尺度；在替换锥为支撑平面前保存，用于候选排序 |
-| 已计算的固定参数 SP 结果 | [ScoredSubProblem.cache](../experiments/fourbus_vertex_priority.py) | 精确 `(tuple(x), tuple(power))` 为键，值含 eta/feasible/state/cut；割布局、运行状态及可行标准不变 |
-| 缓存命中次数 | [ScoredSubProblem.cache_hits](../experiments/fourbus_vertex_priority.py) | 整数；不计入实际 SP 求解次数 `calls` |
-| 候选评分轮次 | [build_vertex_priority_region.scoring_rounds](../experiments/fourbus_vertex_priority.py) | 一次固定普通候选集的批量评分算一轮 |
-| 全局剩余域调用次数 | [build_vertex_priority_region.global_search](../experiments/fourbus_vertex_priority.py) | 次；仍使用 light 模式、原 tau 和 GEOMETRY_TOL |
-| 每轮待评分候选数 | [build_vertex_priority_region:candidate_count](../experiments/fourbus_vertex_priority.py) | 次；包括复用缓存的候选，不能当成新 SP 次数 |
-| 实验联合割与计算轨迹 | [build_vertex_priority_region:cuts](../experiments/fourbus_vertex_priority.py)、[build_vertex_priority_region:trace](../experiments/fourbus_vertex_priority.py) | 割保持 `[alpha,*beta,*delta]`；轨迹保存选点/评分/全局覆盖检查，不保存运行状态向量 |
+| eta*(x,p)，原始 SOCP 最优违反量 | 已退役：`experiments/fourbus_vertex_priority.py::ScoredSubProblem.solve:eta` | 原 SP 残差尺度；在替换锥为支撑平面前保存，用于候选排序 |
+| 已计算的固定参数 SP 结果 | 已退役：`experiments/fourbus_vertex_priority.py::ScoredSubProblem.cache` | 精确 `(tuple(x), tuple(power))` 为键，值含 eta/feasible/state/cut；割布局、运行状态及可行标准不变 |
+| 缓存命中次数 | 已退役：`experiments/fourbus_vertex_priority.py::ScoredSubProblem.cache_hits` | 整数；不计入实际 SP 求解次数 `calls` |
+| 候选评分轮次 | 已退役：`experiments/fourbus_vertex_priority.py::build_vertex_priority_region.scoring_rounds` | 一次固定普通候选集的批量评分算一轮 |
+| 全局剩余域调用次数 | 已退役：`experiments/fourbus_vertex_priority.py::build_vertex_priority_region.global_search` | 次；仍使用 light 模式、原 tau 和 GEOMETRY_TOL |
+| 每轮待评分候选数 | 已退役：`experiments/fourbus_vertex_priority.py::build_vertex_priority_region:candidate_count` | 次；包括复用缓存的候选，不能当成新 SP 次数 |
+| 实验联合割与计算轨迹 | 已退役：`experiments/fourbus_vertex_priority.py::build_vertex_priority_region:cuts`、已退役：`experiments/fourbus_vertex_priority.py::build_vertex_priority_region:trace` | 割保持 `[alpha,*beta,*delta]`；轨迹保存选点/评分/全局覆盖检查，不保存运行状态向量 |
 
 对照直接调用原主线；两方法均为 FourBus、预算 20,000 元、tau=0.002、求解器 4 线程、数值库 1 线程，独立初始化、重复 3 次。含初始化总耗时只统计算法，不含事后参考射线核验与绘图。比较实际返回的认证内域与最终外包络；第 30 节的逐射线容量、内域低估和外域高估定义不变。全部 861 条 SOCP 参考射线仅用于事后评价，不参与候选评分或停止。
 
@@ -876,12 +1054,12 @@ FourBus 中零潮流、v=1、压降松弛为零满足全部 SP 硬约束，故 e
 
 | 数学量 / 定义 | 固定代码映射 | 单位、形状与用途 |
 |---|---|---|
-| 两次全局搜索之间的实际新增 SP 次数阈值 | [build_vertex_priority_region.refinement_checks](../experiments/fourbus_vertex_priority.py) | 默认 `REFINEMENT_CHECKS=96`；实验取 96/32/16；检查发生于评分批次或当前见证支撑处理结束后，不是逐个 SP 的强制中断 |
-| 普通候选最大 eta 的全局搜索触发阈值 | [build_vertex_priority_region.eta_trigger](../experiments/fourbus_vertex_priority.py) | 默认 `None` 禁用；启用为 0.01，使用原始 SP 残差尺度，不是 kW 或几何误差 |
-| 是否已请求下一轮全局搜索 | [build_vertex_priority_region.global_requested](../experiments/fourbus_vertex_priority.py) | 布尔调度状态；仅普通评分轮选中点的 eta 严格小于 eta_trigger 时设置，全局搜索后清除 |
-| 全局搜索本次触发原因 | [build_vertex_priority_region:trigger](../experiments/fourbus_vertex_priority.py) | 字符串列表：`empty` 为普通候选空，`interval` 为新增 SP 达阈值，`eta` 为低违反量请求；允许多个原因同时成立 |
-| 首次全局搜索前的实际 SP 数 | [run_global_schedule_comparison:first_global_sp](../experiments/fourbus_global_schedule.py) | 次；来自首条全局轨迹的累计 sp，用于核实批处理后的实际触发时刻 |
-| 各原因实际出现次数 | [run_global_schedule_comparison:trigger_counts](../experiments/fourbus_global_schedule.py) | 按 empty/interval/eta 计数；原因非互斥，不能相加替代 global_search |
+| 两次全局搜索之间的实际新增 SP 次数阈值 | 已退役：`experiments/fourbus_vertex_priority.py::build_vertex_priority_region.refinement_checks` | 默认 `REFINEMENT_CHECKS=96`；实验取 96/32/16；检查发生于评分批次或当前见证支撑处理结束后，不是逐个 SP 的强制中断 |
+| 普通候选最大 eta 的全局搜索触发阈值 | 已退役：`experiments/fourbus_vertex_priority.py::build_vertex_priority_region.eta_trigger` | 默认 `None` 禁用；启用为 0.01，使用原始 SP 残差尺度，不是 kW 或几何误差 |
+| 是否已请求下一轮全局搜索 | 已退役：`experiments/fourbus_vertex_priority.py::build_vertex_priority_region.global_requested` | 布尔调度状态；仅普通评分轮选中点的 eta 严格小于 eta_trigger 时设置，全局搜索后清除 |
+| 全局搜索本次触发原因 | 已退役：`experiments/fourbus_vertex_priority.py::build_vertex_priority_region:trigger` | 字符串列表：`empty` 为普通候选空，`interval` 为新增 SP 达阈值，`eta` 为低违反量请求；允许多个原因同时成立 |
+| 首次全局搜索前的实际 SP 数 | 已退役：`experiments/fourbus_global_schedule.py::run_global_schedule_comparison:first_global_sp` | 次；来自首条全局轨迹的累计 sp，用于核实批处理后的实际触发时刻 |
+| 各原因实际出现次数 | 已退役：`experiments/fourbus_global_schedule.py::run_global_schedule_comparison:trigger_counts` | 按 empty/interval/eta 计数；原因非互斥，不能相加替代 global_search |
 
 低违反量判定为：先收入本批全部可行证书，再在仍未覆盖的不可行候选集合上取最大 eta；这个最大值小于阈值时，先应用已经取得的获选有效割，然后下一轮请求全局搜索。不能因某一个非最大候选 eta 很小而跳过其他严重违反者；活动全局见证的支撑 SP 也不单独触发该规则，避免打断同网架覆盖进展。无剩余不可行候选时沿用候选空触发。
 
@@ -892,7 +1070,7 @@ FourBus 中零潮流、v=1、压降松弛为零满足全部 SP 硬约束，故 e
 本节覆盖前述历史版本的入口、记录与展示约定，历史实验数据不改写。
 
 - `build_continuous_region` 的普通候选按原始 SP 最优违反量 `eta` 降序选割；先收入该批全部可行点，再移除已被任一内域覆盖的候选。内部见证仍补同一网架支撑，不能跨网架取凸包。
-- [REFINEMENT_CHECKS](../continuous.py) 改为 32，计数仅含实际新增 SP 求解，缓存命中不计数；评分批次及活动见证完成后检查。生产算法没有 `eta_trigger`，没有 0.01 调度或停止阈值；终止仍须全局覆盖证书。
+- 已退役：`continuous.py::REFINEMENT_CHECKS` 改为 32，计数仅含实际新增 SP 求解，缓存命中不计数；评分批次及活动见证完成后检查。生产算法没有 `eta_trigger`，没有 0.01 调度或停止阈值；终止仍须全局覆盖证书。
 - [SubProblem.solve:eta](../model.py) 新增为原始 SP（替换锥之前）的最优违反量，无量纲；已有 `feasible/state/cut` 不改名。主线以 `(tuple(x), tuple(power))` 为精确缓存键，不对负荷取整；缓存属于本次构域，不落盘。
 - [FourBus.__init__.load_nodes](../Network/four_bus_five_corridor.py) 新增可选负荷节点参数，类默认仍为 `(1,2,3)`，以保留既有三维实验。`main.main` 显式传 `(1,2)`；节点 3 的有功、无功均固定为原始值 0，仍是必须连接的节点。这是二维切片，不是将第三负荷投影消去。
 - `main.run` 改为单预算 SOCP 入口；旧 `budgets/recompute/keep_ui/step_by_step`、多网络选择常量与 `BenchmarkResult` 结果入口退役。`build_continuous_region` 保留物理模型入口和历史调用所需的 `method/residual_mode/cuts/progress/clock`，默认主线只传 `socp/light`。旧勘察仍可单独调用 `survey.py`。
@@ -905,9 +1083,9 @@ FourBus 中零潮流、v=1、压降松弛为零满足全部 SP 硬约束，故 e
 | 新增量 | 代码映射 | 定义 |
 |---|---|---|
 | 单次运行预算 | [BUDGET](../main.py)、[run.budget](../main.py) | FourBus 默认 20000 元 |
-| 独立 SOCP 扫描 | [validate_socp_region](../vertify.py) | 固定每个二维网格中心的 `p`，完整 MISOCP 自由选择全部合法 `x,y`；不用构域割或已知方案列表 |
-| 扫描标签 | [validate_socp_region:states](../vertify.py) | `(divisions, divisions)`，1 可行，-1 不可行；不是 AC 真值 |
-| 多余 / 遗漏百分比 | [RunMonitor.validation:fr_percent](../monitor.py)、[RunMonitor.validation:mr_percent](../monitor.py) | 保留原分母：FR = 多余格点/算法内域格点；MR = 遗漏格点/扫描可行格点，均乘 100；空分母为 None |
+| 独立 SOCP 扫描 | 已退役：`vertify.py::validate_socp_region` | 固定每个二维网格中心的 `p`，完整 MISOCP 自由选择全部合法 `x,y`；不用构域割或已知方案列表 |
+| 扫描标签 | 已退役：`vertify.py::validate_socp_region:states` | `(divisions, divisions)`，1 可行，-1 不可行；不是 AC 真值 |
+| 多余 / 遗漏百分比 | [comparison_metrics:fr_percent](../monitor.py)、[comparison_metrics:mr_percent](../monitor.py) | 保留原分母：FR = 多余格点/算法内域格点；MR = 遗漏格点/扫描可行格点，均乘 100；空分母为 None |
 | 全局 / SP 点 | [RunMonitor.global_end](../monitor.py)、[RunMonitor.sp_start](../monitor.py) | 实际 kW 坐标分别记录，不互相覆盖；红色菱形 / 橙色圆点；SP 支撑点可不同于全局见证 |
 
 扫描精度由 `DIVISIONS` 决定；网格百分比是离散估计，不能把 0% 解读为连续域完全无误差。最终仍保留径向精度 `tau` 与全局覆盖上界。
@@ -940,12 +1118,12 @@ FourBus 中零潮流、v=1、压降松弛为零满足全部 SP 硬约束，故 e
 
 | 数学量 / 定义 | 固定代码映射 | 单位、形状及用途 |
 |---|---|---|
-| 一个凸候选域减去内域并集后的凸块 | [remaining_cells](../experiments/fourbus_known_first.py) | 归一化二维顶点数组列表；逐个内域、逐个面分割，保留低维剩余块，不用面积阈值删除 |
-| 已有网架下一批待认证候选 | [known_candidates](../experiments/fourbus_known_first.py) | `(x, point)` 列表；point 为归一化坐标，SP 前乘 bounds；返回的 `interior` 区分顶点批次和内部剩余块批次 |
-| 已有网架完整剩余检查次数 | [build_known_first_region:known_checks](../experiments/fourbus_known_first.py) | 次；顶点批次为空后执行一次全域几何检查，不是全局优化次数 |
-| 内部剩余候选的实际新增 SP 数 | [build_known_first_region:hole_checks](../experiments/fourbus_known_first.py) | 次；包含孔洞或顶点之间的缺口，缓存命中不计数 |
-| 构域期间登记的网架数 | [build_known_first_region:schemes](../experiments/fourbus_known_first.py) | 整数；包括所有登记记录，不按非空内域反推 |
-| 重复运行的最简比较记录 | [run_comparison.comparison](../experiments/fourbus_known_first.py) | 保存每次运行的 `total_seconds/counts/coverage_bound/fr_percent/mr_percent/volume_gap`；volume_gap 在二维使用面积测度，仍是比例 |
+| 一个凸候选域减去内域并集后的凸块 | 已退役：`experiments/fourbus_known_first.py::remaining_cells` | 归一化二维顶点数组列表；逐个内域、逐个面分割，保留低维剩余块，不用面积阈值删除 |
+| 已有网架下一批待认证候选 | 已退役：`experiments/fourbus_known_first.py::known_candidates` | `(x, point)` 列表；point 为归一化坐标，SP 前乘 bounds；返回的 `interior` 区分顶点批次和内部剩余块批次 |
+| 已有网架完整剩余检查次数 | 已退役：`experiments/fourbus_known_first.py::build_known_first_region:known_checks` | 次；顶点批次为空后执行一次全域几何检查，不是全局优化次数 |
+| 内部剩余候选的实际新增 SP 数 | 已退役：`experiments/fourbus_known_first.py::build_known_first_region:hole_checks` | 次；包含孔洞或顶点之间的缺口，缓存命中不计数 |
+| 构域期间登记的网架数 | 已退役：`experiments/fourbus_known_first.py::build_known_first_region:schemes` | 整数；包括所有登记记录，不按非空内域反推 |
+| 重复运行的最简比较记录 | 已退役：`experiments/fourbus_known_first.py::run_comparison.comparison` | 保存每次运行的 `total_seconds/counts/coverage_bound/fr_percent/mr_percent/volume_gap`；volume_gap 在二维使用面积测度，仍是比例 |
 
 对照直接调用当前 `main.build_continuous_region`：32 次 SP 调度、相同 physical 全局模型、预算 20000 元、负荷节点 (1,2)、tau=0.005、每种方法独立初始化、4 个求解器线程、数值库 1 线程，默认交替顺序重复 3 次。构域时间含初始化和监视记录，不含独立扫描、事后审计或绘图。双方共同使用一次 80×80 完整 SOCP 扫描，不限制参考网架、不使用构域割。每种方法仅保存耗时中位数对应的一份原生 monitor 回放；比较记录写入其 validation_state，不另建报告或逐轮日志。
 
@@ -957,16 +1135,16 @@ FourBus 中零潮流、v=1、压降松弛为零满足全部 SP 硬约束，故 e
 
 | 数学量 / 定义 | 固定代码映射 | 单位、形状与用途 |
 |---|---|---|
-| 负荷外域各行的 lambda | [KktViolation.outer_dual](../experiments/fourbus_outer_kkt.py) | 非负连续变量列表，按加入的上下界、总量界、联合割顺序 |
-| 负荷外域的系数行 | [KktViolation.outer_p](../experiments/fourbus_outer_kkt.py)、[KktViolation.outer_x](../experiments/fourbus_outer_kkt.py) | 每行分别为 p、右端 x 的系数；用于计算互补乘子的有效有限界 |
-| 各行互补选择 | [KktViolation.outer_active](../experiments/fourbus_outer_kkt.py) | 二元变量列表；1 允许非零乘子并强制该行紧约束，不代表网架 |
-| 负荷 LP 对偶平衡行 | [KktViolation.load_stationarity](../experiments/fourbus_outer_kkt.py) | d 条线性等式；每次加割同步新增 lambda 的系数 |
-| outer_x.T @ lambda | [KktViolation.outer_choice_dual](../experiments/fourbus_outer_kkt.py) | `(t,)` 自由连续变量，保留完整建设型号索引 |
-| x_j*(outer_x.T @ lambda)_j | [KktViolation.outer_choice_term](../experiments/fourbus_outer_kkt.py) | `(t,)`；与原 `choice_term` 分开，原项仍只指 SP 的 sp_x 贡献 |
-| 重写后的线性目标约束 | [KktViolation.dual_objective](../experiments/fourbus_outer_kkt.py) | R <= sum(choice_term)+sum(outer_choice_term)+outer_rhs@lambda-sp_rhs@mu-cone_constant@s |
-| 单次构域耗时 | [run_trial:seconds](../experiments/fourbus_outer_kkt.py) | 秒，含本方法建模、G、SP 与加割，不含共享 MP2 初始化、事后扫描和绘图 |
-| 含初始化总耗时 | [run_trial:total_seconds](../experiments/fourbus_outer_kkt.py) | seconds+initial_seconds；共同初始化时间为两方法各计一次 |
-| 外域扫描多余 / 遗漏百分比 | [compare_reference:fr_percent](../experiments/fourbus_outer_kkt.py)、[compare_reference:mr_percent](../experiments/fourbus_outer_kkt.py) | FR=外域中的扫描不可行点/外域格点数；MR=外域外的扫描可行点/扫描可行点数，均乘100；本节算法集合是外域，与主线内域指标须明确区分 |
+| 负荷外域各行的 lambda | 已退役：`experiments/fourbus_outer_kkt.py::KktViolation.outer_dual` | 非负连续变量列表，按加入的上下界、总量界、联合割顺序 |
+| 负荷外域的系数行 | 已退役：`experiments/fourbus_outer_kkt.py::KktViolation.outer_p`、已退役：`experiments/fourbus_outer_kkt.py::KktViolation.outer_x` | 每行分别为 p、右端 x 的系数；用于计算互补乘子的有效有限界 |
+| 各行互补选择 | 已退役：`experiments/fourbus_outer_kkt.py::KktViolation.outer_active` | 二元变量列表；1 允许非零乘子并强制该行紧约束，不代表网架 |
+| 负荷 LP 对偶平衡行 | 已退役：`experiments/fourbus_outer_kkt.py::KktViolation.load_stationarity` | d 条线性等式；每次加割同步新增 lambda 的系数 |
+| outer_x.T @ lambda | 已退役：`experiments/fourbus_outer_kkt.py::KktViolation.outer_choice_dual` | `(t,)` 自由连续变量，保留完整建设型号索引 |
+| x_j*(outer_x.T @ lambda)_j | 已退役：`experiments/fourbus_outer_kkt.py::KktViolation.outer_choice_term` | `(t,)`；与原 `choice_term` 分开，原项仍只指 SP 的 sp_x 贡献 |
+| 重写后的线性目标约束 | 已退役：`experiments/fourbus_outer_kkt.py::KktViolation.dual_objective` | R <= sum(choice_term)+sum(outer_choice_term)+outer_rhs@lambda-sp_rhs@mu-cone_constant@s |
+| 单次构域耗时 | 已退役：`experiments/fourbus_outer_kkt.py::run_trial:seconds` | 秒，含本方法建模、G、SP 与加割，不含共享 MP2 初始化、事后扫描和绘图 |
+| 含初始化总耗时 | 已退役：`experiments/fourbus_outer_kkt.py::run_trial:total_seconds` | seconds+initial_seconds；共同初始化时间为两方法各计一次 |
+| 外域扫描多余 / 遗漏百分比 | 已退役：`experiments/fourbus_outer_kkt.py::compare_reference:fr_percent`、已退役：`experiments/fourbus_outer_kkt.py::compare_reference:mr_percent` | FR=外域中的扫描不可行点/外域格点数；MR=外域外的扫描可行点/扫描可行点数，均乘100；本节算法集合是外域，与主线内域指标须明确区分 |
 
 每次加割必须同时更新负荷可行域、负荷 LP 驻点条件、互补选择和替换目标，遗漏其中任何一项均不等价。G 的候选下界与全局界继续复用原实现及其数学接受条件；超时、无反例或数值异常不能写成构域完成。实验默认交替顺序重复 3 次，4 个求解线程、数值库 1 线程。共用同一组初始方向界且各自从零条割开始。独立二维网格参考固定 p、自由选择全部合法 x/y，不用构域割；只作 SOCP 离散参考，非 AC 真值。事后枚举预算内网架仅用于准确绘制小算例的外域投影并集与检查，不参与 G 或 SP 的选点。结果、轨迹及扫描保留在一份 `comparison.json.gz`，图另存 PNG/SVG/PDF；耗时中位数那次实际运行用于各方法的区域图。
 
@@ -982,15 +1160,15 @@ FourBus 中零潮流、v=1、压降松弛为零满足全部 SP 硬约束，故 e
 
 | 新增量 | 固定代码映射 | 定义与单位 |
 |---|---|---|
-| 认证域搜索扩边 δ | [COVERAGE_PAD](../experiments/fourbus_outer_kkt.py) | 1e-5；公共评价箱归一化坐标；不是新增可行点 |
-| 面选择与其右端系数 | [KktViolation._add_outer_row.selector](../experiments/fourbus_outer_kkt.py)、[KktViolation._add_outer_row.selector_rhs](../experiments/fourbus_outer_kkt.py) | 二元变量与常数；原方法不传此参数 |
-| s*lambda 精确辅助项 | [KktViolation.selector_terms](../experiments/fourbus_outer_kkt.py) | `(lambda 行索引, product)` 对列表，乘子有限界同步传播到 product |
-| 排除多边形的半空间 | [exclusion_halfspaces](../experiments/fourbus_outer_kkt.py) | 输入为归一化认证凸包，输出 [F,g]；内侧 F@xi+g<=0 |
-| 排除并集后的 G | [UncoveredKktViolation](../experiments/fourbus_outer_kkt.py) | bound 为未认证区域最大配对违反量上界；不是原全域 R_k |
-| 固定负荷的全网架认证 | [certify_load](../experiments/fourbus_outer_kkt.py) | 固定 p，自由 x,y，最小 eta；不用实验割限制 x；返回 eta/bound/x/feasible/status |
-| 认证薄层的违反量上界 | [run_coverage:padding_bound](../experiments/fourbus_outer_kkt.py) | δ max_i(sum_j(abs(sp_p_ij)*axis_bounds_j)/(-sp_eta_i)) + PLANNING_TOL；仅计 sp_eta_i<0 的行 |
-| 整个负荷投影的违反量上界 | [run_coverage:union_bound](../experiments/fourbus_outer_kkt.py) | max(未排除部分的 bound, padding_bound)，上界于 max_p min_x eta*(x,p)，不冒充 max_(x,p) eta* |
-| 认证凸包结果 | [run_coverage:inner](../experiments/fourbus_outer_kkt.py) | 列表；每项 x 为建设向量、vertices 为 kW 的同方案认证凸包顶点 |
+| 认证域搜索扩边 δ | 已退役：`experiments/fourbus_outer_kkt.py::COVERAGE_PAD` | 1e-5；公共评价箱归一化坐标；不是新增可行点 |
+| 面选择与其右端系数 | 已退役：`experiments/fourbus_outer_kkt.py::KktViolation._add_outer_row.selector`、已退役：`experiments/fourbus_outer_kkt.py::KktViolation._add_outer_row.selector_rhs` | 二元变量与常数；原方法不传此参数 |
+| s*lambda 精确辅助项 | 已退役：`experiments/fourbus_outer_kkt.py::KktViolation.selector_terms` | `(lambda 行索引, product)` 对列表，乘子有限界同步传播到 product |
+| 排除多边形的半空间 | 已退役：`experiments/fourbus_outer_kkt.py::exclusion_halfspaces` | 输入为归一化认证凸包，输出 [F,g]；内侧 F@xi+g<=0 |
+| 排除并集后的 G | 已退役：`experiments/fourbus_outer_kkt.py::UncoveredKktViolation` | bound 为未认证区域最大配对违反量上界；不是原全域 R_k |
+| 固定负荷的全网架认证 | 已退役：`experiments/fourbus_outer_kkt.py::certify_load` | 固定 p，自由 x,y，最小 eta；不用实验割限制 x；返回 eta/bound/x/feasible/status |
+| 认证薄层的违反量上界 | 已退役：`experiments/fourbus_outer_kkt.py::run_coverage:padding_bound` | δ max_i(sum_j(abs(sp_p_ij)*axis_bounds_j)/(-sp_eta_i)) + PLANNING_TOL；仅计 sp_eta_i<0 的行 |
+| 整个负荷投影的违反量上界 | 已退役：`experiments/fourbus_outer_kkt.py::run_coverage:union_bound` | max(未排除部分的 bound, padding_bound)，上界于 max_p min_x eta*(x,p)，不冒充 max_(x,p) eta* |
+| 认证凸包结果 | 已退役：`experiments/fourbus_outer_kkt.py::run_coverage:inner` | 列表；每项 x 为建设向量、vertices 为 kW 的同方案认证凸包顶点 |
 
 薄层界来自：保持一个认证点的可行运行 y 不变，只增加 eta 即可容纳盒内负荷扰动；所有非松弛行的 sp_p 必须为零。因此排除薄层没有获得精确可行认证，但其 union 违反量有显式界。只有 union_bound<=epsilon 或等价有效全局证书才能停止。新的 bound_scope=`uncovered_pairs`；旧结果 bound 仍按第 37 节解释，未迁移或改写旧数据。
 
@@ -1009,11 +1187,11 @@ Case33 仅保留原始线路型号，不再提供升级接口。根节点为 1�
 | c0，预算仿射常数 | [Network.cost_offset](../Network/__init__.py) | 默认 0；Case33 为允许打开的常闭支路数 2 |
 | c(x)=c0+c@x | Network.cost、TypeParameters.investment_cost、OperatingTree.cost | 显式迁移：Case33 的系数 c 对常闭可变支路为 -1、常开可变支路为 +1、其余为 0；总成本即相对初始状态的 Hamming 距离。其他算例仍为原增量投资，c0=0 |
 | 二维动态负荷 | Case33.load_nodes | 主入口及对照均为 (18,25)，其余节点保持原始负荷 |
-| KKT 未认证区域上界 | [build_kkt_region:union_bound](../experiments/case33_compare.py) | 沿用第 38 节语义，不能称为全配对 R_k；epsilon=0.01 |
+| KKT 未认证区域上界 | 已退役：`experiments/case33_compare.py::build_kkt_region:union_bound` | 沿用第 38 节语义，不能称为全配对 R_k；epsilon=0.01 |
 | 校验使用的算法集合 | [RunMonitor.validation.region_key](../monitor.py) | inner 或 outer；同一套 MR/FR 定义，明确标记集合，不混淆内外域 |
 | 原有内域与外域的两套网格指标 | [RunMonitor.validation:metrics](../monitor.py) | 键 inner/outer；各自 MR/FR 保持原分母，主显示集合由 region_key 指定 |
-| 固定 p、自由 x/y 的认证点 | [RunMonitor.certification_start.power](../monitor.py) | kW、(2,)；回放独立阶段，不改写固定方案 SP 的点 |
-| 开关算例的联合割投影 | [projected_outer](../experiments/case33_compare.py) | 每个预算内网架的条件外域顶点，kW；只作事后绘图和误差统计，不参与 G |
+| 固定 p、自由 x/y 的认证点 | 已退役：`monitor.py::RunMonitor.certification_start.power` | kW、(2,)；回放独立阶段，不改写固定方案 SP 的点 |
+| 开关算例的联合割投影 | 已退役：`experiments/case33_compare.py::projected_outer` | 每个预算内网架的条件外域顶点，kW；只作事后绘图和误差统计，不参与 G |
 
 主线沿用 tau=0.005 的几何覆盖证书，新 KKT 使用未认证区域残差上界 <=0.01；两者独立初始化、各计最多 1000 秒，时间包含初始化和记录，不含事后参考扫描。达到时限只保存当时已认证内域和有效外域，不能记成认证完成。Case33 新网架的原点不默认可行，增加完整 SOCP 的负总负荷方向支撑以取得下侧认证点。G 的零潮流解析 eta 上界包含全部固定和动态有功/无功负荷。
 

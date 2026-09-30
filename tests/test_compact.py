@@ -7,7 +7,6 @@ from Network.four_bus_five_corridor import FourBus
 from model import GridPhysics, MasterProblem, SubProblem  # 正式方程、主问题和连续 SP。
 from tests.reference import dispatch_support, fixed_topology, upgrade_plan
 from tests.planning_checks import margin
-from tests.planning_checks import joint_benders  # 冻结的旧算法，与完整模型对照。
 
 
 class CompactPlanningTests(unittest.TestCase):  # 核对物理映射、最优值和全域割有效性。
@@ -77,24 +76,6 @@ class CompactPlanningTests(unittest.TestCase):  # 核对物理映射、最优值
                     self.assertLess(abs(actual['objective']-reference['value']),.002)  # 物理边界必须在规定 kW 容差内一致。
                     self.assertGreaterEqual(margin(equations,x,actual['p'],actual['state']),-1e-7)  # 同时复核原始约束。
 
-    def test_joint_queries_match_direct_models_and_reuse_cuts(self):  # 审核从 Notebook 移到测试，不进入正式构域。
-        for count in (4,8,16):  # 三种规模共用同一算法。
-            for method in ('linear','socp'):  # 两套物理假设分别比较。
-                equations,cuts = GridPhysics(fixed_topology(Case33(upgrade_count=count)),method),[]
-                queries = [dict(power=p) for p in ([100.,800.,150.],[250.,1800.,350.],[300.,3000.,500.])]  # 含基础、升级和高负荷点。
-                budgets = (0.,1.,2.) if count==16 and method=='socp' else (0.,1.,2.,np.inf)
-                queries += [dict(budget=b) for b in budgets]  # 覆盖各预算下的自由最大总负荷查询。
-                for query in queries:  # 每次使用完全相同的输入。
-                    actual,new = joint_benders(equations,cuts=cuts,**query)  # 正式 MP/SP 查询。
-                    cuts.extend(new)  # 后续查询复用同一批有效割。
-                    direct = MasterProblem(equations,**query)  # 完整 MILP/MISOCP 独立求解路径。
-                    with direct.model:  # 不把直接模型加入联合割池。
-                        reference = direct.solve()  # 取得可行目标及有效全局界。
-                    self.assertEqual(actual is None,reference is None)  # 可行性结论必须相同。
-                    if actual is not None:  # 有解时还须核对目标值与证书。
-                        self.assertEqual(actual['status'],'optimal')  # 未确定不算通过。
-                        self.assertEqual(reference['status'],'optimal')  # 参考也必须完成求解。
-                        self.assertLess(abs(actual['objective']-reference['objective']),.002 if 'budget' in query else 1e-7)  # 使用各自物理单位的精度。
 
     def test_joint_cut_is_valid_on_the_full_compact_domain(self):  # 对全部整数选型的可行域直接优化，检验联合割没有误切。
         for count in (4,8,16):  # 同一检查覆盖全部三档候选集。

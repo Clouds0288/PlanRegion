@@ -85,7 +85,7 @@ def test_connected_cycle_is_rejected_even_at_zero_load():
     equations = GridPhysics(FourBus(), 'linear')
     plan = {'01': 'L', '12': 'L', '13': 'L', '02': 'L', '23': None}
     problem = MasterProblem(equations, fixed_plan=plan, power=np.zeros(3),
-                            cuts_only=True, threads=1)
+                            threads=1)
     with problem.model:
         assert problem.solve() is None
 

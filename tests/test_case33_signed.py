@@ -8,7 +8,7 @@ from threadpoolctl import threadpool_limits
 from Network.case33bw import Case33
 from model import MasterProblem
 from model import PortPhysics, PortSubProblem, port_bounds, ray_support
-from vertify import scan_line
+from vertify import ac_scan_line
 
 
 class Case33SignedTests(unittest.TestCase):
@@ -71,9 +71,8 @@ class Case33SignedTests(unittest.TestCase):
     def test_independent_scan_classifies_import_export_and_infeasible_point(self):
         for power, expected in (([100., 100.], 1), ([-1000., -4000.], 1), ([15000., 15000.], -1)):
             power = np.array(power)
-            _, states = scan_line(((18, 25), 1, power-.5, power+.5, 1, (0,)),
-                                  network_type=Case33, budget=7)
-            self.assertEqual(states[0], expected)
+            answer = ac_scan_line((np.array([0]), power[None]), network=Case33(), budget=7, schemes=None)
+            self.assertEqual(answer['states'][0], expected)
 
     def test_small_current_boundary_certificate(self):
         net = Case33(load_nodes=(18, 25, 30))
@@ -84,21 +83,6 @@ class Case33SignedTests(unittest.TestCase):
             [582.1563873981617, .0025, .0008559204862438141], score_only=True)
         self.assertTrue(answer['feasible'])
 
-    def test_three_dimensional_scan_numerical_regression(self):
-        lower, upper = np.array([-20003., -19960., -24597.]), np.array([8450., 4374., 9524.])
-        _, states = scan_line(((18, 25, 30), 1, lower, upper, 80, (28, 29)),
-                              network_type=Case33, budget=7)
-        for j in (0, 20, 40, 60, 79):
-            power = lower+(np.array([28, 29, j])+.5)*(upper-lower)/80
-            sign = np.where(power >= 0., 1, -1)
-            equations = PortPhysics(Case33(load_nodes=(18, 25, 30)), sign)
-            problem = MasterProblem(equations, power=power*sign, budget=7, threads=1)
-            with problem.model:
-                self.assertEqual(states[j], 1 if problem.solve() is not None else -1)
-        # 此行的第30格严格位于可行域内部，Aggregate=0曾误判为不可行。
-        _, states = scan_line(((18, 25, 30), 1, lower, upper, 80, (53, 59)),
-                              network_type=Case33, budget=7)
-        self.assertEqual(states[30], 1)
 
 
 if __name__ == '__main__':

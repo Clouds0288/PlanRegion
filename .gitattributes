@@ -7,6 +7,7 @@
 
 # Generated datasets and embedded replay pages are reviewed through their reports.
 results/** -text -diff
+results/**/README.md diff
 results/**/report.md diff
 results/**/protocol.json diff
 

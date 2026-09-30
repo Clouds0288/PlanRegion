@@ -56,7 +56,7 @@ class GridPhysics:
         net = self.network
         pmax = np.minimum(net.capacity, min(net.source_pmax, net.source_smax))
         qmax = np.full(net.n_types, min(net.source_qmax, net.source_smax))
-        ellmax = pmax/net.r if self.method == 'socp' else np.zeros(net.n_types)
+        ellmax = np.minimum(pmax/net.r, net.ell_limit) if self.method == 'socp' else np.zeros(net.n_types)
         reverse = net.senders[net.type_corridor] >= 0
         self.pmax, self.qmax, self.ellmax = (dict(zip(self.keys, a)) for a in (pmax, qmax, ellmax))
         self.pmin, self.qmin = (dict(zip(self.keys, -a*reverse)) for a in (pmax, qmax))
@@ -146,7 +146,7 @@ class GridPhysics:
 class MasterProblem:
     """完整 MP：给定 power/min_total 时最小投资，否则最大化 direction@p。"""
 
-    def __init__(self, equations, *, power=None, budget=np.inf, cuts_only=False,
+    def __init__(self, equations, *, power=None, budget=np.inf,
                  min_total=None, fixed_plan=None, cuts=(), direction=None, threads=DEFAULT_SOLVER_THREADS):
         # 1. 读取网架参数，创建求解模型
         net = equations.network
@@ -198,8 +198,8 @@ class MasterProblem:
             for (e, k), value in zip(equations.keys, net.encode_plan(fixed_plan)):
                 x[e, k].LB = x[e, k].UB = value
 
-        # 7. 添加运行变量及物理约束；cuts_only 模式省略此部分
-        operation = None if cuts_only else equations.add_operation(model, x, p)
+        # 7. 所有 MP 均包含完整运行变量及物理约束。
+        operation = equations.add_operation(model, x, p)
 
         # 8. MP1 最小投资；MP2 沿给定方向最大化负荷，其他负荷仍自由。
         minimizing = power is not None or min_total is not None
@@ -215,7 +215,7 @@ class MasterProblem:
         self.power = gp.MVar.fromlist(list(p.values()))
         self.active_nodes = gp.MVar.fromlist(list(a.values()))
         self.operation = operation
-        self.state = None if cuts_only else operation.state
+        self.state = operation.state
         for cut in cuts:
             self.add_cut(cut)
 
@@ -229,8 +229,7 @@ class MasterProblem:
         net = self.equations.network
         cost = float(net.cost_offset+net.cost@incumbent['x'])
         self.x.Start, self.power.Start = incumbent['x'], incumbent['p']
-        if self.state is not None:
-            self.state.Start = incumbent['state']
+        self.state.Start = incumbent['state']
         self.model.addConstr(net.cost_offset+net.cost@self.x <= cost+1e-9)
         return cost
 
@@ -265,9 +264,9 @@ class MasterProblem:
         p = self.power.X
         objective = equations.network.cost_offset+equations.network.cost@x if model.ModelSense == GRB.MINIMIZE else self.direction@p
 
-        # 4. 原样读取运行状态；质量指标覆盖所建模型，cuts_only 没有运行证书。
-        state = None if self.state is None else self.state.X
-        feasible = state is not None
+        # 4. 原样读取完整运行证书；质量指标覆盖全部物理约束。
+        state = self.state.X
+        feasible = True
 
         # 5. 返回候选解、目标界和认证状态
         minimizing = model.ModelSense == GRB.MINIMIZE
@@ -389,12 +388,13 @@ class SubProblem:
 
 
 class RemainingRegionModel:
-    """共享并集排除约束；light 搜索割外域，physical 再加入完整运行约束。"""
+    """完整物理 MISOCP：在认证内域并集之外搜索物理见证或证明覆盖。"""
 
     def __init__(self, equations, budget, bounds, total_bound, cuts, inner_halfspaces, tau,
-                  *, axis_bounds=None, mode='light', threads=DEFAULT_SOLVER_THREADS):
-        self.mode = mode
-        self.problem = problem = MasterProblem(equations, budget=budget, cuts_only=mode == 'light', threads=threads)
+                  *, axis_bounds=None, threads=DEFAULT_SOLVER_THREADS):
+        if equations.method != 'socp':
+            raise ValueError('Remaining region requires the complete SOCP physical model')
+        self.problem = problem = MasterProblem(equations, budget=budget, threads=threads)
         m = self.model = problem.model
         problem.power.UB = bounds if axis_bounds is None else axis_bounds
         m.addConstr(problem.power.sum() <= total_bound)
@@ -423,24 +423,21 @@ class RemainingRegionModel:
         # 探索阶段只需一个可靠未覆盖点；停止证明仍必须检查全局上界。
         m.Params.BestObjStop = max(10*tolerance, 1e-6)*self.distance_scale
         m.optimize()
-        details = dict(feasible=False)
         if m.Status == GRB.INFEASIBLE:
-            return dict(complete=True, bound=None, x=None, p=None, **details)
+            return dict(complete=True, bound=None, x=None, p=None, feasible=False)
         if m.Status == GRB.TIME_LIMIT:
-            raise TimeoutError(f'Remaining region {self.mode}: time limit')
+            raise TimeoutError('Remaining region physical: time limit')
         if m.Status not in (GRB.OPTIMAL, GRB.USER_OBJ_LIMIT) or not m.SolCount:
-            raise RuntimeError(f'Remaining region {self.mode}: status={m.Status}, SolCount={m.SolCount}')
+            raise RuntimeError(f'Remaining region physical: status={m.Status}, SolCount={m.SolCount}')
         if m.MaxVio > PLANNING_TOL:
-            raise RuntimeError(f'Remaining region {self.mode}: MaxVio={m.MaxVio:g} > {PLANNING_TOL:g}')
+            raise RuntimeError(f'Remaining region physical: MaxVio={m.MaxVio:g} > {PLANNING_TOL:g}')
         bound = float(m.ObjBound)/self.distance_scale
         if bound <= tolerance:
-            return dict(complete=True, bound=bound, x=None, p=None, **details)
+            return dict(complete=True, bound=bound, x=None, p=None, feasible=False)
         if m.ObjVal/self.distance_scale <= tolerance:
-            raise RuntimeError(f'Remaining region {self.mode}: no uncovered witness or coverage certificate, bound={bound:g}')
+            raise RuntimeError(f'Remaining region physical: no uncovered witness or coverage certificate, bound={bound:g}')
         x, point = np.rint(problem.x.X).astype(int), problem.power.X
-        if self.mode == 'physical':
-            details.update(feasible=True)
-        return dict(complete=False, bound=bound, x=x, p=point, **details)
+        return dict(complete=False, bound=bound, x=x, p=point, feasible=True)
 
 
 LOAD_PF = .95
@@ -455,6 +452,7 @@ def voltage_flow_bounds(network):
     sending = voltage[network.senders[network.type_corridor]]
     receiving = voltage[network.receivers[network.type_corridor]]
     ellmax = (np.sqrt(sending)+np.sqrt(receiving))**2/(network.r**2+network.reactance**2)
+    ellmax = np.minimum(ellmax, network.ell_limit)
     return ellmax, np.sqrt(np.maximum(sending, receiving)*ellmax)
 
 
@@ -492,6 +490,7 @@ class PortPhysics(GridPhysics):
                                      voltage[net.receivers[net.type_corridor]])
             pmax = np.minimum(pmax, np.sqrt(end_voltage*ellmax))
             qmax = np.minimum(qmax, pmax)
+        ellmax = np.minimum(ellmax, net.ell_limit)
         self.pmax, self.qmax, self.ellmax = (dict(zip(self.keys, a)) for a in (pmax, qmax, ellmax))
         self.pmin, self.qmin = dict(zip(self.keys, -pmax)), dict(zip(self.keys, -qmax))
         self.y_lb_global = np.r_[-pmax, -qmax, np.zeros(net.n_types+net.n+2*net.n_corridors)]
@@ -552,7 +551,9 @@ def solve_conic(model, equations, operation, x, fixed, threads, deadline, tolera
     eye = sparse.eye(len(free), format='csc')
     lower, upper = lb[free] > -GRB.INFINITY, ub[free] < GRB.INFINITY
     blocks = [a[equal], sparse.diags(direction[~equal])@a[~equal], -eye[lower], eye[upper]]
-    values = [b[equal], direction[~equal]*b[~equal], -lb[free][lower], ub[free][upper]]
+    values = [b[equal], direction[~equal]*b[~equal], -lb[free][lower],
+              ub[free][upper]-margin*np.isin(free[upper], [operation.ell[key].index
+                  for key, limit in zip(equations.keys, equations.network.ell_limit) if np.isfinite(limit)])]
     cones = [clarabel.ZeroConeT(int(equal.sum())),
              clarabel.NonnegativeConeT(int((~equal).sum()+lower.sum()+upper.sum()))]
 
@@ -565,15 +566,18 @@ def solve_conic(model, equations, operation, x, fixed, threads, deadline, tolera
         if j < len(x) and not x[j]:
             continue  # 开断型号 P=Q=ell=0，原电流锥恒成立。
         if j < len(x) and equations.network.name == 'case33bw':
-            # Case33 小电流锥等价缩放，避免 v 与 ell 数量级悬殊。
+            # 按逐线路电流界平衡电压与电流，保持原二阶锥等价。
             key = equations.keys[j]
+            cone_scale = (np.clip(1./equations.ellmax[key], 1., 100.)
+                          if np.isfinite(equations.network.ell_limit[j]) else 100.)
             v = operation.v[equations.ends[key[0]][0]]
             ell, P, Q = operation.ell[key], operation.P[key], operation.Q[key]
-            expressions = [affine(item) for item in (v+100*ell, 20*P, 20*Q, v-100*ell)]
+            expressions = [affine(item) for item in
+                           (v+cone_scale*ell, 2*np.sqrt(cone_scale)*P, 2*np.sqrt(cone_scale)*Q, v-cone_scale*ell)]
             a, b = np.array([item[0] for item in expressions]), np.array([item[1] for item in expressions])
         blocks.append(sparse.csc_matrix(-a[:, free]))
         constant = b+a@solution
-        constant[0] -= margin*(100. if j < len(x) and equations.network.name == 'case33bw' else 1.)
+        constant[0] -= margin*(cone_scale if j < len(x) and equations.network.name == 'case33bw' else 1.)
         values.append(constant)
         cones.append(clarabel.SecondOrderConeT(len(b)))
     objective, _ = affine(model.getObjective())
@@ -596,6 +600,10 @@ def solve_conic(model, equations, operation, x, fixed, threads, deadline, tolera
     settings.verbose = False
     settings.max_threads = threads
     settings.static_regularization_constant = 1e-10
+    if np.isfinite(equations.network.ell_limit).all():
+        settings.static_regularization_constant = 1e-8
+        settings.direct_solve_method = 'faer'
+        settings.max_step_fraction = .95
     settings.tol_gap_abs = settings.tol_gap_rel = tolerance
     settings.tol_feas = tolerance
     settings.time_limit = max(0., deadline-perf_counter())
@@ -629,6 +637,8 @@ def solve_conic(model, equations, operation, x, fixed, threads, deadline, tolera
 
 class PortSubProblem(SubProblem):
     def solve(self, x, power, time_limit=None, *, score_only=False):
+        if np.isfinite(self.equations.network.ell_limit).all():
+            return super().solve(x, power, time_limit, score_only=score_only)
         self.calls += 1
         deadline = perf_counter()+(SP_TIME_LIMIT[self.equations.method] if time_limit is None else time_limit)
         with new_model('port_SP', self.threads) as model:

@@ -1,0 +1,7 @@
+{
+  "url": "https://raw.githubusercontent.com/MATPOWER/matpower/master/data/case33bw.m",
+  "sha256": "b40831eeb444669ae876e2996f0dda9f05cd83e81b314b8dfca51e4890cca95d",
+  "retrieved": "2026-09-19",
+  "original_reference": "Baran and Wu, 1989, DOI 10.1109/61.25627",
+  "scope": "Unmodified source data; operational limits follow MATPOWER caseformat."
+}

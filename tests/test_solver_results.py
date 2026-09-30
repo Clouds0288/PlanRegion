@@ -7,7 +7,7 @@ import pytest
 
 from Network.four_bus_five_corridor import FourBus
 from tests.legacy_case33 import Case33
-from model import PLANNING_TOL, GridPhysics, MasterProblem, SubProblem
+from model import PLANNING_TOL, GridPhysics, MasterProblem, SubProblem, RemainingRegionModel
 from tests.planning_checks import margin
 from tests.reference import fixed_topology
 
@@ -144,3 +144,32 @@ def test_socp_new_vertex_path_needs_no_numeric_retry(x, power, feasible):
         assert calls[1] == 0  # 正常取割 LP，不是重试 SOCP。
         cut = answer['cut']
         assert cut[0]+cut[1:4]@power+cut[4:]@x < -1e-9
+
+
+def test_remaining_region_always_contains_full_physics_and_returns_a_physical_witness():
+    network = FourBus(load_nodes=(1, 2))
+    equations = GridPhysics(network, 'socp')
+    problem = RemainingRegionModel(equations, 20000., np.full(2, 300.), 300., [], [], .005, threads=1)
+    with problem.model:
+        problem.model.update()
+        assert problem.model.NumQConstrs > 0
+        assert problem.problem.state.shape == (len(equations.y_lb_global),)
+        answer = problem.solve(1e-8)
+        assert not answer['complete'] and answer['feasible']
+        assert margin(equations, answer['x'], answer['p'], problem.problem.state.X) >= -PLANNING_TOL
+
+
+def test_remaining_region_excludes_nonphysical_points_without_any_joint_cuts():
+    network = FourBus(load_nodes=(1, 2))
+    equations = GridPhysics(network, 'socp')
+    problem = RemainingRegionModel(equations, 20000., np.full(2, 300.), 600., [], [], .005, threads=1)
+    with problem.model:
+        problem.problem.power.LB = [250., 0.]
+        answer = problem.solve(1e-8)
+        assert answer == dict(complete=True, bound=None, x=None, p=None, feasible=False)
+
+
+def test_remaining_region_rejects_linear_equations():
+    with pytest.raises(ValueError, match='complete SOCP'):
+        RemainingRegionModel(GridPhysics(FourBus(), 'linear'), 20000., np.full(3, 300.),
+                             300., [], [], .005, threads=1)

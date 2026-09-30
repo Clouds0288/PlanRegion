@@ -24,6 +24,7 @@ class TypeParameters:
     reactance: float
     capacity: float
     investment_cost: float
+    ell_limit: float = np.inf
 
 
 @dataclass(frozen=True)
@@ -102,9 +103,11 @@ class Network:
         self.senders, self.receivers = np.array(senders), np.array(receivers)
         self.type_keys, self.type_slices = tuple(keys), tuple(blocks)
         self.type_corridor = np.repeat(np.arange(self.n_corridors), [len(c.types) for c in self.corridors])
-        self.r, self.reactance, self.capacity, self.cost = (
+        self.r, self.reactance, self.capacity, self.cost, self.ell_limit = (
             np.array([getattr(t, name) for t in parameters], dtype=float)
-            for name in ('r', 'reactance', 'capacity', 'investment_cost'))
+            for name in ('r', 'reactance', 'capacity', 'investment_cost', 'ell_limit'))
+        if np.any(np.isnan(self.ell_limit)) or np.any(self.ell_limit <= 0.):
+            raise ValueError('ell_limit must be positive or infinity in squared per-unit current')
 
     @property
     def n(self):
@@ -242,6 +245,10 @@ class OperatingTree:
     @property
     def capacity(self):
         return self.network.capacity[self.type_indices]
+
+    @property
+    def ell_limit(self):
+        return self.network.ell_limit[self.type_indices]
 
     @property
     def vmin(self):

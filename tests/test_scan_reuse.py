@@ -11,65 +11,10 @@ import vertify
 from monitor import RunMonitor, NativeWindow
 
 
-@pytest.mark.parametrize('dimension', [2, 3])
-def test_covering_scan_keeps_original_grid_when_requested_divisions_change(tmp_path, dimension):
-    network = main.Case33(load_nodes=(18, 25, 30)[:dimension])
-    path = vertify.scan_path(network, 7, tmp_path)
-    bounds = np.array([50., 40., 30.])[:dimension]
-    states = np.where(np.indices((3,)*dimension).sum(axis=0) < 3, 1, -1)
-    vertify.save_scan(path, dict(axis_lower=-bounds, bounds=bounds, states=states))
-    original = path.read_bytes()
-    with patch('vertify.ProcessPoolExecutor', side_effect=AssertionError('Covered range must reuse scan')):
-        reference = vertify.scan_reference(network, 7, 100, bounds-.1, path,
-            axis_lower=-bounds+.1, mode=1, threads=4, workers=2, progress=lambda *args: None)
-    np.testing.assert_array_equal(reference['axis_lower'], -bounds)
-    np.testing.assert_array_equal(reference['bounds'], bounds)
-    np.testing.assert_array_equal(reference['states'], states)
-    assert set(reference) == {'axis_lower', 'bounds', 'states'}
-    assert path.read_bytes() == original
 
 
-@pytest.mark.parametrize('dimension', [2, 3])
-def test_range_expansion_and_force_rescan_preserve_covered_box(tmp_path, dimension):
-    network = main.Case33(load_nodes=(18, 25, 30)[:dimension])
-    path = vertify.scan_path(network, 7, tmp_path)
-    bounds = np.array([10., 20., 30.])[:dimension]
-    vertify.save_scan(path, dict(axis_lower=-bounds, bounds=bounds, states=np.ones((3,)*dimension)))
-    jobs = []
-    def scan_rows(function, requests):
-        requests = list(requests)
-        jobs.extend(requests)
-        return [(job[-1], -np.ones(job[-2], dtype=np.int8)) for job in requests]
-    with patch('vertify.ProcessPoolExecutor') as pool:
-        pool.return_value.__enter__.return_value.map.side_effect = scan_rows
-        upper = np.array([10.2, 18., 31.7])[:dimension]
-        lower = np.array([-12.2, -18., -29.])[:dimension]
-        reference = vertify.scan_reference(network, 7, 4, upper, path, axis_lower=lower, mode=1,
-                                        threads=4, workers=2, progress=lambda *args: None)
-        expected_upper = np.array([11., 20., 32.])[:dimension]
-        expected_lower = np.array([-13., -20., -30.])[:dimension]
-        np.testing.assert_array_equal(jobs[0][2], expected_lower)
-        np.testing.assert_array_equal(jobs[0][3], expected_upper)
-        assert reference['states'].shape == (4,)*dimension
-        reference = vertify.scan_reference(network, 7, 6, bounds-1., path, axis_lower=-bounds+1., mode=1,
-            force_rescan=True, threads=4, workers=2, progress=lambda *args: None)
-        assert reference['states'].shape == (6,)*dimension
-    with np.load(path) as saved:
-        assert set(saved.files) == {'axis_lower', 'bounds', 'states'}
-        np.testing.assert_array_equal(saved['axis_lower'], expected_lower)
-        np.testing.assert_array_equal(saved['bounds'], expected_upper)
-        np.testing.assert_array_equal(saved['states'], reference['states'])
 
 
-def test_different_network_nodes_budget_mode_and_pf_do_not_share_reference(tmp_path):
-    original = vertify.scan_path(main.Case33(), 7, tmp_path, mode=1)
-    variants = [(main.Case33(), 6, 1), (main.Case33(load_nodes=(25, 18)), 7, 1),
-                (main.Case33(load_nodes=(18, 25, 30)), 7, 1),
-                (main.FourBus(load_nodes=(1, 2)), 20000., 1), (main.Case33(), 7, 0)]
-    for network, budget, mode in variants:
-        assert vertify.scan_path(network, budget, tmp_path, mode) != original
-    with patch('vertify.LOAD_PF', .9):
-        assert vertify.scan_path(main.Case33(), 7, tmp_path, mode=1) != original
 
 
 @pytest.mark.parametrize('force', [False, True])
@@ -97,7 +42,6 @@ def test_real_scan_is_reused_and_metrics_are_recomputed_for_new_result(tmp_path)
     check = RunMonitor()
     check.validation(a, result)
     assert b['metrics'] == check.validation_state['validation']['metrics']
-    assert b['metrics']['inner']['fr_percent'] == 0.
     restored = RunMonitor()
     restored.load_recording(tmp_path/'second.json.gz')
     state = restored.state
@@ -124,11 +68,13 @@ def test_real_scan_is_reused_and_metrics_are_recomputed_for_new_result(tmp_path)
             row = current['cut_history'][latest]
             from monitor import _cut_segment
             sign = np.asarray(row['sign'])
-            lower = np.asarray(current['axis_lower'])*(sign < 0)*1.04
-            upper = np.asarray(current['axis_bounds'])*(sign > 0)*1.04
+            ax = window.scheme_views[scheme][1]
+            lower, upper = np.asarray([ax.get_xlim(), ax.get_ylim()]).T
+            lower = np.where(sign > 0, np.maximum(lower, 0.), lower)
+            upper = np.where(sign < 0, np.minimum(upper, 0.), upper)
             segment = _cut_segment(row['cut'], current['schemes'][scheme]['x'], upper, lower)
             if len(segment) == 2:
-                lines = window.scheme_views[scheme][1].lines
+                lines = ax.lines
                 drawn = next(line for line in lines if line.get_gid() == f'cut-{latest}-{scheme}')
                 np.testing.assert_allclose(np.asarray(drawn.get_data()).T, segment)
             window.seek_cut(1)

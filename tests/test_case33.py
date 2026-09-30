@@ -101,7 +101,8 @@ class Case33Tests(unittest.TestCase):  # 检查模型共享的数据和物理证
         self.assertTrue(answer['feasible'])
         self.assertGreaterEqual(margin(e, x, power, answer['state']), -1e-8)
         np.testing.assert_array_equal(power, original)
-        outside = np.array([241.45047366, 5389.44569774, 393.81480695])
+        # 旧点处于 1e-8 接受边界内；固定放大 0.1% 后明确位于 SOCP 域外。
+        outside = 1.001*np.array([241.45047366, 5389.44569774, 393.81480695])
         cut = SubProblem(e, threads=1).solve(x, outside)['cut']
         self.assertIsNotNone(cut)
         self.assertLess(cut[0]+cut[1:4]@outside+cut[4:]@x, -1e-9)

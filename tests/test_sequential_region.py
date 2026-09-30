@@ -142,7 +142,7 @@ def test_difference_uses_true_faces_and_keeps_interior_gaps():
     region.add_point([0], [[0., 1.], [1., 1.], [.5, .8]])
     # 其他网架覆盖了顶点，也不会改变本网架的切割/补边界目标。
     np.testing.assert_array_equal(stage_candidates(region, [1]), candidates)
-    assert region.covering_schemes([[.5, .5]]) == [None]
+    assert not any(contains([[.5, .5]], region.inner_equations(key))[0] for key in region.records)
 
 
 def test_each_new_scheme_finishes_global_vertex_rays_before_sp_or_cut(experiment):
@@ -317,9 +317,9 @@ def test_convexity_is_used_only_within_one_scheme():
     region.add_scheme([0], {}, 0.)
     region.add_point([1], [[0., 1.]])
     region.add_point([0], [[1., 0.]])
-    assert region.covering_schemes([[.5, .5]]) == [None]
+    assert not any(contains([[.5, .5]], region.inner_equations(key))[0] for key in region.records)
     region.add_point([1], [[1., 0.]])
-    assert region.covering_schemes([[.5, .5]]) == [(1,)]
+    assert contains([[.5, .5]], region.inner_equations([1]))[0]
     assert not contains([[.5, .5]], region.inner_equations([0]))[0]
     # 点合并距离不能变成认证凸包的扩边距离。
     assert not contains([[.5, .50005]], region.inner_equations([1]))[0]

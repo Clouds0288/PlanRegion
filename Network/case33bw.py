@@ -8,6 +8,7 @@ from . import Corridor, Network, TypeParameters
 
 
 LOAD_NODES = (18, 25)             # 二维：(18, 25)；三维：(18, 25, 30)
+CURRENT_LIMIT = 200.             # A；主线、SOCP 和 AC 共用，可改为逐线路数组
 
 
 class Case33(Network):
@@ -18,7 +19,7 @@ class Case33(Network):
     switchable_branches = ((21, 8), (7, 8), (22, 12), (11, 12),
                            (9, 15), (33, 18), (25, 29))
 
-    def __init__(self, load_nodes=LOAD_NODES):
+    def __init__(self, load_nodes=LOAD_NODES, *, current_limit=np.inf):
         source = (Path(__file__).parent/'data'/'case33bw.m').read_text(encoding='utf-8')
         tables = {}
         for name in ('bus', 'gen', 'branch'):
@@ -33,9 +34,14 @@ class Case33(Network):
         nodes = tuple(map(int, rows[:, 0]))
         selected = [nodes.index(i) for i in load_nodes]
         zbase = bus[0, 9]**2/base_mva
+        # 输入为线路电流有效值 A；额定上限独立于原 rateA 和派生电流界。
+        current_limit = np.broadcast_to(current_limit, (len(branch),)).astype(float)
+        if np.any(np.isnan(current_limit)) or np.any(current_limit <= 0.):
+            raise ValueError('current_limit must be positive amperes or infinity')
+        ell_limit = (current_limit/(base_mva*1000/(np.sqrt(3)*bus[0, 9])))**2
         switchable = {frozenset(edge) for edge in self.switchable_branches}
         corridors = []
-        for row in branch:
+        for row, limit in zip(branch, ell_limit):
             a, b = map(int, row[:2])
             allowed = frozenset((a, b)) in switchable
             active = bool(row[10])
@@ -43,7 +49,7 @@ class Case33(Network):
             cost = (1-2*int(active)) if allowed else 0.
             # rateA=0 表示未提供线路限额；baseMVA 也不是变压器容量。
             original = TypeParameters('existing', row[2]/zbase, row[3]/zbase,
-                                      row[5]/base_mva if row[5] else np.inf, cost)
+                                      row[5]/base_mva if row[5] else np.inf, cost, limit)
             corridors.append(Corridor(f'{a}-{b}', (a, b), 'existing', active,
                                       (original,), switchable=allowed))
         power_limit = gen[0, 8]*1000-rows[:, 2].sum()+rows[selected, 2].sum()

@@ -20,10 +20,43 @@ Thumbs.db
 gurobi.lic
 *.tmp
 outputs/
+tmp/
 
-# Ad hoc runs are local; the reviewed Case33 dataset is versioned.
+# Ad hoc runs are local; reviewed datasets and the FourBus 3D comparison are versioned.
 results/**
 !results/case33bw/
 !results/case33bw/latest/
 !results/case33bw/latest/**
+!results/fourbus_3d_20260930/
+!results/fourbus_3d_20260930/**
+!results/mainline/
+results/mainline/**
+!results/mainline/mode_1/
+!results/mainline/mode_1/fourbus_1_2_3.json.gz
+!results/scans/
+results/scans/**
+!results/scans/fourbus_signed/
+!results/scans/fourbus_signed/mode_1/
+!results/scans/fourbus_signed/mode_1/1_2_3/
+!results/scans/fourbus_signed/mode_1/1_2_3/pf_0.95_1_+1_budget_20000.npz
+!results/support_face_test/
+results/support_face_test/**
+!results/support_face_test/fourbus_3d_signed_trial/
+!results/support_face_test/fourbus_3d_signed_trial/comparison.json
+!results/support_face_test/fourbus_3d_signed_trial/protocol.json
+!results/support_face_test/fourbus_3d_signed_trial/report.md
+!results/support_face_test/fourbus_3d_signed_trial/mainline_1/
+!results/support_face_test/fourbus_3d_signed_trial/mainline_1/monitor.json.gz
+!results/support_face_test/fourbus_3d_signed_trial/mainline_1/result.json
+!results/support_face_test/fourbus_3d_physical_verified/
+!results/support_face_test/fourbus_3d_physical_verified/comparison.json
+!results/support_face_test/fourbus_3d_physical_verified/evaluate.py
+!results/support_face_test/fourbus_3d_physical_verified/protocol.json
+!results/support_face_test/fourbus_3d_physical_verified/report.md
+!results/support_face_test/fourbus_3d_physical_verified/source/
+!results/support_face_test/fourbus_3d_physical_verified/source/**/
+!results/support_face_test/fourbus_3d_physical_verified/source/**/*.py
+!results/support_face_test/fourbus_3d_physical_verified/source/Network/data/*
+!results/support_face_test/fourbus_3d_physical_verified/support_1/
+!results/support_face_test/fourbus_3d_physical_verified/support_1/*
 
