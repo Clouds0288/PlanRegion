@@ -2,17 +2,17 @@
 import unittest  # 标准回归框架。
 import numpy as np  # 复相量、表面几何和标签数组。
 import gurobipy as gp  # 独立非凸 AC 求解环境。
-from tests.legacy_case33 import Case33  # 当前正式网架。
+from Network.four_bus_five_corridor import FourBus
 from vertify import ACPowerFlow
-from tests.reference import upgrade_plan
 
 
 class ACReferenceTests(unittest.TestCase):  # 以代表网架核对独立 AC 的数值证书。
     @classmethod
     def setUpClass(cls):  # 不生成完整建设组合表。
-        network = Case33(upgrade_count=8)  # 当前八候选线路。
-        plans = [upgrade_plan(network, x)
-                 for x in (np.zeros(8,dtype=int),np.arange(8)%2,np.ones(8,dtype=int))]
+        network = FourBus()
+        plans = [network.initial_plan,
+                 {'01': None, '12': 'M', '13': 'H', '02': 'H', '23': None},
+                 {'01': 'H', '12': None, '13': 'M', '02': None, '23': 'H'}]
         cls.models = [ACPowerFlow(network.tree(network.encode_plan(plan)), threads=1) for plan in plans]
         cls.environment = gp.Env(empty=True)  # 静默的共享全局求解环境。
         cls.environment.setParam('OutputFlag',0)  # 不输出逐点求解日志。
@@ -27,7 +27,7 @@ class ACReferenceTests(unittest.TestCase):  # 以代表网架核对独立 AC 的
     def test_fixed_point_matches_explicit_global_ac(self):  # 递推证书与完整 AC 等式全局求解对照。
         counts = {-1:0,1:0}  # 确认可行与不可行都被覆盖。
         for model in self.models:  # 三个物理上不同的固定网架。
-            for power in ([100.,800.,150.],[300.,3000.,500.],[500.,6000.,950.]):  # 低、中、高负荷查询。
+            for power in ([1.,1.,1.],[30.,30.,30.],[500.,600.,950.]):  # 低、中、高负荷查询。
                 actual = int(model.classify(power)[0])  # 独立不动点证书。
                 expected = model.global_status(power,self.environment)  # 显式完整 AC 电流等式。
                 self.assertNotEqual(expected,0)  # 未完成结论不能作为参考真值。
@@ -37,7 +37,7 @@ class ACReferenceTests(unittest.TestCase):  # 以代表网架核对独立 AC 的
         self.assertGreater(counts[1],0)  # 确实检查域内。
 
     def test_ac_witness_satisfies_complex_nodal_power_flow(self):  # 将支路证书重建为节点复相量。
-        power = np.array([100.,800.,150.])  # 代表网架均可承载的低负荷。
+        power = np.array([1.,1.,1.])  # 代表网架均可承载的低负荷。
         for model in self.models:  # 不同选型均需满足同一复功率关系。
             c = model.network  # 当前固定物理网架。
             status,ell = model.classify(power,return_currents=True)  # 请求完整电流平方证书。

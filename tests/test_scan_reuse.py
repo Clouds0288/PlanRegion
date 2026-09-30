@@ -24,6 +24,32 @@ def test_main_passes_force_rescan_switch(force):
     assert run.call_args.kwargs['force_rescan'] is force
 
 
+@pytest.mark.parametrize('relative_cache', [True, False])
+def test_archived_reference_resolves_cache_after_changing_working_directory(tmp_path, monkeypatch, relative_cache):
+    project = tmp_path/'project'
+    project.mkdir()
+    other = tmp_path/'elsewhere'
+    other.mkdir()
+    monkeypatch.chdir(other)
+    monkeypatch.setattr(main, 'ROOT', project)
+    cache = project/'results/scan/region.npz'
+    recording = project/'recording.json.gz'
+    stored = cache.relative_to(project) if relative_cache else cache
+    with gzip.open(recording, 'wt', encoding='utf-8') as stream:
+        json.dump(dict(version=4, history=[dict(elapsed=0., patch=dict(event='start'))],
+            validation_state=dict(validation=dict(method=vertify.AC_CACHE_METHOD, cache_path=str(stored)))), stream)
+    lower, upper = np.zeros(2), np.ones(2)
+    result = dict(inner=[], outer=[], axis_lower=lower, axis_bounds=upper)
+    reference = dict(axis_lower=lower, bounds=upper, states=np.ones((1, 1)))
+    with patch('main.build_region', return_value=result), \
+         patch('main.reference_box', return_value=(lower, upper)), \
+         patch('main.scan_ac_reference', return_value=reference), \
+         patch('main.import_ac_reference') as imported:
+        main.run(main.FourBus(load_nodes=(1, 2)), reference=recording,
+                 show_ui=False, scan_output=tmp_path/'cache')
+    assert imported.call_args.args[2] == cache
+
+
 def test_real_scan_is_reused_and_metrics_are_recomputed_for_new_result(tmp_path):
     network = main.FourBus(load_nodes=(1, 2))
     options = dict(budget=20000., divisions=8, show_ui=False, threads=1, scan_workers=1,

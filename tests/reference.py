@@ -8,28 +8,6 @@ from gurobipy import GRB
 import numpy as np  # 由网架数据独立推导消元矩阵。
 
 
-def fixed_topology(network):
-    """历史升级基准专用：仅保留初始树走廊，仍使用统一规划模型。"""
-    from dataclasses import fields
-    from Network import Network
-    data = {field.name: getattr(network, field.name) for field in fields(Network)}
-    selected = np.array([c.initial_active for c in network.corridors])
-    data.update(name=network.name+'_initial_tree', corridors=tuple(c for c in network.corridors if c.initial_active),
-                road_allowed=network.road_allowed[selected])
-    fixed = Network(**data)
-    for name in ('projects', 'upgrade_count', 'budgets', 'cost_unit'):
-        if hasattr(network, name):
-            setattr(fixed, name, getattr(network, name))
-    return fixed
-
-
-def upgrade_plan(network, choices):
-    """历史项目顺序只在测试输入边界转换，运行状态始终按 Network 型号顺序。"""
-    by_endpoints = {frozenset(c.endpoints): c for c in network.corridors}
-    return network.initial_plan | {by_endpoints[frozenset(p.branch)].id: 'parallel' if k else 'existing'
-                                   for p, k in zip(network.projects, choices, strict=True)}
-
-
 def _dispatch_equations(network):  # 构造固定方案的 P/Q/v 消元式。
     c = network  # c 仅在此函数表示网架对象。
     n, D, E = c.n, c.D, c.E  # 下游汇总矩阵与独立负荷节点映射。
@@ -121,13 +99,6 @@ def dispatch_support(network, method, normal):
     cones.append(('linear', n+1))
     result = _solve(np.r_[-np.asarray(normal), np.zeros(dimension-n)], matrix, rhs, cones)
     return dict(p=result.x[:n], value=-result.obj_val, bound=-result.obj_val_dual)
-
-
-def dispatch_state(network, power):
-    equations = _dispatch_equations(network)
-    cones = [('linear', equations.linear_count)]+[('soc', size) for size in equations.sizes]
-    return _solve(np.ones(equations.G.shape[1]), -equations.G,
-                  equations.c+equations.F@np.asarray(power), cones).x
 
 
 def nodal_voltages(network, power, start):

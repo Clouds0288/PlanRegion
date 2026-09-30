@@ -61,6 +61,8 @@ def run(network, *, budget=BUDGET, divisions=DIVISIONS, show_ui=SHOW_UI, output=
                     if validation.get('method') != AC_CACHE_METHOD or not validation.get('cache_path'):
                         raise ValueError('The recording does not identify an independent AC cache')
                     source = Path(validation['cache_path'])
+                    if not source.is_absolute():
+                        source = ROOT/source
                 import_ac_reference(ac, budget, source, path, mode=mode)
             lower, upper = reference_box(ac, budget, mode=mode, output=scan_output)
             reference_grid = scan_ac_reference(ac, budget,
@@ -101,6 +103,7 @@ if __name__ == '__main__':
     parser.add_argument('--load-nodes', type=lambda value: tuple(map(int, value.split(','))))
     parser.add_argument('--seconds', type=float, default=CASE_TIME_LIMIT)
     parser.add_argument('--divisions', type=int)
+    parser.add_argument('--output', type=Path, default=OUTPUT, help='求解结果及默认回放路径的根目录')
     parser.add_argument('--no-ui', action='store_true', help='不打开原生窗口，仍保存回放')
     parser.add_argument('--no-scan', action='store_true', help='只构域，不启动独立扫描')
     parser.add_argument('--force-rescan', action='store_true', default=FORCE_RESCAN)
@@ -110,7 +113,7 @@ if __name__ == '__main__':
     cases = ('fourbus', 'case33') if args.case == 'both' else (args.case,)
     if args.replay:
         paths = ([args.replay] if args.replay is not True else
-                 [recording_path(case, load_nodes=args.load_nodes, dimension=args.dimension, mode=args.mode) for case in cases])
+                 [recording_path(case, args.output, load_nodes=args.load_nodes, dimension=args.dimension, mode=args.mode) for case in cases])
         if len(paths) > 1:
             SynchronizedReplay(paths).root.mainloop()
         else:
@@ -121,4 +124,4 @@ if __name__ == '__main__':
         for case in cases:
             main(case, args.load_nodes, args.divisions, dimension=args.dimension, seconds=args.seconds,
                  show=SHOW_UI and not args.no_ui, scan=not args.no_scan, reference=args.reference,
-                 mode=args.mode, force_rescan=args.force_rescan)
+                 mode=args.mode, force_rescan=args.force_rescan, output=args.output)

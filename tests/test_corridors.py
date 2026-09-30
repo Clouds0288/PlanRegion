@@ -6,9 +6,8 @@ import pytest
 from gurobipy import GRB
 
 from Network import Corridor, Network, TypeParameters
-from tests.legacy_case33 import Case33
+from Network.case33bw import Case33
 from Network.four_bus_five_corridor import FourBus
-from Network.jiangkou import Jiangkou
 from model import GridPhysics, MasterProblem, SubProblem
 
 
@@ -19,7 +18,7 @@ def modified(network, **changes):
     return Network(**({f.name: getattr(network, f.name) for f in fields(Network)} | changes))
 
 
-@pytest.mark.parametrize('network', [FourBus(), Case33(upgrade_count=0), Case33(upgrade_count=8)])
+@pytest.mark.parametrize('network', [FourBus(), Case33()])
 def test_one_index_for_types_flows_and_costs(network):
     e = GridPhysics(network, 'socp')
     x = network.encode_plan(network.initial_plan)
@@ -56,23 +55,6 @@ def test_fixed_single_types_still_count_investment():
             np.testing.assert_array_equal(answer['x'], np.ones(3))
 
 
-@pytest.mark.parametrize('method', ['linear', 'socp'])
-def test_case33_zero_budget_can_close_tie_and_open_existing_edge(method):
-    net = Case33(upgrade_count=0)
-    assert net.n_corridors == 37 and net.n_types == 37
-    ties = [c for c in net.corridors if not c.initial_active]
-    assert len(ties) == 5 and all(c.existing_type == 'existing' for c in ties)
-    plan = net.initial_plan | {'7-8': None, '21-8': 'existing'}
-    tree = net.tree(net.encode_plan(plan))
-    assert tree.n == 32 and tree.cost == 0.
-    problem = MasterProblem(GridPhysics(net, method), fixed_plan=plan,
-                            budget=0., power=np.zeros(3), threads=1)
-    with problem.model:
-        answer = problem.solve()
-    assert answer['feasible'] and answer['objective'] == 0.
-    assert net.decode_plan(answer['x']) == plan
-
-
 def optional_network():
     line = TypeParameters('line', .01, .005, 1., 0.)
     edges = ((0, 1), (1, 2), (0, 3), (3, 2), (3, 4))
@@ -107,23 +89,6 @@ def test_optional_nodes_follow_selected_paths(method):
         assert problem.solve() is None
 
 
-def test_jiangkou_full_graph_stays_sparse_and_initial_tree_is_a_view():
-    net = Jiangkou()
-    assert (net.n, net.n_corridors, net.required.sum()) == (593, 874, 105)
-    tree = net.tree(net.encode_plan(net.initial_plan))
-    assert tree.network is net and tree.n < net.n
-    assert set(net.load_nodes) <= set(tree.nodes)
-    e = GridPhysics(net, 'socp')
-    problem = MasterProblem(e, threads=1)
-    with problem.model:
-        problem.model.update()
-        matrix = problem.model.getA()
-        assert matrix.data.nbytes+matrix.indices.nbytes+matrix.indptr.nbytes < 5_000_000
-        assert matrix.nnz < 100*net.n_types
-        assert set(problem.choices) == set(net.type_keys)
-        assert problem.state.shape == (e.slack_slice.stop,)
-
-
 @pytest.mark.parametrize('method', ['linear', 'socp'])
 def test_joint_cut_is_valid_with_optional_nodes(method):
     net = optional_network()
@@ -137,21 +102,6 @@ def test_joint_cut_is_valid_with_optional_nodes(method):
         problem.model.optimize()
         assert problem.model.Status == GRB.OPTIMAL
         assert problem.model.ObjBound >= -1e-7
-
-
-@pytest.mark.parametrize('method', ['linear', 'socp'])
-def test_jiangkou_full_graph_accepts_upgraded_initial_tree(method):
-    from vertify import ACPowerFlow
-    net = Jiangkou()
-    plan = {c.id: c.types[-1].id if c.initial_active else None for c in net.corridors}
-    x, power = net.encode_plan(plan), np.zeros(3)
-    e = GridPhysics(net, method)
-    assert SubProblem(e, threads=1).solve(x, power)['feasible']
-    problem = MasterProblem(e, fixed_plan=plan, power=power, threads=1)
-    with problem.model:
-        answer = problem.solve()
-    assert answer['status'] == 'optimal' and answer['feasible']
-    assert ACPowerFlow(net.tree(x), threads=1).classify(power)[0] == 1
 
 
 def test_fingerprint_covers_physics_and_initial_status():

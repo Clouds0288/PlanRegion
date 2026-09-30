@@ -1,0 +1,432 @@
+{
+  "schema": "planregion-results-v1",
+  "date": "2026-09-30",
+  "path_base": "repository root",
+  "archive_baseline_commit": "e79f18b30f667c007968135d8865c6d0e37fc30c",
+  "note": "Selected recorded results retained without recomputation. SOCP historical grids are not AC references. Current Case33 is 200 A. Original support source snapshot remains in archive_baseline_commit at results/support_face_test/fourbus_3d_physical_verified/source/.",
+  "runs": [
+    {
+      "id": "fourbus_2d_mainline",
+      "recording": "results/mainline/mode_1/fourbus_1_2.json.gz",
+      "scan": "results/scan/fourbus_socp/mode_1/1_2/pf_0.95_1_+1_budget_20000.npz",
+      "parameters": {
+        "mode": 1,
+        "network": "four_bus_five_corridor",
+        "load_nodes": [
+          1,
+          2
+        ],
+        "budget": 20000.0,
+        "method": "socp",
+        "time_limit": 50.0,
+        "tau": 0.005
+      },
+      "status": "certified",
+      "certified": true,
+      "timing": {
+        "total_seconds": 3.9727039034478366
+      },
+      "metrics": {
+        "inner": {
+          "mr_percent": 0.005569789461958338,
+          "fr_percent": 0.0,
+          "missed_cells": 1,
+          "extra_cells": 0,
+          "reference_cells": 17954,
+          "computed_cells": 17953
+        },
+        "outer": {
+          "mr_percent": 0.0,
+          "fr_percent": 0.2832546514856984,
+          "missed_cells": 0,
+          "extra_cells": 51,
+          "reference_cells": 17954,
+          "computed_cells": 18005
+        }
+      },
+      "comparisons": null,
+      "source_provenance": "Original recording has no run-time source hashes. Archived with baseline e79f18b30f667c007968135d8865c6d0e37fc30c; do not infer exact generating revision."
+    },
+    {
+      "id": "fourbus_3d_mainline",
+      "recording": "results/mainline/mode_1/fourbus_1_2_3.json.gz",
+      "scan": "results/scan/fourbus_socp/mode_1/1_2_3/pf_0.95_1_+1_budget_20000.npz",
+      "parameters": {
+        "mode": 1,
+        "network": "four_bus_five_corridor",
+        "load_nodes": [
+          1,
+          2,
+          3
+        ],
+        "budget": 20000.0,
+        "method": "socp",
+        "time_limit": 300.0,
+        "tau": 0.005
+      },
+      "status": "time_limit",
+      "certified": false,
+      "timing": {
+        "total_seconds": 271.0212730919011
+      },
+      "metrics": {
+        "inner": {
+          "mr_percent": 5.662827950471902,
+          "fr_percent": 0.0,
+          "missed_cells": 10464,
+          "extra_cells": 0,
+          "reference_cells": 184784,
+          "computed_cells": 174320
+        },
+        "outer": {
+          "mr_percent": 0.0,
+          "fr_percent": 44.48830488413033,
+          "missed_cells": 0,
+          "extra_cells": 148090,
+          "reference_cells": 184784,
+          "computed_cells": 332874
+        }
+      },
+      "comparisons": null,
+      "source_provenance": "Original run hashes in protocol.json; see comparison.json"
+    },
+    {
+      "id": "fourbus_3d_support_physical",
+      "recording": "results/support_face/fourbus_3d_signed_physical/monitor.json.gz",
+      "scan": "results/scan/fourbus_socp/mode_1/1_2_3/pf_0.95_1_+1_budget_20000.npz",
+      "parameters": {
+        "mode": 1,
+        "network": "four_bus_five_corridor",
+        "load_nodes": [
+          1,
+          2,
+          3
+        ],
+        "budget": 20000.0,
+        "method": "socp",
+        "time_limit": 300.0,
+        "tau": 0.005
+      },
+      "status": "incomplete",
+      "certified": false,
+      "timing": {
+        "total_seconds": 209.48543730401434
+      },
+      "metrics": {
+        "inner": {
+          "mr_percent": 0.07468179063122349,
+          "fr_percent": 0.0,
+          "missed_cells": 138,
+          "extra_cells": 0,
+          "reference_cells": 184784,
+          "computed_cells": 184646
+        },
+        "outer": {
+          "mr_percent": 0.0,
+          "fr_percent": 30.39154379911249,
+          "missed_cells": 0,
+          "extra_cells": 80678,
+          "reference_cells": 184784,
+          "computed_cells": 265462
+        }
+      },
+      "comparisons": null,
+      "source_provenance": "Original run hashes in protocol.json; see comparison.json"
+    },
+    {
+      "id": "case33_2d_200a_mainline",
+      "recording": "results/mainline/mode_1/case33_18_25.json.gz",
+      "scan": "results/scan/case33bw/18_25/d0121a1ad0ba8cc1e009da6cc204ad9cf53881d3e5f4c488a439cb11d5f6fb69/region_17ceb84375dc2cc1.npz",
+      "parameters": {
+        "mode": 1,
+        "network": "case33bw",
+        "load_nodes": [
+          18,
+          25
+        ],
+        "budget": 7,
+        "method": "socp",
+        "time_limit": 300,
+        "tau": 0.005,
+        "current_limit_a": 200.0
+      },
+      "status": "certified",
+      "certified": true,
+      "timing": {
+        "total_seconds": 238.43811869388446
+      },
+      "metrics": {
+        "inner": {
+          "mr_percent": 0.04288164665523156,
+          "fr_percent": 13.06409505034898,
+          "missed_cells": 7,
+          "extra_cells": 2452,
+          "reference_cells": 16324,
+          "computed_cells": 18769
+        },
+        "outer": {
+          "mr_percent": 0.0,
+          "fr_percent": 13.661606812291744,
+          "missed_cells": 0,
+          "extra_cells": 2583,
+          "reference_cells": 16324,
+          "computed_cells": 18907
+        }
+      },
+      "comparisons": {
+        "result_ac": {
+          "mr_percent": 0.04288164665523156,
+          "fr_percent": 13.06409505034898,
+          "missed_cells": 7,
+          "extra_cells": 2452,
+          "reference_cells": 16324,
+          "computed_cells": 18769
+        },
+        "result_socp": {
+          "mr_percent": 0.12770712499334858,
+          "fr_percent": 0.0,
+          "missed_cells": 24,
+          "extra_cells": 0,
+          "reference_cells": 18793,
+          "computed_cells": 18769
+        },
+        "socp_ac": {
+          "mr_percent": 0.0,
+          "fr_percent": 13.137870483690737,
+          "missed_cells": 0,
+          "extra_cells": 2469,
+          "reference_cells": 16324,
+          "computed_cells": 18793
+        }
+      },
+      "source_provenance": "Original recording has no run-time source hashes. Archived with baseline e79f18b30f667c007968135d8865c6d0e37fc30c; do not infer exact generating revision."
+    }
+  ],
+  "scans": {
+    "results/scan/fourbus_socp/mode_1/1_2/pf_0.95_1_+1_budget_20000.npz": {
+      "kind": "SOCP",
+      "shape": [
+        160,
+        160
+      ],
+      "axis_lower": [
+        -170.0,
+        -135.0
+      ],
+      "bounds": [
+        129.0,
+        97.0
+      ],
+      "method": "historical_socp_grid",
+      "feasible_cells": 17954,
+      "unresolved_cells": 0
+    },
+    "results/scan/fourbus_socp/mode_1/1_2_3/pf_0.95_1_+1_budget_20000.npz": {
+      "kind": "SOCP",
+      "shape": [
+        80,
+        80,
+        80
+      ],
+      "axis_lower": [
+        -170.0,
+        -135.0,
+        -135.0
+      ],
+      "bounds": [
+        158.0,
+        128.0,
+        127.0
+      ],
+      "method": "historical_socp_grid",
+      "feasible_cells": 184784,
+      "unresolved_cells": 0
+    },
+    "results/scan/case33bw/18_25/d0121a1ad0ba8cc1e009da6cc204ad9cf53881d3e5f4c488a439cb11d5f6fb69/region_17ceb84375dc2cc1.npz": {
+      "kind": "AC+SOCP",
+      "shape": [
+        160,
+        160
+      ],
+      "axis_lower": [
+        -6351.0,
+        -4674.0
+      ],
+      "bounds": [
+        681.0,
+        3310.0
+      ],
+      "method": "ac_socp_grid_v4",
+      "feasible_cells": 16324,
+      "unresolved_cells": 0,
+      "socp_feasible_cells": 18793,
+      "socp_unresolved_cells": 0
+    }
+  },
+  "files": {
+    "results/mainline/mode_1/case33_18_25.json.gz": {
+      "bytes": 314767,
+      "sha256": "e0dcbb6fa3cd006d81ef23c5c99824a73e54c62fb3c85b53f6da074fd0718fb0",
+      "original_path": "results/case33_2d_200A/mode_1/case33_18_25.json.gz",
+      "original_sha256": "17db0a7f1c7050e745cb3e43e7c32509b23722c5e60b49286ba1fc41cebf5da6",
+      "metadata_migration": "Only validation.cache_path made repository-relative; all history, results, labels and witnesses unchanged"
+    },
+    "results/mainline/mode_1/case33_18_25_comparison/comparison.csv": {
+      "bytes": 1012931,
+      "sha256": "6dde6a904edf6924200a6d4dfc8f5ea34cfaf66598ccab87fa10c097443e4257",
+      "original_path": "results/case33_2d_200A/mode_1/case33_18_25_comparison/comparison.csv",
+      "original_sha256": "6dde6a904edf6924200a6d4dfc8f5ea34cfaf66598ccab87fa10c097443e4257"
+    },
+    "results/mainline/mode_1/case33_18_25_comparison/comparison.npz": {
+      "bytes": 7781,
+      "sha256": "59f261f8289d95289343b63016dbbd211b2eab3221006a8c8089ad4256465d91",
+      "original_path": "results/case33_2d_200A/mode_1/case33_18_25_comparison/comparison.npz",
+      "original_sha256": "59f261f8289d95289343b63016dbbd211b2eab3221006a8c8089ad4256465d91"
+    },
+    "results/mainline/mode_1/case33_18_25_comparison/result_ac.png": {
+      "bytes": 35591,
+      "sha256": "20edbbc8fa994f057bbd37477a02c0cb71213363c6c94a8de815db0fb2a96d9d",
+      "original_path": "results/case33_2d_200A/mode_1/case33_18_25_comparison/result_ac.png",
+      "original_sha256": "20edbbc8fa994f057bbd37477a02c0cb71213363c6c94a8de815db0fb2a96d9d"
+    },
+    "results/mainline/mode_1/case33_18_25_comparison/result_socp.png": {
+      "bytes": 35254,
+      "sha256": "a50bf5c56ce2206b71d6918853e3a579f430153ddccfd2affc8a4688602306d6",
+      "original_path": "results/case33_2d_200A/mode_1/case33_18_25_comparison/result_socp.png",
+      "original_sha256": "a50bf5c56ce2206b71d6918853e3a579f430153ddccfd2affc8a4688602306d6"
+    },
+    "results/mainline/mode_1/case33_18_25_comparison/socp_ac.png": {
+      "bytes": 34149,
+      "sha256": "023b20979cc8a724828ad8c2d6ce2211109c7a9607490fe1f4e5dda19a738a2f",
+      "original_path": "results/case33_2d_200A/mode_1/case33_18_25_comparison/socp_ac.png",
+      "original_sha256": "023b20979cc8a724828ad8c2d6ce2211109c7a9607490fe1f4e5dda19a738a2f"
+    },
+    "results/mainline/mode_1/case33_18_25_comparison/summary.json": {
+      "bytes": 2678,
+      "sha256": "edcaddbdd2a221c7fe342f83af94c3c53076faf2beb7064f8185de09eb371b32",
+      "original_path": "results/case33_2d_200A/mode_1/case33_18_25_comparison/summary.json",
+      "original_sha256": "fedd2b1af291a4f7df77c37d42deb0f791e330940a183cf0cc76dbfb2bbbdd49",
+      "metadata_migration": "Only ac_cache made repository-relative",
+      "format_migration": "JSON line endings normalized to LF; numerical values unchanged"
+    },
+    "results/mainline/mode_1/fourbus_1_2.json.gz": {
+      "bytes": 54548,
+      "sha256": "29183e7a57ff4aa8e41f210b03b6a701c32ba819bee6ddb23836173b69242c28",
+      "original_path": "results/mainline/mode_1/fourbus_1_2.json.gz",
+      "original_sha256": "29183e7a57ff4aa8e41f210b03b6a701c32ba819bee6ddb23836173b69242c28"
+    },
+    "results/mainline/mode_1/fourbus_1_2_3.json.gz": {
+      "bytes": 886154,
+      "sha256": "0da3b7fed6d49ff9e6f016017b5d3b3e80623d60f8a23d0f70b36e35b6ecd63c",
+      "original_path": "results/support_face_test/fourbus_3d_signed_trial/mainline_1/monitor.json.gz",
+      "original_sha256": "0da3b7fed6d49ff9e6f016017b5d3b3e80623d60f8a23d0f70b36e35b6ecd63c"
+    },
+    "results/mainline/mode_1/fourbus_1_2_3_protocol.json": {
+      "bytes": 1271,
+      "sha256": "761bdff70eb3b427ba01e11a1e9469a9865142d29e09b1b3b7f3aedaef1398b7",
+      "original_path": "results/support_face_test/fourbus_3d_signed_trial/protocol.json",
+      "original_sha256": "761bdff70eb3b427ba01e11a1e9469a9865142d29e09b1b3b7f3aedaef1398b7"
+    },
+    "results/mainline/mode_1/fourbus_1_2_3_result.json": {
+      "bytes": 295788,
+      "sha256": "b89882cab03267f561727331b823128d64363f00f77bfe41e2c713368afc748e",
+      "original_path": "results/support_face_test/fourbus_3d_signed_trial/mainline_1/result.json",
+      "original_sha256": "b89882cab03267f561727331b823128d64363f00f77bfe41e2c713368afc748e"
+    },
+    "results/scan/case33bw/18_25/d0121a1ad0ba8cc1e009da6cc204ad9cf53881d3e5f4c488a439cb11d5f6fb69/bounds.npz": {
+      "bytes": 1599,
+      "sha256": "5e222789c09e0a53d7b2f16de25db687de9411979f535e5dc9a7d5f3dc15223f",
+      "original_path": "results/scan/case33bw/18_25/d0121a1ad0ba8cc1e009da6cc204ad9cf53881d3e5f4c488a439cb11d5f6fb69/bounds.npz",
+      "original_sha256": "5e222789c09e0a53d7b2f16de25db687de9411979f535e5dc9a7d5f3dc15223f"
+    },
+    "results/scan/case33bw/18_25/d0121a1ad0ba8cc1e009da6cc204ad9cf53881d3e5f4c488a439cb11d5f6fb69/region_17ceb84375dc2cc1.npz": {
+      "bytes": 169706,
+      "sha256": "cf9ee90cf3b1c710d811e4e4bce97539e53611e8ab408c2b591ca57f169cfabb",
+      "original_path": "results/scan/case33bw/18_25/d0121a1ad0ba8cc1e009da6cc204ad9cf53881d3e5f4c488a439cb11d5f6fb69/region_17ceb84375dc2cc1.npz",
+      "original_sha256": "cf9ee90cf3b1c710d811e4e4bce97539e53611e8ab408c2b591ca57f169cfabb"
+    },
+    "results/scan/fourbus_socp/mode_1/1_2/pf_0.95_1_+1_budget_20000.npz": {
+      "bytes": 1086,
+      "sha256": "7ec888d1378c64f3f2460c7b71aeebb8ef73a74c6f4ec76a7421d37ac55ff3d8",
+      "original_path": "results/scans/fourbus_signed/mode_1/1_2/pf_0.95_1_+1_budget_20000.npz",
+      "original_sha256": "7ec888d1378c64f3f2460c7b71aeebb8ef73a74c6f4ec76a7421d37ac55ff3d8"
+    },
+    "results/scan/fourbus_socp/mode_1/1_2_3/pf_0.95_1_+1_budget_20000.npz": {
+      "bytes": 7518,
+      "sha256": "d2f247758b001d9e9c6e8354ad9a9f0defc85d6dce6348bb1207f3b6c820160f",
+      "original_path": "results/scans/fourbus_signed/mode_1/1_2_3/pf_0.95_1_+1_budget_20000.npz",
+      "original_sha256": "d2f247758b001d9e9c6e8354ad9a9f0defc85d6dce6348bb1207f3b6c820160f"
+    },
+    "results/support_face/fourbus_3d_signed_physical/comparison.json": {
+      "bytes": 6009,
+      "sha256": "ab3475aaaddc65fdcad56705723aa4f81d9242524bddd45840d57ab0518822c6",
+      "format_migration": "JSON line endings normalized to LF; numerical values unchanged"
+    },
+    "results/support_face/fourbus_3d_signed_physical/monitor.json.gz": {
+      "bytes": 1347018,
+      "sha256": "047b8f206fddb71a153a3bc7cfadd2867797c6a319008a9eff0084fc90736c84",
+      "original_path": "results/support_face_test/fourbus_3d_physical_verified/support_1/monitor.json.gz",
+      "original_sha256": "047b8f206fddb71a153a3bc7cfadd2867797c6a319008a9eff0084fc90736c84"
+    },
+    "results/support_face/fourbus_3d_signed_physical/partition_+++.json": {
+      "bytes": 579046,
+      "sha256": "d999a39ef82a44b09fd8338aa0f936cce120a21e3af2c9971af573d639dde0a4",
+      "original_path": "results/support_face_test/fourbus_3d_physical_verified/support_1/partition_+++.json",
+      "original_sha256": "d999a39ef82a44b09fd8338aa0f936cce120a21e3af2c9971af573d639dde0a4"
+    },
+    "results/support_face/fourbus_3d_signed_physical/partition_++-.json": {
+      "bytes": 11593843,
+      "sha256": "2e2c30b701e75bbd8408613871ea3e7b6786cf6914307f90b34dfa1daff4e6e1",
+      "original_path": "results/support_face_test/fourbus_3d_physical_verified/support_1/partition_++-.json",
+      "original_sha256": "2e2c30b701e75bbd8408613871ea3e7b6786cf6914307f90b34dfa1daff4e6e1"
+    },
+    "results/support_face/fourbus_3d_signed_physical/partition_+-+.json": {
+      "bytes": 10210349,
+      "sha256": "1bd37c4a5c772eda8f75d19d238605d94edff45c3dc7cff238d7dc5a9c2c29ff",
+      "original_path": "results/support_face_test/fourbus_3d_physical_verified/support_1/partition_+-+.json",
+      "original_sha256": "1bd37c4a5c772eda8f75d19d238605d94edff45c3dc7cff238d7dc5a9c2c29ff"
+    },
+    "results/support_face/fourbus_3d_signed_physical/partition_+--.json": {
+      "bytes": 6446674,
+      "sha256": "662f0d645cd5df421b124afbf09484c897e1078b6515c2075f4802660a5fac8d",
+      "original_path": "results/support_face_test/fourbus_3d_physical_verified/support_1/partition_+--.json",
+      "original_sha256": "662f0d645cd5df421b124afbf09484c897e1078b6515c2075f4802660a5fac8d"
+    },
+    "results/support_face/fourbus_3d_signed_physical/partition_-++.json": {
+      "bytes": 5745840,
+      "sha256": "67b4e4b4cee6827d1512ad27b4554e76eac8e8dd4dd1ff4c1eec40b651fff702",
+      "original_path": "results/support_face_test/fourbus_3d_physical_verified/support_1/partition_-++.json",
+      "original_sha256": "67b4e4b4cee6827d1512ad27b4554e76eac8e8dd4dd1ff4c1eec40b651fff702"
+    },
+    "results/support_face/fourbus_3d_signed_physical/partition_-+-.json": {
+      "bytes": 4468401,
+      "sha256": "7f83fa776d024263bca7251cf95a2c363c2253bc48000272ea8961212f4d7689",
+      "original_path": "results/support_face_test/fourbus_3d_physical_verified/support_1/partition_-+-.json",
+      "original_sha256": "7f83fa776d024263bca7251cf95a2c363c2253bc48000272ea8961212f4d7689"
+    },
+    "results/support_face/fourbus_3d_signed_physical/partition_--+.json": {
+      "bytes": 5145142,
+      "sha256": "a6e30413bde54f2fc29e681c044f3e2adca3fdeed427387167ab8702b7decb3e",
+      "original_path": "results/support_face_test/fourbus_3d_physical_verified/support_1/partition_--+.json",
+      "original_sha256": "a6e30413bde54f2fc29e681c044f3e2adca3fdeed427387167ab8702b7decb3e"
+    },
+    "results/support_face/fourbus_3d_signed_physical/partition_---.json": {
+      "bytes": 554397,
+      "sha256": "57331d9e50d44b447b385799fcca96fa81ec50da102d234932eba18a8bf14c9e",
+      "original_path": "results/support_face_test/fourbus_3d_physical_verified/support_1/partition_---.json",
+      "original_sha256": "57331d9e50d44b447b385799fcca96fa81ec50da102d234932eba18a8bf14c9e"
+    },
+    "results/support_face/fourbus_3d_signed_physical/protocol.json": {
+      "bytes": 1271,
+      "sha256": "a4ac91ebe94e5070f23cbd57c52694b6d6c1e65f3a29771eb9f6477684857119",
+      "original_path": "results/support_face_test/fourbus_3d_physical_verified/protocol.json",
+      "original_sha256": "a4ac91ebe94e5070f23cbd57c52694b6d6c1e65f3a29771eb9f6477684857119"
+    },
+    "results/support_face/fourbus_3d_signed_physical/result.json": {
+      "bytes": 296118,
+      "sha256": "31a4f07ffcd410310d370e93d34dd96716c6225d6fd304edcf066016497763bd",
+      "original_path": "results/support_face_test/fourbus_3d_physical_verified/support_1/result.json",
+      "original_sha256": "31a4f07ffcd410310d370e93d34dd96716c6225d6fd304edcf066016497763bd"
+    }
+  }
+}

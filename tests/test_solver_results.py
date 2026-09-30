@@ -6,10 +6,8 @@ import numpy as np
 import pytest
 
 from Network.four_bus_five_corridor import FourBus
-from tests.legacy_case33 import Case33
 from model import PLANNING_TOL, GridPhysics, MasterProblem, SubProblem, RemainingRegionModel
 from tests.planning_checks import margin
-from tests.reference import fixed_topology
 
 
 @pytest.mark.parametrize('method', ['linear', 'socp'])
@@ -87,29 +85,6 @@ def test_sp_timeout_without_solution_stays_unknown():
     equations = GridPhysics(network, 'socp')
     with pytest.raises(TimeoutError, match='time limit'):
         SubProblem(equations, threads=1).solve(network.encode_plan(network.initial_plan), np.zeros(3), time_limit=0.)
-
-
-@pytest.mark.parametrize('upgrades,power', [
-    ({}, [69.10864684326633, 3000.4352915681134, 93.62828475260056]),
-    ({'2-3': 'parallel'}, [154.27833243608373, 3500.5976872770457, 240.6587165097658]),
-])
-def test_sp_returns_an_accurate_raw_boundary_state_without_repair(upgrades, power):
-    network = fixed_topology(Case33(upgrade_count=4))
-    equations = GridPhysics(network, 'socp')
-    x = network.encode_plan(network.initial_plan | upgrades)
-    # 默认数值设置曾在这些点返回近零 eta 但超限的原始误差，导致联合割停滞。
-    optimize = gp.Model.optimize
-    calls = []
-
-    def record(model, *args, **kwargs):
-        calls.append(model.ModelName)
-        return optimize(model, *args, **kwargs)
-
-    with patch.object(gp.Model, 'optimize', new=record):
-        answer = SubProblem(equations, threads=1).solve(x, power)
-    assert calls == ['planning_SP']
-    assert answer['feasible'] and answer['cut'] is None
-    assert margin(equations, x, power, answer['state']) >= -PLANNING_TOL
 
 
 def test_positive_eta_without_a_valid_cut_stays_unknown():

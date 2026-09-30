@@ -34,7 +34,7 @@ from vertify import scan_path, scan_ac_reference, reference_box
 from experiments.test_support_face_certification_fourbus_2d import (
     SupportReplay, discover_schemes, initial_bounds, json_value)
 
-DEFAULT_OUTPUT = ROOT/'results'/'support_face_test'/'fourbus_3d_signed_physical'
+DEFAULT_OUTPUT = ROOT/'results'/'support_face'/'fourbus_3d_signed_physical'
 
 
 def write_json(path, value):

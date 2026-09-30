@@ -1,16 +1,11 @@
-# Keep source and recorded source hashes stable across platforms.
+# Preserve source bytes and recorded hashes across platforms.
 *.py -text
-*.html -text
 *.m -text
 *.json -text
-*.jsonl -text
 
-# Generated datasets and embedded replay pages are reviewed through their reports.
+# Numerical artifacts are reviewed through their manifest and summaries.
 results/** -text -diff
-results/**/README.md diff
-results/**/report.md diff
-results/**/protocol.json diff
-
-# Full numerical histories; lightweight reports and HTML stay in ordinary Git.
-results/case33bw/latest/**/replay.json filter=lfs diff=lfs merge=lfs -text
-results/case33bw/latest/**/events.jsonl filter=lfs diff=lfs merge=lfs -text
+results/manifest.json diff
+results/**/summary.json diff
+results/**/comparison.json diff
+results/**/*protocol.json diff

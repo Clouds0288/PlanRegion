@@ -1,5 +1,4 @@
 """生产运行状态的离线审核；不参与 MP/SP 的可行性分支。"""
-from vertify import ACPowerFlow
 import numpy as np
 
 
@@ -61,27 +60,3 @@ def margin(equations, x, power, state):
     if equations.method == 'socp':
         residual.append(net.source_smax-np.hypot(ps, qs))  # 电源视在功率上限：sqrt(P_source²+Q_source²) <= source_smax。
     return float(min(residual))
-
-
-def affordable_designs(network, budget):
-    """固定初始拓扑的升级枚举；不能作为完整重构域的参考。"""
-    if network.n_corridors != network.n or not all(c.initial_active for c in network.corridors):
-        raise ValueError('Upgrade enumeration requires a fixed initial topology')
-    if not np.isfinite(budget):
-        raise ValueError('Unlimited budgets require global search, not enumeration')
-    result = []
-    upgrades = [c for c in network.corridors if len(c.types) > 1]
-    def visit(index, cost, chosen):
-        if index == len(upgrades):
-            choice = chosen
-            result.append((cost, choice, ACPowerFlow(network.tree(network.encode_plan(choice)), threads=1)))
-            return
-        corridor = upgrades[index]
-        for line_type in corridor.types:
-            price = line_type.investment_cost
-            if price < 0.:
-                raise ValueError('Budget pruning requires nonnegative investment costs')
-            if cost+price <= budget:
-                visit(index+1, cost+price, chosen | {corridor.id: line_type.id})
-    visit(0, 0., network.initial_plan)
-    return sorted(result, key=lambda row: (row[0], tuple(row[1].items())))

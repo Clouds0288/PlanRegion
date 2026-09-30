@@ -4,7 +4,7 @@ Run from any directory::
 
     python experiments/test_support_face_certification_fourbus_2d.py --compare-global
     python experiments/test_support_face_certification_fourbus_2d.py --record
-    python monitor.py results/support_face_test/fourbus_2d_physical/monitor.json.gz
+    python monitor.py results/support_face/fourbus_2d_physical/monitor.json.gz
 
 Only FourBus(load_nodes=(1, 2)), nonnegative loads and the original complete SOCP
 are used. All construction variables remain binary. A complete physical MISOCP
@@ -42,7 +42,7 @@ from region import (GEOMETRY_TOL, clip_polytope, contains, halfspaces,
 from vertify import scan_ac_reference, reference_box
 
 BOUND_PAD = 1e-10
-DEFAULT_OUTPUT = ROOT / 'results' / 'support_face_test' / 'fourbus_2d_physical'
+DEFAULT_OUTPUT = ROOT / 'results' / 'support_face' / 'fourbus_2d_physical'
 CERTIFIED = {'GEOMETRY_CERTIFIED', 'SUPPORT_CERTIFIED'}
 
 
