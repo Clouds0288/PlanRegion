@@ -38,6 +38,16 @@ Hc：同 H，覆盖证书按 A 阶段叶锥分解（--coverage cone）。RB：R 
 是有证书的 O_R∩盒，内域 I_H=I_R∪(∪P_x)，每次锥决策后检查 vol(O_R)-vol(I_H) <= ε·vol(I_H)，满足即认证（P_x ⊆ R_x
 只依赖审计过的点，与面是否认证无关）。
 
+方法 RCUT 与 RCUT2（R + 主线割平面构域，替换 B）
+----
+A 同 RB。之后对 X*（收集方式同 RB）逐网架做主线 build_sequential_region 的单网架割平面阶段（cut_network，进程池按
+网架并行）：N_x 从分区盒（已被分区内共享的联合割裁剪）出发，SP 在 N_x 顶点评分（固定 x，带本网架 OBBT 盒与反向锥
+包络行，η 松弛），最大 η 的不可行顶点由 generate_cut 取联合割裁剪 N_x；area_ratio=割掉的体积/割前 vol(N_x)，连续
+--patience 次 < --threshold 即停滞。RCUT 不做内域认证，把停滞或精确的 N_x 直接当作该网架的可行域；RCUT2 另做主线
+内域认证（首轮射线、割后补射线、边界补充，可行顶点亦收入），内域取认证点凸包 N'_x。续跑径向部分（A+）时，每次锥
+决策后新出现的网架也先做 CUT。认证同 RB：vol(O_R∩盒)-vol(I) <= ε·vol(I)，I=(I_R ∪ ∪_x N_x)∩O_R（RCUT2 用 N'_x）；
+RCUT 的内域不是认证内域，有效性只检查外界。--threshold 不是默认值时运行目录与方法名加后缀（RCUT-t0.5 即 0.5%）。
+
 实现约定（任务说明未覆盖或需取舍之处）
 ----
 1. 时间：--seconds 是每次运行的墙钟总时限（含 OBBT、求解、几何与记录，不含事后逐格评价），t=0 为运行开始。分区
@@ -99,11 +109,13 @@ for _path in (str(ROOT), str(HERE)):
     if _path not in sys.path:
         sys.path.insert(0, _path)
 
-from main import BUDGET, REGION_TAU
-from model import PLANNING_TOL, PortPhysics, RemainingRegionModel, port_bounds, ray_support
+from main import BUDGET, CUT_PATIENCE, POINT_TOL, RAY_THRESHOLD, REGION_TAU
+from model import (PLANNING_TOL, SP_TIME_LIMIT, PortPhysics, PortSubProblem, RemainingRegionModel, port_bounds,
+                   ray_support)
 from Network.case33bw import Case33, CURRENT_LIMIT
 from Network.four_bus_five_corridor import FourBus
-from region import GEOMETRY_TOL, clip_polytope, contains, halfspaces, polytope_vertices, polytope_volume
+from region import (GEOMETRY_TOL, clip_polytope, contains, halfspaces, polytope_vertices, polytope_volume, ray_gain,
+                    register_power)
 from vertify import ac_identity, ac_network, load_scan, scan_path
 import plan2_geometry as geo
 from test_radial_sandwich import (COVER_CONV_TOL, RAY_SECONDS, PartitionTimeout, RadialSandwich, direction,
@@ -117,15 +129,21 @@ SUPPORT_SECONDS = 30.        # 单次支撑 SOCP 的时限上限（同时受分�
 SUPPORT_PASS_SHARE = .75     # 每轮 B 最多占剩余时间的比例，其余留给覆盖证书 C
 TIMELINE_INTERVAL_3D = 10.   # 三维 H 的时间线最短间隔（秒）：每行要按锥求并集体积，检查点不受影响
 MAX_ROUNDS = 200             # B→C 循环轮数上限
+RCUT_THRESHOLD = .01         # RCUT/RCUT2 停滞阈值默认值（主线 CUT_THRESHOLD 为 .02）：连续 patience 次 area_ratio < threshold 即停
+CUT_SECONDS = 30.            # 单个网架一次割循环的时限上限（同时受该轮 CUT 剩余时间限制）
+CUT_METHODS = ('RCUT', 'RCUT2')
+CUT_ACCEPTED = ('stagnated', 'exact', 'empty')   # RCUT 只把这些状态的 N_x 计入内域（empty：N_x=∅，即分区内 R_x=∅）
 GAP_LEVELS = (.10, .05, .02)
 DEFAULT_OUTPUT = ROOT/'results'/'compare_plan2'
 SMOKE = dict(case='case33', nodes=(18, 25), partitions=('nn',), seconds=60., repeats=1, methods=('R', 'H'),
              workers=(1, 16))
 CERTIFIED_FACES = ('BOUNDARY', 'GEOMETRY_CERTIFIED', 'SUPPORT_CERTIFIED')
 SURFACE, INK, INK_2, MUTED, GRID = '#fcfcfb', '#0b0b0b', '#52514e', '#898781', '#e1e0d9'
-METHOD_COLORS = dict(R='#2a78d6', H='#eb6834', Hc='#1baf7a', RB='#eda100')   # 分类色前四槽（已校验的配色）
-PURPOSES = ('discovery', 'cone_outer', 'support', 'coverage', 'obbt', 'ray', 'zero_sp')
-PURPOSE_COLORS = dict(zip(PURPOSES, ('#2a78d6', '#eb6834', '#1baf7a', '#eda100', '#e87ba4', '#008300', '#4a3aa7')))
+METHOD_COLORS = dict(R='#2a78d6', H='#eb6834', Hc='#1baf7a', RB='#eda100', RCUT='#e87ba4',
+                     RCUT2='#008300')   # 分类色前六槽，固定次序（已校验的配色）
+PURPOSES = ('discovery', 'cone_outer', 'support', 'coverage', 'obbt', 'ray', 'zero_sp', 'cut')
+PURPOSE_COLORS = dict(zip(PURPOSES, ('#2a78d6', '#eb6834', '#1baf7a', '#eda100', '#e87ba4', '#008300', '#4a3aa7',
+                                     '#e34948')))
 TYPE_COLORS = dict(MISOCP='#2a78d6', SOCP='#eb6834', LP='#1baf7a')
 OTHER_COLOR = '#c3c2b7'
 
@@ -198,7 +216,7 @@ class Recorder:
 
     def __init__(self, code, method, clock, checkpoints, min_interval=0.):
         self.code, self.method, self.clock, self.min_interval = code, method, clock, min_interval
-        self.phase = 'A' if method == 'H' else 'R'
+        self.phase = 'R' if method == 'R' else 'A'
         self.solves, self.timeline, self.snapshots, self.stack = [], [], {}, []
         self.state_fn = lambda override=None: empty_state()
         self.measure = None
@@ -532,7 +550,7 @@ def _support_task(x, box, normal, limit):
 
 
 class SupportPool:
-    """B 阶段进程池（spawn）；分区开始时即提交预热任务，进程在 A 阶段期间完成导入与 Gurobi 环境。"""
+    """B / CUT 阶段进程池（spawn）；分区开始时即提交预热任务，进程在 A 阶段期间完成导入与 Gurobi 环境。"""
 
     def __init__(self, case, code, args, workers):
         self.executor = ProcessPoolExecutor(workers, mp_context=multiprocessing.get_context('spawn'),
@@ -1159,9 +1177,536 @@ STATUS_NAMES = {getattr(GRB.Status, name): name for name in dir(GRB.Status) if n
 STATUS_NAMES[-1] = 'ERROR'
 
 
+# ---- 方法 RCUT / RCUT2：A → CUT（主线割平面构域，替换 B）→ A+ --------------------------------------------
+class CutSlice(Exception):
+    """一个网架的割循环用完时间片（不是 RuntimeError：SP、割 LP 与射线的数值失败另行处理）。"""
+
+
+def stagnated(history, threshold, patience):
+    """主线停滞规则：最近 patience 次割的体积缩减比例 area_ratio 都 < threshold。"""
+    return len(history) >= patience and all(ratio < threshold for ratio in history[-patience:])
+
+
+def cut_network(equations, oracle, x, bounds, budget, vertices, points, origin, limit, threshold, patience, certify,
+                threads):
+    """固定方案 x 的主线割平面构域（region.build_sequential_region 的单网架阶段，不含全局查漏），坐标 xi。
+    N_x 从 vertices（分区盒被分区内已有联合割裁剪）出发：SP（固定 x，带本网架 OBBT 盒与反向锥包络行，η 松弛）为
+    N_x 顶点评分，最大 η 的不可行顶点由 generate_cut 取联合割 α+βᵀp+δᵀx>=0 裁剪 N_x；area_ratio=割掉的体积/割前
+    vol(N_x)，连续 patience 次 < threshold 即 stagnated；没有可割顶点即 exact（RCUT2：N_x ⊆ conv(认证点)）。
+    certify（RCUT2）另做主线内域认证：points（A 阶段已认证点）为种子，origin 未知（None）时 SP 认证零接入点；首轮
+    射线从锚点（认证点均值，尚无认证点时为紧化可行集内点）射向 N_x 初值的各顶点，顶点评分前向锚点内移 point_tol/4、
+    可行即收入，每次割后朝割点补射线，停止后对 N_x 的剩余顶点按收益边界补充；inner 为认证点凸包 N'_x。
+    solves 为 (类型, 用途, 秒, 结局) 列表。"""
+    started = perf_counter()
+    deadline = started+limit
+    x = np.asarray(x, int)
+    scheme = tuple(int(v) for v in x)
+    if scheme not in equations.boxes:
+        raise RuntimeError(f'CUT needs the OBBT box of scheme {scheme}')
+    bounds = np.asarray(bounds, float)
+    d = len(bounds)
+    N = np.asarray(vertices, float).reshape(-1, d)
+    hull = dict(vertices=np.empty((0, d)), faces=None)
+    solves, cuts, history, center = [], [], [], []
+    cache, powers, applied, failed = {}, [], set(), set()
+    counts = dict(sp=0, lp=0, rays=0, failures=0, geometry_failures=0)
+    status = boundary = None
+
+    def left():
+        rest = deadline-perf_counter()
+        if rest <= 0.:
+            raise CutSlice('network time slice')
+        return rest
+
+    def timed(kind, purpose, solve):
+        t0, outcome = perf_counter(), 'ok'
+        try:
+            return solve()
+        except TimeoutError:
+            outcome = 'timeout'
+            if perf_counter() >= deadline:
+                raise CutSlice('network time slice')
+            raise
+        except (RuntimeError, gp.GurobiError):
+            outcome = 'error'
+            raise
+        finally:
+            solves.append((kind, purpose, perf_counter()-t0, outcome))
+
+    def inside(point):
+        return hull['faces'] is not None and bool(contains(np.atleast_2d(point), hull['faces'])[0])
+
+    def add_point(point):
+        point = np.asarray(point, float).reshape(1, d)
+        if inside(point[0]):
+            return
+        try:
+            updated = polytope_vertices(np.vstack([hull['vertices'], point]))
+            hull.update(vertices=updated, faces=halfspaces(updated))
+        except geo.GEOMETRY_ERRORS:
+            counts['geometry_failures'] += 1
+
+    def anchor():
+        if len(hull['vertices']):
+            return hull['vertices'].mean(axis=0)*bounds
+        if not center:
+            center.append(timed('SOCP', 'ray', lambda: equations.center(x, bounds)))
+        return center[0]
+
+    def add_ray(target, initial=False):
+        inner = hull['vertices']
+        volume = polytope_volume(inner) if len(inner) > d else 0.
+        if not initial and volume > 0. and ray_gain(inner, target/bounds) < RAY_THRESHOLD*volume:
+            return   # 主线射线筛选：收益不足本网架认证测度的 RAY_THRESHOLD；首轮不筛选
+        try:
+            start = anchor()
+            limit_now = min(RAY_SECONDS, left())
+            answer = timed('SOCP', 'ray', lambda: ray_support(equations, budget, x, start, target, threads=threads,
+                                                              time_limit=limit_now))
+        except (RuntimeError, TimeoutError, gp.GurobiError):
+            counts['failures'] += 1
+            return
+        counts['rays'] += 1
+        add_point(answer['p']/bounds)
+
+    def check(point):
+        """主线 check：返回 (结论, 点编号)，结论为 inside / applied / failed / feasible / pending。"""
+        if certify and inside(point):
+            return 'inside', None
+        power = point*bounds
+        if certify and len(hull['vertices']):
+            start = hull['vertices'].mean(axis=0)*bounds   # 分区模式只认证实际内移点
+            spread = float(np.max(np.abs(start-power)))
+            if spread > 0.:
+                power = power+min(.5, POINT_TOL/(4*spread))*(start-power)
+        index = register_power(power, powers, POINT_TOL)
+        power = powers[index]
+        if index in applied:
+            return 'applied', index
+        if index in failed:
+            return 'failed', index
+        if certify and inside(power/bounds):
+            return 'inside', index
+        if index not in cache:
+            limit_now = min(SP_TIME_LIMIT['socp'], left())
+            try:
+                cache[index] = timed('SOCP', 'cut', lambda: oracle.solve(x, power, time_limit=limit_now,
+                                                                         score_only=True))
+            except (RuntimeError, TimeoutError, gp.GurobiError):
+                failed.add(index)
+                counts['failures'] += 1
+                return 'failed', index
+            counts['sp'] += 1
+        if cache[index]['feasible']:
+            if certify:
+                add_point(power/bounds)
+            return 'feasible', index
+        return 'pending', index
+
+    def outside():
+        return N[~contains(N, hull['faces'])] if certify and hull['faces'] is not None else N
+
+    try:
+        if certify:
+            for point in np.asarray(points, float).reshape(-1, d):
+                add_point(point)
+            if origin is None:   # 主线 register：有背景负荷时零接入点须实际认证
+                limit_now = min(SP_TIME_LIMIT['socp'], left())
+                try:
+                    zero = timed('SOCP', 'zero_sp', lambda: oracle.solve(x, np.zeros(d), time_limit=limit_now,
+                                                                         score_only=True))
+                    counts['sp'] += 1
+                    if zero['feasible']:
+                        add_point(np.zeros(d))
+                except (RuntimeError, TimeoutError, gp.GurobiError):
+                    counts['failures'] += 1
+            for point in N:   # 首轮射线
+                if not inside(point):
+                    add_ray(point*bounds, initial=True)
+        while True:
+            left()
+            if not len(N):
+                status = 'empty'
+                break
+            candidates = outside()
+            if not len(candidates):
+                status = 'exact'
+                break
+            results = [check(point) for point in candidates]
+            pending = {index for kind, index in results if kind == 'pending'}
+            if certify:
+                if not len(outside()):
+                    status = 'exact'
+                    break
+                pending = {index for index in pending if not inside(powers[index]/bounds)}
+            if not pending:
+                kinds = {kind for kind, _ in results}
+                status = 'failed' if 'failed' in kinds else 'point_resolution' if 'applied' in kinds else 'exact'
+                break
+            index = max(pending, key=lambda i: (cache[i]['eta'], float(powers[i].sum()), tuple(powers[i])))
+            limit_now = min(SP_TIME_LIMIT['socp'], left())
+            try:
+                cut = timed('LP', 'cut', lambda: oracle.generate_cut(x, powers[index], cache[index]['cone_normals'],
+                                                                     time_limit=limit_now))
+            except (RuntimeError, TimeoutError, gp.GurobiError):
+                failed.add(index)
+                counts['failures'] += 1
+                continue
+            counts['lp'] += 1
+            before = polytope_volume(N)
+            N = clip_polytope(N, cut[0]+cut[1+d:]@x, cut[1:1+d]*bounds)
+            applied.add(index)
+            cuts.append(np.asarray(cut, float))
+            after = polytope_volume(N) if len(N) else 0.
+            history.append((before-after)/before if before > 0. else 0.)
+            if certify:
+                add_ray(powers[index])   # 主线：加割后沿该方向补可行点
+            if stagnated(history, threshold, patience):
+                status = 'stagnated'
+                break
+    except CutSlice:
+        status = 'slice'
+    except geo.GEOMETRY_ERRORS:
+        status = 'geometry'
+    if certify and status not in ('slice', 'empty', 'geometry'):
+        boundary = 'complete'
+        try:   # 主线边界补充：N_x 剩余顶点按射线收益从大到小
+            targets = {}
+            for point in outside():
+                targets.setdefault(register_power(point*bounds, powers, POINT_TOL), point)
+            while targets:
+                left()
+                index = max(targets, key=lambda i: ray_gain(hull['vertices'], targets[i]))
+                point = targets.pop(index)
+                if not inside(point):
+                    add_ray(point*bounds)
+        except CutSlice:
+            boundary = 'slice'
+        except geo.GEOMETRY_ERRORS:
+            boundary = 'geometry'
+    return dict(vertices=N, inner=hull['vertices'] if certify else np.empty((0, d)), status=status, history=history,
+                cuts=cuts, solves=solves, counts=counts, seconds=perf_counter()-started, boundary=boundary,
+                obbt_rows=2*len(equations.boxes[scheme])+2*int(x.sum()))
+
+
+def _cut_task(x, box, vertices, points, origin, limit, threshold, patience, certify):
+    """进程池中的一个网架割循环：本进程的 PortPhysics 先登记主进程传来的 OBBT 盒，SP/割 LP 才带该网架的紧化行。"""
+    equations = _WORKER['equations']
+    x = tuple(int(v) for v in x)
+    equations.boxes.setdefault(x, box)
+    oracle = _WORKER.get('cut_oracle')
+    if oracle is None:
+        oracle = _WORKER['cut_oracle'] = PortSubProblem(equations, threads=_WORKER['threads'])
+    return cut_network(equations, oracle, np.asarray(x), _WORKER['bounds'], _WORKER['budget'], vertices, points, origin,
+                       limit, threshold, patience, certify, _WORKER['threads'])
+
+
+class CutState:
+    """固定方案 x 的割平面构域：N_x（xi，分区内共享的联合割裁剪）、停滞记录与（RCUT2）主线射线认证的 N'_x。"""
+
+    def __init__(self, x, label, weight, d, points, origin):
+        self.x, self.label, self.weight, self.d = tuple(int(v) for v in x), label, float(weight), d
+        self.points = np.asarray(points, float).reshape(-1, d)   # A 阶段已认证点（RCUT2 的种子）
+        self.origin = origin                                     # 零接入认证：True / False / None（未知）
+        self.vertices, self.inner = None, np.empty((0, d))       # N_x 与 N'_x 的顶点
+        self.status, self.history, self.cuts, self.counts = 'pending', [], 0, {}
+        self.seconds, self.version, self.obbt_rows, self.boundary, self.error = 0., 0, None, None, None
+
+    def accepted(self):
+        return self.status in CUT_ACCEPTED
+
+    def region(self, certify):
+        """计入内域的集合：RCUT2 为认证点凸包 N'_x（任何状态都有效），RCUT 为停滞/精确的 N_x。"""
+        points = self.inner if certify else (self.vertices if self.accepted() else None)
+        return points if points is not None and len(points) > self.d else np.empty((0, self.d))
+
+    def view(self, certify):
+        return dict(scheme=self.label, vertices=self.region(certify), status=self.status)
+
+    def summary(self):
+        volume = lambda points: polytope_volume(points) if points is not None and len(points) > self.d else 0.
+        try:
+            cut_volume, inner_volume = volume(self.vertices), volume(self.inner)
+        except geo.GEOMETRY_ERRORS:
+            cut_volume = inner_volume = None
+        return dict(scheme=self.label, weight=self.weight, status=self.status, accepted=self.accepted(),
+                    cuts=self.cuts, area_ratios=[round(float(r), 6) for r in self.history], seconds=self.seconds,
+                    obbt_rows=self.obbt_rows, boundary=self.boundary, error=self.error, seed_points=len(self.points),
+                    cut_vertices=0 if self.vertices is None else len(self.vertices), inner_vertices=len(self.inner),
+                    cut_volume_xi=cut_volume, inner_volume_xi=inner_volume, version=self.version, **self.counts)
+
+
+class CutPhase(SupportPhase):
+    """RCUT / RCUT2：A 同 RB；之后对 X* 逐网架做主线割平面构域（CUT，替换 B），续跑径向部分（A+）时每次锥决策后
+    新出现的网架也先做 CUT。认证同 RB 的体积判据，内域 I=(I_R ∪ ∪_x N_x)∩O_R（RCUT 为停滞/精确的 N_x，RCUT2 为
+    认证点凸包 N'_x），外界为有证书的 O_R∩盒。分区内的联合割共享：新网架的 N_x 初值先被已有割裁剪，新割也裁剪
+    其他网架的 N_x（割对所有 x 有效，N_x 仍包含 R_x）。"""
+
+    def __init__(self, case, code, radial, args, recorder, clock, deadline_t, pool, workers, method, label):
+        super().__init__(case, code, radial, args, recorder, clock, deadline_t, pool, workers, 'none')
+        self.method, self.label, self.certify_inner = method, label, method == 'RCUT2'
+        self.cuts, self.nested = [], 0.   # 分区内共享的联合割；A+ 中嵌套 CUT 的耗时
+
+    # 状态与测度
+    def sets(self):
+        nets = [st for st in self.networks.values() if len(st.region(self.certify_inner))]
+        return nets, [st.region(self.certify_inner) for st in nets]
+
+    def state(self, override=None):
+        nets, _ = self.sets()
+        return dict(started=True, phase=self.recorder.phase, cones=cone_rows(self.radial, override),
+                    networks=[st.view(self.certify_inner) for st in nets], cover=None,
+                    certified=self.status == 'certified', inner_clip=True)
+
+    def measure_raw(self):
+        nets, sets = self.sets()
+        if len(self.measure_cache) > 50000:
+            self.measure_cache.clear()
+        inner, outer = geo.h_measures(cone_rows(self.radial), sets, None, self.d,
+                                      keys=[(st.label, st.version) for st in nets], cache=self.measure_cache,
+                                      clip=True)
+        scale = float(np.prod(self.bounds))
+        return inner*scale, outer*scale
+
+    def measure(self):
+        inner, outer = self.measure_raw()
+        return inner, outer, self.status == 'certified', dict(
+            networks=len(self.networks), in_inner=len(self.sets()[0]), cones=len(leaves(self.radial)),
+            volume_ratio=self.radial.volume_ratio() if leaves(self.radial) else None)
+
+    def certified_now(self):
+        """径向部分自身满足体积准则（继承 R 的证书），或 RB 的判据 vol(O_R∩盒)-vol(I) <= ε·vol(I)。"""
+        if leaves(self.radial) and self.radial.volume_ratio() <= self.eps:
+            return 'radial'
+        inner, outer = self.measure_raw()
+        return 'cut' if inner > 0 and outer-inner <= self.eps*inner else None
+
+    @contextmanager
+    def nested_phase(self, name):
+        """A+ 中嵌套的阶段：耗时计入 name 并从外层 A+ 扣除，结束后恢复记录器的阶段名。"""
+        outer, started = self.recorder.phase, self.clock.now()
+        self.recorder.phase = name
+        try:
+            yield
+        finally:
+            elapsed = self.clock.now()-started
+            self.phase_seconds[name] = self.phase_seconds.get(name, 0.)+elapsed
+            self.nested += elapsed
+            self.recorder.phase = outer
+
+    # 主流程
+    def run(self):
+        radial, recorder = self.radial, self.recorder
+        if radial.status == 'error':
+            self.status, self.reason = 'error', 'phase_A'
+            return
+        radial.deadline = self.clock.perf(self.deadline)
+        recorder.state_fn, recorder.measure = self.state, self.measure
+        try:
+            how = self.certified_now()
+            if how:
+                self.certify(how)
+                return
+            with self.phase('CUT'):
+                self.cut_pass(self.discover())
+            if self.clock.now() >= self.deadline:
+                raise PartitionTimeout('partition time limit')
+            how = self.certified_now()
+            if how:
+                self.certify(how)
+                return
+            self.resume_radial()
+        except PartitionTimeout:
+            if self.status != 'certified':
+                self.status, self.reason = 'time_limit', 'deadline'
+        except Exception as exc:
+            self.status, self.reason = 'error', repr(exc)
+            radial.errors.append(dict(kind='fatal', error=repr(exc), traceback=traceback.format_exc()))
+            print(traceback.format_exc(), flush=True)
+
+    def resume_radial(self):
+        """续跑径向部分（目标 ε）：每次锥决策后先为新出现的网架（及上一轮因时限跳过的网架）做 CUT，再复核认证。"""
+        radial = self.radial
+        if self.clock.now() >= self.deadline:
+            raise PartitionTimeout('partition time limit')
+        radial.epsilon = self.eps
+        radial.deadline = self.clock.perf(self.deadline)
+
+        def check():
+            fresh = [*self.discover(), *(st for st in self.networks.values() if st.status == 'skipped')]
+            if fresh:
+                with self.nested_phase('CUT'):
+                    self.cut_pass(fresh)
+            how = self.certified_now()
+            if how:
+                self.certify(how)
+                raise PartitionTimeout('RCUT certified')
+        radial.after_change = check
+        try:
+            with self.phase('A+'):
+                radial.run_volume()
+        finally:
+            radial.after_change = None
+            self.phase_seconds['A+'] = self.phase_seconds.get('A+', 0.)-self.nested
+            self.nested = 0.
+        if self.status == 'certified':
+            return
+        if radial.status == 'certified':
+            self.certify('radial')
+        elif radial.status == 'error':
+            self.status, self.reason = 'error', 'radial'
+        else:
+            self.status, self.reason = ('time_limit', 'deadline') if radial.status == 'time_limit' else \
+                (radial.status, 'radial')
+
+    # X* 与逐网架 CUT
+    def discover(self):
+        """尚未建 CutState 的网架（来源同 RB 的 collect：叶锥 x̂ 与覆盖网架、MISOCP 现任解、已紧化 / 零接入认证 /
+        做过射线的方案），权重为其在径向部分所占锥体积（排序用）。"""
+        radial, d = self.radial, self.d
+        volumes = {}
+        for cone in leaves(radial):
+            volumes[cone.x] = volumes.get(cone.x, 0.)+abs(float(np.linalg.det(cone.Q)))/factorial(d)
+            if cone.cover is not None:
+                volumes.setdefault(cone.cover, 0.)
+        for scheme in [*radial.incumbent_schemes, *radial.equations.boxes, *radial.origin,
+                       *(s for s, _ in radial.rays), *(s for s, _ in radial.nears)]:
+            volumes.setdefault(tuple(scheme), 0.)
+        total = sum(volumes.values())
+        floor = .1*total/len(volumes) if total > 0. else 1.
+        fresh = []
+        for scheme, volume in volumes.items():
+            scheme = tuple(int(v) for v in scheme)
+            if scheme in self.networks:
+                continue
+            entry = radial.origin.get(scheme)
+            origin = None if entry is None or 'error' in entry else bool(entry['feasible'])
+            st = self.networks[scheme] = CutState(scheme, radial.label(scheme), volume+floor, d,
+                                                  self.known_points(scheme), origin)
+            fresh.append(st)
+        return fresh
+
+    def cut_pass(self, states):
+        """按权重提交网架割循环（进程池并行，每个不超过 CUT_SECONDS），本轮最多用剩余时间的 SUPPORT_PASS_SHARE；
+        超过本轮时限仍未提交的网架记 skipped，A+ 中下一次锥决策后重试。"""
+        start = self.clock.now()
+        pass_end = start+SUPPORT_PASS_SHARE*max(self.deadline-start, 0.)
+        queue, inflight = sorted(states, key=lambda st: -st.weight), {}
+        while queue or inflight:
+            while queue and len(inflight) < self.workers:
+                st = queue.pop(0)
+                if self.clock.now() >= pass_end:
+                    st.status = 'skipped'
+                    continue
+                self.radial.tighten(st.x)   # 已紧化时为空操作；CUT 的 SP/割 LP 才带该网架的 OBBT 盒与包络行
+                inflight[self.submit_cut(st, max(min(CUT_SECONDS, pass_end-self.clock.now()), 0.))] = st
+            if not inflight:
+                break
+            token, result = self.collect_cut(inflight)
+            st = inflight.pop(token)
+            self.recorder.before_change()
+            self.apply_cut(st, result)
+            self.recorder.changed()
+
+    def initial_vertices(self, x):
+        N = geo.box_vertices(self.d)
+        for cut in self.cuts:
+            N = clip_polytope(N, cut[0]+cut[1+self.d:]@np.asarray(x), cut[1:1+self.d]*self.bounds)
+        return N
+
+    def submit_cut(self, st, limit):
+        st.status = 'running'
+        points = st.points if self.certify_inner else np.empty((0, self.d))
+        task = (st.x, self.radial.equations.boxes[st.x], self.initial_vertices(st.x), points, st.origin, limit,
+                self.args.threshold, self.args.patience, self.certify_inner)
+        if self.pool is None:
+            token = object()
+            self.done[token] = cut_network(self.radial.equations, self.radial.oracle, np.asarray(st.x), self.bounds,
+                                           self.case.budget, *task[2:], self.args.threads)
+            return token
+        return self.pool.executor.submit(_cut_task, *task)
+
+    def collect_cut(self, inflight):
+        for token in inflight:
+            if token in self.done:
+                return token, self.done.pop(token)
+        finished, _ = wait(list(inflight), return_when=FIRST_COMPLETED)
+        token = next(iter(finished))
+        try:
+            return token, token.result()
+        except Exception as exc:
+            return token, dict(vertices=None, inner=np.empty((0, self.d)), status='error', history=[], cuts=[],
+                               solves=[], counts={}, seconds=0., boundary=None, obbt_rows=None, error=repr(exc)[:300])
+
+    def apply_cut(self, st, result):
+        """登记一个网架的割循环结果：记录各次求解，N_x 再被其他网架在此期间加入的割裁剪，本网架的新割裁剪其他 N_x。"""
+        for kind, purpose, seconds, outcome in result['solves']:
+            self.recorder.record(kind, purpose, seconds, remote=self.pool is not None, scheme=st.label,
+                                 status=outcome)
+        st.status, st.history = result['status'], list(result['history'])
+        st.cuts += len(result['cuts'])
+        st.counts, st.seconds = dict(result['counts']), st.seconds+float(result['seconds'])
+        st.obbt_rows, st.boundary, st.error = result['obbt_rows'], result['boundary'], result.get('error')
+        if self.certify_inner and len(result['inner']):
+            st.inner = np.asarray(result['inner'], float)
+        d, fresh = self.d, [np.asarray(cut, float) for cut in result['cuts']]
+
+        def clip(N, x, cuts):
+            for cut in cuts:
+                N = clip_polytope(N, cut[0]+cut[1+d:]@np.asarray(x), cut[1:1+d]*self.bounds)
+            return N
+        if result['vertices'] is not None:
+            try:
+                st.vertices = clip(np.asarray(result['vertices'], float), st.x, self.cuts)   # 重复裁剪是空操作
+            except geo.GEOMETRY_ERRORS:
+                st.vertices = np.asarray(result['vertices'], float)
+        st.version += 1
+        self.cuts.extend(fresh)
+        for other in self.networks.values():
+            if other is st or other.vertices is None or not len(other.vertices) or not fresh:
+                continue
+            try:
+                N = clip(other.vertices, other.x, fresh)
+            except geo.GEOMETRY_ERRORS:
+                continue   # 保留裁剪前的 N_x：仍包含 R_x，只是不够紧
+            if len(N) != len(other.vertices) or not np.array_equal(N, other.vertices):
+                other.vertices, other.version = N, other.version+1
+
+    def result(self, phase_a, start, end):
+        nets = list(self.networks.values())
+        inner, outer = self.measure_raw()
+        statuses = {}
+        for st in nets:
+            statuses[st.status] = statuses.get(st.status, 0)+1
+        total = lambda key: sum(int(st.counts.get(key, 0)) for st in nets)
+        return dict(partition=self.code, method=self.label, base_method=self.method, status=self.status,
+                    certified=self.status == 'certified', how=self.how, reason=self.reason, t_cert=self.t_cert,
+                    start=start, end=end, seconds=end-start, inner_measure=inner, outer_measure=outer,
+                    gap=outer/inner-1. if inner > 0 else None,
+                    volume_ratio=self.radial.volume_ratio() if leaves(self.radial) else None,
+                    cones=len(leaves(self.radial)), x_star=len(nets),
+                    cut=dict(networks=len(nets), accepted=sum(st.accepted() for st in nets),
+                             in_inner=len(self.sets()[0]), statuses=statuses, shared_cuts=len(self.cuts),
+                             sp=total('sp'), lp=total('lp'), rays=total('rays'), failures=total('failures'),
+                             threshold=self.args.threshold, patience=self.args.patience),
+                    phase_a=phase_a, phase_seconds=dict(A=phase_a['seconds'], **self.phase_seconds),
+                    networks=[st.summary() for st in nets], counts=dict(self.radial.counts),
+                    errors=self.radial.errors[-5:])
+
+
+def run_label(method, args):
+    """运行目录与报告中的方法名：RCUT/RCUT2 的 threshold 不是默认值时加后缀，如 RCUT-t0.5（threshold 0.5%）。"""
+    threshold = getattr(args, 'threshold', RCUT_THRESHOLD)
+    if method in CUT_METHODS and not np.isclose(threshold, RCUT_THRESHOLD):
+        return f'{method}-t{100*threshold:g}'
+    return method
+
+
 def run_H(case, code, args, clock, deadline_t, workers, method='H'):
-    """方法 H（coverage=args.coverage）、Hc（同 H，覆盖证书按锥分解）或 RB（R + B，无覆盖证书）的一个分区。"""
-    recorder = Recorder(code, method, clock, checkpoint_times(args.seconds),
+    """方法 H（coverage=args.coverage）、Hc（同 H，覆盖证书按锥分解）、RB（R + B，无覆盖证书）或 RCUT/RCUT2（R + 主线
+    割平面构域，见 CutPhase）的一个分区；A 阶段全部相同。"""
+    label = run_label(method, args)
+    recorder = Recorder(code, label, clock, checkpoint_times(args.seconds),
                         TIMELINE_INTERVAL_3D if case.d == 3 else 0.)
     pool = SupportPool(case, code, args, workers) if workers > 1 else None
     start = clock.now()
@@ -1172,8 +1717,11 @@ def run_H(case, code, args, clock, deadline_t, workers, method='H'):
     recorder.measure = lambda: (*radial_measure(radial), False,
                                 dict(volume_ratio=radial.volume_ratio() if leaves(radial) else None,
                                      cones=len(leaves(radial))))
-    support = SupportPhase(case, code, radial, args, recorder, clock, deadline_t, pool, workers,
-                           {'Hc': 'cone', 'RB': 'none'}.get(method, args.coverage))
+    if method in CUT_METHODS:
+        support = CutPhase(case, code, radial, args, recorder, clock, deadline_t, pool, workers, method, label)
+    else:
+        support = SupportPhase(case, code, radial, args, recorder, clock, deadline_t, pool, workers,
+                               {'Hc': 'cone', 'RB': 'none'}.get(method, args.coverage))
     phase_a = dict(status='not_started', seconds=0.)
     try:
         with threadpool_limits(limits=1):
@@ -1312,7 +1860,8 @@ def write_run(directory, args, case, method, workers, repeat, codes, payloads, w
     summary = plain(dict(
         case=case.tag, case_name=case.name, network=case.network.name, load_nodes=list(case.nodes), mode=case.mode,
         budget=case.budget,
-        bounds_kw=case.bounds, method=method, workers=workers, per_partition_workers=inner_workers, repeat=repeat,
+        bounds_kw=case.bounds, method=run_label(method, args), base_method=method, inner_exact=method != 'RCUT',
+        workers=workers, per_partition_workers=inner_workers, repeat=repeat,
         partitions=list(codes), settings=settings(args, case), commit=git_commit(), dirty=git_dirty(),
         status='certified' if certified else ('error' if any(r.get('status') == 'error' for r in results.values())
                                               else 'time_limit'),
@@ -1337,7 +1886,9 @@ def settings(args, case):
                 discovery_share=args.discovery_share, network_eps=args.network_eps, criterion=args.criterion,
                 coverage=args.coverage, threads=args.threads, seed=args.seed, mip_seconds=args.mip_seconds,
                 mip_gap=args.mip_gap, inner_cert=args.inner_cert, support_seconds=SUPPORT_SECONDS,
-                support_pass_share=SUPPORT_PASS_SHARE, checkpoints=checkpoint_times(args.seconds),
+                support_pass_share=SUPPORT_PASS_SHARE, threshold=getattr(args, 'threshold', None),
+                patience=getattr(args, 'patience', None), cut_seconds=CUT_SECONDS,
+                checkpoints=checkpoint_times(args.seconds),
                 geometry_tol=GEOMETRY_TOL, planning_tol=PLANNING_TOL, cover_conv_tol=COVER_CONV_TOL,
                 gurobi=gp.gurobi.version())
 
@@ -1397,6 +1948,8 @@ def cell_labels(state, xi):
         for faces in state['cover']:
             covered |= contains(xi, np.asarray(faces, float), GEOMETRY_TOL)
         outer &= covered
+    if state.get('inner_clip'):   # RCUT/RCUT2：内域与外界取交
+        inner &= outer
     return inner, outer
 
 
@@ -1414,19 +1967,22 @@ def evaluate_run(directory, case, scan, cells=None):
     cells = cells or partition_cells(case, scan)
     summary = json.loads((directory/'summary.json').read_text(encoding='utf-8'))
     codes = summary['partitions']
+    inner_exact = summary.get('inner_exact', True)   # RCUT 的内域含外近似 N_x：内域条只作诊断
     report = dict(scan=scan['path'].resolve().relative_to(ROOT).as_posix(), shape=list(scan['shape']), checkpoints={})
+    if not inner_exact:
+        report['inner_exact'] = False
     for path in sorted((directory/'snapshots').glob('*.json')):
         snapshot = json.loads(path.read_text(encoding='utf-8'))
         labels, per = [], {}
         for code in codes:
             index, xi = cells[code]
             inner, outer = cell_labels(snapshot.get(code, empty_state()), xi)
-            per[code] = geo.grid_metrics(inner, outer, scan['ac'][index], scan['socp'][index])
+            per[code] = geo.grid_metrics(inner, outer, scan['ac'][index], scan['socp'][index], inner_exact)
             labels.append((index, inner, outer))
         index = np.concatenate([row[0] for row in labels])
         inner = np.concatenate([row[1] for row in labels])
         outer = np.concatenate([row[2] for row in labels])
-        overall = geo.grid_metrics(inner, outer, scan['ac'][index], scan['socp'][index])
+        overall = geo.grid_metrics(inner, outer, scan['ac'][index], scan['socp'][index], inner_exact)
         if path.stem == 'final':
             missed = index[(scan['ac'][index] == 1) & ~outer]
             wrong = index[inner & (scan['socp'][index] == -1)]
@@ -1478,8 +2034,17 @@ def flat_row(row):
     for purpose in PURPOSES:
         entry = totals['by_purpose'].get(purpose, dict(count=0, seconds=0.))
         out[f'{purpose}_count'], out[f'{purpose}_seconds'] = entry['count'], entry['seconds']
-    for phase in ('R', 'A', 'B', 'C', 'A+'):
+    for phase in ('R', 'A', 'B', 'C', 'CUT', 'A+'):
         out[f'phase_{phase}_seconds'] = totals['phase_seconds'].get(phase)
+    base = s.get('base_method', s['method'])
+    cut = [p['cut'] for p in s['partition_results'].values() if p.get('cut')]
+    total = lambda key: sum(c[key] for c in cut) if cut else None
+    out.update(base_method=base, inner_exact=s.get('inner_exact', True),
+               threshold=s['settings'].get('threshold') if base in CUT_METHODS else None,
+               patience=s['settings'].get('patience') if base in CUT_METHODS else None,
+               cut_networks=total('networks'), cut_accepted=total('accepted'), cut_in_inner=total('in_inner'),
+               shared_cuts=total('shared_cuts'), cut_sp=total('sp'), cut_lp=total('lp'), cut_rays=total('rays'),
+               cut_failures=total('failures'))
     return out
 
 
@@ -1523,6 +2088,16 @@ def write_report(output, case_tag):
              f'MISOCP cap {s["mip_seconds"]:g} s, MIPGap {s["mip_gap"]:g}; Gurobi {".".join(map(str, s["gurobi"]))}.', '',
              'Primary reference: AC scan (FR/MR in %, undecided AC cells excluded). SOCP columns are diagnostics: '
              'the OBBT-tightened model removes SOCP-only area, so outer-vs-SOCP MR > 0 is expected.', '']
+    cut_rows = [r for r in flat if r['base_method'] in CUT_METHODS]
+    if cut_rows:
+        lines += ['RCUT / RCUT2 (R + mainline cutting-plane construction instead of phase B): per network, SP scores the '
+                  'vertices of N_x (fixed x with its OBBT box and envelope rows) and the max-eta vertex yields a joint '
+                  'cut; a network stops after `patience` consecutive cuts each removing < `threshold` of vol(N_x). '
+                  'RCUT takes the stagnated/exact N_x as the network region (not a certified inner set); RCUT2 also '
+                  'runs the mainline inner certification (rays) and uses the certified hull. Inner I = (I_R ∪ sets) ∩ '
+                  'O_R; certified when vol(O_R∩box) - vol(I) <= eps·vol(I) (RB criterion). Runs: '
+                  + ', '.join(sorted({f'{r["method"]} (threshold {100*r["threshold"]:g}%, patience {r["patience"]})'
+                                      for r in cut_rows})) + '.', '']
     invalid = [r for r in flat if r['valid'] is False]
     if invalid:
         lines += ['**<span style="color:red">VALIDITY FAILED</span>** in: ' +
@@ -1551,12 +2126,15 @@ def write_report(output, case_tag):
               '(diagnostic) | undecided AC |', '|---|---|---|---|---|---|---|']
     for r in flat:
         red = lambda v: f'**<span style="color:red">{v}</span>**' if v else str(v)
-        lines.append(f'| {r["method"]} | {r["workers"]} | {r["repeat"]} | {red(r["inner_socp_infeasible_cells"])} | '
+        inner_cell = (red(r['inner_socp_infeasible_cells']) if r['inner_exact'] else
+                      f'{r["inner_socp_infeasible_cells"]} (approximate inner: diagnostic)')
+        lines.append(f'| {r["method"]} | {r["workers"]} | {r["repeat"]} | {inner_cell} | '
                      f'{red(r["outer_missed_ac_cells"])} | {r["outer_missed_socp_cells"]} | {r["undecided_ac_cells"]} |')
     time_keys = [('misocp_seconds', 'MISOCP s'), ('socp_seconds', 'SOCP s'), ('lp_seconds', 'LP s'),
                  ('other_seconds', 'other s'), *((f'{p}_seconds', f'{p} s') for p in PURPOSES),
                  ('pool_solve_seconds', 'pool solve s'), ('phase_A_seconds', 'phase A s'), ('phase_B_seconds', 'phase B s'),
-                 ('phase_C_seconds', 'phase C s'), ('phase_A+_seconds', 'phase A+ s')]
+                 ('phase_C_seconds', 'phase C s'), ('phase_CUT_seconds', 'phase CUT s'),
+                 ('phase_A+_seconds', 'phase A+ s')]
     lines += ['', '## Time breakdown (medians; solver seconds summed over partitions and processes)', '',
               '| method | workers | ' + ' | '.join(k[1] for k in time_keys) + ' |', '|---|---|' + '---|'*len(time_keys)]
     for (method, workers), items in sorted(groups.items()):
@@ -1576,6 +2154,7 @@ def write_report(output, case_tag):
                           + (f' ({p["how"]})' if p.get('how') else '')
                           for code, p in summary['partition_results'].items())
         lines.append(f'- {summary["method"]} w{summary["workers"]} run{summary["repeat"]}: {parts}')
+    lines += cut_sections(rows, flat)
     lines += ['', '## Conclusions', '', *conclusions(groups), '']
     (output/'comparison.md').write_text('\n'.join(lines), encoding='utf-8')
     try:
@@ -1585,9 +2164,66 @@ def write_report(output, case_tag):
     return 0 if not invalid else 3
 
 
+def cut_sections(rows, flat):
+    """RCUT/RCUT2 的阈值敏感性表，以及与同目录 RB 运行的逐网架对照（RB 的 P_x ⊆ R_x ⊆ O_x 夹出真实网架域体积）。"""
+    cut = [r for r in flat if r['base_method'] in CUT_METHODS]
+    if not cut:
+        return []
+    lines = ['', '## RCUT / RCUT2 threshold sensitivity (final state)', '',
+             '| method | threshold | patience | workers | certified partitions | t_cert (s) | final gap | inner-AC FR% | '
+             'inner-AC MR% | outer-AC FR% | inner ∧ SOCP-infeasible cells | phase CUT s | networks in inner / X* | '
+             'shared cuts | SP | rays |', '|---|---|---|---|---|---|---|---|---|---|---|---|---|---|---|---|']
+    for r in sorted(cut, key=lambda r: (r['base_method'], r['threshold'], r['workers'], r['repeat'])):
+        lines.append(f'| {r["method"]} | {100*r["threshold"]:g}% | {r["patience"]} | {r["workers"]} | '
+                     f'{r["certified_partitions"]}/{r["partitions"]} | {cell(r["t_cert"], 1)} | {cell(r["gap_final"], 4)} | '
+                     f'{cell(r["inner_ac_fr"])} | {cell(r["inner_ac_mr"])} | {cell(r["outer_ac_fr"])} | '
+                     f'{r["inner_socp_infeasible_cells"]} | {cell(r["phase_CUT_seconds"], 1)} | '
+                     f'{r["cut_in_inner"]}/{r["cut_networks"]} | {r["shared_cuts"]} | {r["cut_sp"]} | {r["cut_rays"]} |')
+    reference = {}
+    for row in rows:
+        if row['summary']['method'] == 'RB':
+            for code, p in row['summary']['partition_results'].items():
+                for n in p.get('networks', []):
+                    if n.get('inner_volume_xi') and n.get('outer_volume_xi'):
+                        reference[(code, n['scheme'])] = (n['inner_volume_xi'], n['outer_volume_xi'])
+    if not reference:
+        return lines
+    lines += ['', '## Per-network sets vs RB (same partition and scheme, final state)', '',
+              "RB's support phase gives P_x ⊆ R_x ⊆ O_x for the same tightened network region. For RCUT the excess "
+              "vol(N_x)/vol(R_x)-1 therefore lies in [vol(N_x)/vol(O_x)-1, vol(N_x)/vol(P_x)-1]; for RCUT2, "
+              "vol(N'_x)/vol(P_x)-1 compares two certified inner sets (negative: smaller than RB's P_x).", '',
+              '| method | quantity | networks | median | min | max |', '|---|---|---|---|---|---|']
+    pct = lambda v: f'{100*v:.2f}%'
+    for row in sorted(rows, key=lambda r: r['summary']['method']):
+        s = row['summary']
+        base = s.get('base_method', s['method'])
+        if base not in CUT_METHODS:
+            continue
+        lower, upper, ratio = [], [], []
+        for code, p in s['partition_results'].items():
+            for n in p.get('networks', []):
+                ref = reference.get((code, n['scheme']))
+                if ref is None:
+                    continue
+                if base == 'RCUT' and n['accepted'] and n.get('cut_volume_xi'):
+                    lower.append(n['cut_volume_xi']/ref[1]-1.)
+                    upper.append(n['cut_volume_xi']/ref[0]-1.)
+                elif base == 'RCUT2' and n.get('inner_volume_xi'):
+                    ratio.append(n['inner_volume_xi']/ref[0]-1.)
+        for name, values in ((('N_x excess, lower bound', lower), ('N_x excess, upper bound', upper))
+                             if base == 'RCUT' else (("N'_x vs RB P_x", ratio),)):
+            if values:
+                lines.append(f'| {s["method"]} | {name} | {len(values)} | {pct(float(np.median(values)))} | '
+                             f'{pct(min(values))} | {pct(max(values))} |')
+    return lines
+
+
 def conclusions(groups):
     lines = []
-    for workers, method in [(w, m) for w in sorted({w for _, w in groups}) for m in ('H', 'Hc', 'RB')]:
+    order = ('H', 'Hc', 'RB', *CUT_METHODS)
+    rank = lambda m: (order.index(m.split('-t')[0]) if m.split('-t')[0] in order else len(order), m)
+    for workers, method in [(w, m) for w in sorted({w for _, w in groups})
+                            for m in sorted({m for m, v in groups if v == w and m != 'R'}, key=rank)]:
         r, h = groups.get(('R', workers), []), groups.get((method, workers), [])
         if not r or not h:
             continue
@@ -1600,7 +2236,7 @@ def conclusions(groups):
                 f'R {cell(med(r, "t_cert"), 1)} s vs {m} {cell(med(h, "t_cert"), 1)} s; inner-AC MR '
                 f'R {cell(med(r, "inner_ac_mr"))}% vs {m} {cell(med(h, "inner_ac_mr"))}%, inner-AC FR '
                 f'R {cell(med(r, "inner_ac_fr"))}% vs {m} {cell(med(h, "inner_ac_fr"))}%.')
-        phases = {p: med(h, f'phase_{p}_seconds') for p in ('A', 'B', 'C', 'A+')}
+        phases = {p: med(h, f'phase_{p}_seconds') for p in ('A', 'B', 'C', 'CUT', 'A+')}
         line += (f' {m} phase medians (s): '
                  + ', '.join(f'{p} {cell(v, 1)}' for p, v in phases.items() if v is not None) + '.')
         lines.append(line)
@@ -1636,6 +2272,11 @@ def read_timeline(directory):
 
 
 def plot_report(output, rows):
+    """主图只画默认设置的方法（METHOD_COLORS 中的方法名）；RCUT/RCUT2 的其他阈值另见 threshold_sensitivity.png。"""
+    plot_sensitivity(output, rows)
+    rows = [r for r in rows if r['summary']['method'] in METHOD_COLORS]
+    if not rows:
+        return
     plt = _plt()
     from matplotlib.lines import Line2D
     workers = sorted({r['summary']['workers'] for r in rows})
@@ -1735,7 +2376,8 @@ def plot_time_breakdown(output, rows):
 
 
 def plot_regions(output, rows):
-    """二维终态：配对扫描为底，叠加 R 与 H（各取 workers 最大、重复序号最小的运行）的内域与外界；H 的 P_x 按网架着色。"""
+    """二维终态：配对扫描为底，叠加各方法（各取 workers 最大、重复序号最小的运行）的内域与外界；逐网架集合
+    （H/RB 的 P_x、RCUT 的 N_x、RCUT2 的 N'_x）按网架着色。"""
     plt = _plt()
     from matplotlib.colors import ListedColormap
     from matplotlib.lines import Line2D
@@ -1750,13 +2392,17 @@ def plot_regions(output, rows):
     chosen = {}
     for row in sorted(rows, key=lambda r: (-r['summary']['workers'], r['summary']['repeat'])):
         chosen.setdefault(row['summary']['method'], row)
-    figure, axes = plt.subplots(1, len(chosen), figsize=(7.4*len(chosen), 7.2), squeeze=False)
+    ncols = min(3, len(chosen))
+    nrows = -(-len(chosen)//ncols)
+    figure, axes = plt.subplots(nrows, ncols, figsize=(7.4*ncols, 7.2*nrows), squeeze=False)
     figure.patch.set_facecolor(SURFACE)
+    for ax in axes.flat[len(chosen):]:
+        ax.set_visible(False)
     shape, step = scan['shape'], scan['step']
     lower = scan['origin']+scan['start']*step
     edges = [lower[j]+np.arange(shape[j]+1)*step[j] for j in range(2)]
     layer = np.where(scan['states'] == 1, 1, np.where(scan['socp_states'] == 1, 2, 0))
-    palette = ('#2a78d6', '#eb6834', '#1baf7a', '#eda100', '#e87ba4', '#4a3aa7', '#e34948')   # 七个最大的 P_x
+    palette = ('#2a78d6', '#eb6834', '#1baf7a', '#eda100', '#e87ba4', '#4a3aa7')   # 六个最大的网架集合（红色留给外界，绿色留给内域）
     finals = {method: json.loads((row['directory']/'snapshots'/'final.json').read_text(encoding='utf-8'))
               for method, row in chosen.items()}
     areas = {}
@@ -1767,7 +2413,8 @@ def plot_regions(output, rows):
                 areas[network['scheme']] = areas.get(network['scheme'], 0.)+polytope_volume(vertices)
     schemes = sorted(areas, key=lambda s: -areas[s])[:len(palette)]
     color_of = lambda scheme: palette[schemes.index(scheme)] if scheme in schemes else MUTED
-    for ax, (method, row) in zip(axes[0], sorted(chosen.items())):
+    order = list(METHOD_COLORS)
+    for ax, (method, row) in zip(axes.flat, sorted(chosen.items(), key=lambda item: order.index(item[0]))):
         ax.set_facecolor(SURFACE)
         ax.pcolormesh(edges[0], edges[1], layer.T, cmap=ListedColormap([SURFACE, '#cde2fb', '#f9d5c3']), vmin=-.5,
                       vmax=2.5, shading='flat', rasterized=True, zorder=0)
@@ -1784,7 +2431,7 @@ def plot_regions(output, rows):
                      for c in state['cones']]
             sets = [np.asarray(n['vertices'], float).reshape(-1, 2) for n in state['networks']]
             cover = None if state['cover'] is None else [np.asarray(f, float) for f in state['cover']]
-            inner, outer = geo.h_geometry(cones, sets, cover)
+            inner, outer = geo.h_geometry(cones, sets, cover, clip=bool(state.get('inner_clip')))
             _draw(ax, scale(inner), color='#008300', fill=True, alpha=.25, linewidth=0.)
             for network, vertices in zip(state['networks'], sets):
                 if len(vertices) >= 3:
@@ -1804,14 +2451,55 @@ def plot_regions(output, rows):
         ax.set_axisbelow(True)
     handles = [Patch(facecolor='#cde2fb', label='AC-feasible cell'),
                Patch(facecolor='#f9d5c3', label='SOCP-only feasible cell'),
-               Patch(facecolor='#008300', alpha=.25, label='Inner region (H: radial inner ∪ P_x)'),
+               Patch(facecolor='#008300', alpha=.25, label='Inner region (radial inner ∪ network sets; RCUT/RCUT2: ∩ outer)'),
                Line2D([], [], color='#e34948', lw=1.3, label='Outer bound (H: O_R ∩ E_x once covered)'),
-               *(Line2D([], [], color=palette[k], lw=.9, label=f'P_x, scheme {name}') for k, name in enumerate(schemes)),
-               *([Line2D([], [], color=MUTED, lw=.9, label='P_x, other schemes')] if len(areas) > len(schemes) else [])]
+               *(Line2D([], [], color=palette[k], lw=.9, label=f'network set (P_x / N_x / N\'_x), scheme {name}')
+                 for k, name in enumerate(schemes)),
+               *([Line2D([], [], color=MUTED, lw=.9, label='network set, other schemes')] if len(areas) > len(schemes)
+                 else [])]
     columns = 4
     figure.legend(handles=handles, loc='lower center', ncol=columns, frameon=False, fontsize=8, labelcolor=INK_2)
     figure.tight_layout(rect=(0, .03+.035*(-(-len(handles)//columns)), 1, 1))
     figure.savefig(output/'regions.png', dpi=160, facecolor=SURFACE)
+    plt.close(figure)
+
+
+def plot_sensitivity(output, rows):
+    """RCUT/RCUT2 终态指标随 threshold 的变化（workers 取最大者）；R 与 RB 为同 workers 的水平参考线。"""
+    flat = [flat_row(r) for r in rows]
+    workers = max((r['workers'] for r in flat if r['base_method'] in CUT_METHODS), default=None)
+    cut = [r for r in flat if r['base_method'] in CUT_METHODS and r['workers'] == workers]
+    if len({r['threshold'] for r in cut}) < 2:
+        return
+    plt = _plt()
+    from matplotlib.lines import Line2D
+    panels = (('inner_ac_fr', 'Inner region FR vs AC (%)'), ('inner_ac_mr', 'Inner region MR vs AC (%)'),
+              ('gap_final', 'Final volume gap (outer∩box - inner) / inner'))
+    ticks = sorted({100*r['threshold'] for r in cut})
+    figure, axes = plt.subplots(1, len(panels), figsize=(5.4*len(panels), 4.4), squeeze=False)
+    figure.patch.set_facecolor(SURFACE)
+    for ax, (key, title) in zip(axes[0], panels):
+        for method in CUT_METHODS:
+            items = sorted((r for r in cut if r['base_method'] == method and r[key] is not None),
+                           key=lambda r: r['threshold'])
+            if items:
+                ax.plot([100*r['threshold'] for r in items], [r[key] for r in items], marker='o', ms=8, lw=2,
+                        color=METHOD_COLORS[method], mec=SURFACE, mew=2, zorder=3)
+        for method in ('R', 'RB'):
+            values = [r[key] for r in flat if r['method'] == method and r['workers'] == workers and r[key] is not None]
+            if values:
+                ax.axhline(float(np.median(values)), color=METHOD_COLORS[method], lw=1.2, ls='--')
+        ax.set_xscale('log')
+        ax.set_xticks(ticks, [f'{t:g}%' for t in ticks])
+        ax.minorticks_off()
+        _frame(ax, title, f'Stagnation threshold (workers {workers})')
+    handles = [Line2D([], [], color=METHOD_COLORS[m], lw=2, marker='o', label=m) for m in CUT_METHODS
+               if any(r['base_method'] == m for r in cut)]
+    handles += [Line2D([], [], color=METHOD_COLORS[m], lw=1.2, ls='--', label=f'{m} (reference)') for m in ('R', 'RB')
+                if any(r['method'] == m and r['workers'] == workers for r in flat)]
+    figure.legend(handles=handles, loc='lower center', ncol=len(handles), frameon=False, fontsize=9, labelcolor=INK_2)
+    figure.tight_layout(rect=(0, .08, 1, 1))
+    figure.savefig(output/'threshold_sensitivity.png', dpi=160, facecolor=SURFACE)
     plt.close(figure)
 
 
@@ -1839,6 +2527,10 @@ def parse_args(argv=None):
     parser.add_argument('--seed', type=int, default=0, help='Gurobi Seed of every MISOCP/SOCP model built here')
     parser.add_argument('--mip-seconds', type=float, default=60., help='time cap of one MISOCP (cone or coverage)')
     parser.add_argument('--mip-gap', type=float, default=1e-3)
+    parser.add_argument('--threshold', type=float, default=RCUT_THRESHOLD,
+                        help='RCUT/RCUT2: a network stops after --patience consecutive cuts each removing less than '
+                             'this fraction of vol(N_x) (default 0.01; the run label gets a suffix otherwise)')
+    parser.add_argument('--patience', type=int, default=CUT_PATIENCE)
     parser.add_argument('--inner-cert', choices=('origin', 'near'), default='near')
     parser.add_argument('--min-width', type=float)
     parser.add_argument('--max-cones', type=int)
@@ -1856,8 +2548,11 @@ def parse_args(argv=None):
     d = len(args.nodes)
     args.eps = args.eps if args.eps is not None else d*args.tau
     args.network_eps = args.network_eps if args.network_eps is not None else args.eps/2.
-    if set(args.methods)-{'R', 'H', 'Hc', 'RB'}:
-        parser.error('--methods takes R, H, Hc (per-cone coverage) and/or RB (R + phase B, no coverage)')
+    if set(args.methods)-{'R', 'H', 'Hc', 'RB', *CUT_METHODS}:
+        parser.error('--methods takes R, H, Hc (per-cone coverage), RB (R + phase B, no coverage), RCUT and/or RCUT2 '
+                     '(R + mainline cutting planes, without / with the mainline inner certification)')
+    if not 0. < args.threshold < 1. or args.patience < 1:
+        parser.error('--threshold must lie in (0, 1) and --patience must be >= 1')
     tag = f'{args.case}_{"_".join(map(str, args.nodes))}'
     if args.output is None:
         args.output = DEFAULT_OUTPUT/(tag+('_smoke' if args.smoke else ''))
@@ -1884,7 +2579,7 @@ def main():
         for repeat in range(1, args.repeats+1):
             for workers in args.workers:
                 for method in args.methods:
-                    directory = output/method/f'workers_{workers}'/f'run_{repeat}'
+                    directory = output/run_label(method, args)/f'workers_{workers}'/f'run_{repeat}'
                     summary = run_once(args_stored, case, method, workers, repeat, directory)
                     if scan is not None:
                         report = evaluate_run(directory, case, scan, cells)

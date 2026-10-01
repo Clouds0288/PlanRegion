@@ -113,6 +113,18 @@ schema 为 `support-face-fourbus-physical-v3`，coverage.mode=physical。`global
 
 逐格评价 `grid_metrics` 以 AC 为主参考、SOCP 为诊断（未决标签不计入该参考）。`validity` 的必要条件：内域不含 SOCP 已证不可行格（`validity:inner_socp_infeasible_cells`=0，紧化模型 ⊆ SOCP）；AC 可行格都在外界内（`validity:outer_missed_ac_cells`=0）；AC 未决格单列（`validity:undecided_ac_cells`）。`validity:outer_missed_socp_cells` 是 OBBT 去掉的 SOCP-only 区域，只作诊断，不参与 `validity:valid`。
 
+方法 RCUT / RCUT2（2026-10-01 加入，`CutPhase`）是 R + 主线割平面构域、去掉 B 与 C：A 同 RB；之后对 X* 逐网架做 `build_sequential_region` 的单网架割平面阶段（`cut_network`，不含全局查漏），续跑径向部分（A+）时每次锥决策后新出现的网架也先做（`CutPhase.discover`）。符号沿用主线：SP 违反量 `eta`、联合割 α+βᵀp+δᵀx>=0、`area_ratio`、`threshold`、`patience`、`point_tol`、`ray_threshold`。
+
+| 数学量 | 代码 | 单位与含义 |
+|---|---|---|
+| N_x | `CutState.vertices` | 固定方案 x 的割平面多面体（xi）：分区盒被分区内共享的联合割（`CutPhase.cuts`）裁剪；SP 与割 LP 都带该网架的 OBBT 盒与反向锥包络行（`cut_network:obbt_rows`=2·|盒|+2·闭合线路数），没有 OBBT 盒时 `cut_network` 拒绝运行 |
+| N'_x | `CutState.inner` | RCUT2：主线内域认证（首轮射线、割后补射线、边界补充，可行顶点内移 point_tol/4 后收入）的认证点凸包，xi |
+| area_ratio | `CutState.history` | 每次割掉的体积 / 割前 vol(N_x)（主线首个网架阶段的定义） |
+| threshold、patience | `settings:threshold / patience`，`stagnated` | 连续 patience 次 area_ratio < threshold 即停滞；本实验默认 `RCUT_THRESHOLD`=0.01（主线 `CUT_THRESHOLD`=0.02），`patience` 默认主线 `CUT_PATIENCE` |
+| I（RCUT/RCUT2） | `h_measures.clip`、`h_geometry.clip`、快照 `inner_clip` | (I_R ∪ ∪_x N_x)∩O_R（RCUT2 用 N'_x）；N_x 是外近似时间隙 vol(O)-vol(I) 才是 O\I 的测度 |
+
+RCUT 只把状态属于 `CUT_ACCEPTED`（stagnated / exact / empty）的 N_x 计入内域（`CutState.region`），时间片用完（slice）、求解失败（failed）或点分辨率耗尽（point_resolution）的 N_x 不计入；RCUT2 的 N'_x 任何状态都是认证集。单网架一次割循环不超过 `CUT_SECONDS`，每轮最多用剩余时间的 `SUPPORT_PASS_SHARE`，未及提交的网架记 skipped、A+ 中重试。认证同 RB（`CutPhase.certified_now`）：vol(O_R∩盒)-vol(I)<=ε·vol(I)，或径向部分自身满足体积准则。RCUT 的内域不是认证内域：`validity.inner_exact`/`grid_metrics.inner_exact`=False 时内域条件只作诊断，`valid` 只检查外界（运行汇总 `write_run:inner_exact`）。threshold 不是默认值时，运行目录与方法名由 `run_label` 加后缀（RCUT-t0.5 即 0.5%）。求解记录的 `purpose` 新增 cut（SP 评分与割 LP），RCUT2 的射线记 ray、零接入认证记 zero_sp；阶段名 CUT 的耗时从外层 A+ 中扣除。
+
 ## 独立扫描、结果与回放
 
 `vertify.py` 是独立 AC/SOCP 扫描入口。`ac_network` 复制完整配置，不删除限流。`budget_schemes` 仅供小算例独立 AC 参考的拓扑审计，构域不调用它。AC 单树只提供可行见证；全拓扑必要条件排除或完整 AC 不可行证书才给负标签。迭代失败、超时和未知均不可当作不可行。
@@ -302,6 +314,7 @@ schema 为 `support-face-fourbus-physical-v3`，coverage.mode=physical。`global
 - [face_margins](../experiments/plan2_geometry.py)、[classify_center](../experiments/plan2_geometry.py)、[h_measures](../experiments/plan2_geometry.py)、[grid_metrics](../experiments/plan2_geometry.py)
 - [validity](../experiments/plan2_geometry.py)、[validity:valid](../experiments/plan2_geometry.py)、[validity:inner_socp_infeasible_cells](../experiments/plan2_geometry.py)、[validity:outer_missed_ac_cells](../experiments/plan2_geometry.py)
 - [validity:outer_missed_socp_cells](../experiments/plan2_geometry.py)、[validity:undecided_ac_cells](../experiments/plan2_geometry.py)、[cone_faces](../experiments/plan2_geometry.py)、[GEOMETRY_ERRORS](../experiments/plan2_geometry.py)
+- [h_measures.clip](../experiments/plan2_geometry.py)、[h_geometry.clip](../experiments/plan2_geometry.py)、[validity.inner_exact](../experiments/plan2_geometry.py)、[grid_metrics.inner_exact](../experiments/plan2_geometry.py)
 
 ### experiments/compare_plan2.py
 
@@ -314,3 +327,9 @@ schema 为 `support-face-fourbus-physical-v3`，coverage.mode=physical。`global
 - [settings:eps](../experiments/compare_plan2.py)、[settings:discovery_eps](../experiments/compare_plan2.py)、[settings:discovery_share](../experiments/compare_plan2.py)、[settings:network_eps](../experiments/compare_plan2.py)
 - [write_run:t_cert](../experiments/compare_plan2.py)、[write_run:t_gap](../experiments/compare_plan2.py)、[run_once](../experiments/compare_plan2.py)、[evaluate_run](../experiments/compare_plan2.py)
 - [SupportPhase.coverage_mode](../experiments/compare_plan2.py)、[SupportPhase.coverage_by_cone](../experiments/compare_plan2.py)、[SupportPhase.coverage_solve](../experiments/compare_plan2.py)、[NetworkState.strict](../experiments/compare_plan2.py)
+- [RCUT_THRESHOLD](../experiments/compare_plan2.py)、[CUT_SECONDS](../experiments/compare_plan2.py)、[CUT_METHODS](../experiments/compare_plan2.py)、[CUT_ACCEPTED](../experiments/compare_plan2.py)
+- [stagnated](../experiments/compare_plan2.py)、[cut_network](../experiments/compare_plan2.py)、[cut_network.threshold](../experiments/compare_plan2.py)、[cut_network.patience](../experiments/compare_plan2.py)
+- [cut_network.certify](../experiments/compare_plan2.py)、[cut_network:obbt_rows](../experiments/compare_plan2.py)、[CutSlice](../experiments/compare_plan2.py)、[CutState](../experiments/compare_plan2.py)
+- [CutState.vertices](../experiments/compare_plan2.py)、[CutState.inner](../experiments/compare_plan2.py)、[CutState.history](../experiments/compare_plan2.py)、[CutState.region](../experiments/compare_plan2.py)
+- [CutPhase](../experiments/compare_plan2.py)、[CutPhase.cuts](../experiments/compare_plan2.py)、[CutPhase.discover](../experiments/compare_plan2.py)、[CutPhase.certified_now](../experiments/compare_plan2.py)
+- [run_label](../experiments/compare_plan2.py)、[settings:threshold](../experiments/compare_plan2.py)、[settings:patience](../experiments/compare_plan2.py)、[write_run:inner_exact](../experiments/compare_plan2.py)

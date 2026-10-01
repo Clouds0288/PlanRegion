@@ -210,18 +210,20 @@ def classify_cones(xi, cones):
 
 
 # ---- 方法 H 的内外测度（xi^d；乘 prod(bounds) 得 kW^d） ---------------------------------------------
-def h_measures(cones, inner_sets, cover_faces, d, keys=None, cache=None):
+def h_measures(cones, inner_sets, cover_faces, d, keys=None, cache=None, clip=False):
     """I_H = I_R ∪ (∪_x P_x)，O_H = (O_R∩盒) [∩ (∪_x E_x)]。cones 为径向叶锥 dict(U, V, halfspace)，inner_sets 为
     各 P_x 顶点，cover_faces 为覆盖证书冻结的各 E_x 面方程，覆盖未完成时为 None。二维用 shapely 并集；三维按锥
     分解（叶锥内部互不相交），每锥只对与之相交的多面体做 plot.union_volume，keys（各 P_x 的版本标识）与 cache
-    给出时按 (锥几何, 相交的 P_x 版本) 缓存每锥测度。返回 (vol I_H, vol O_H)（xi^d）。"""
+    给出时按 (锥几何, 相交的 P_x 版本) 缓存每锥测度。clip（RCUT/RCUT2）把各集合先与 O_R∩盒 取交：I=(I_R ∪ ∪_x N_x)∩O_R，
+    N_x 是外近似时间隙 vol(O)-vol(I) 才是 O\\I 的测度。返回 (vol I_H, vol O_H)（xi^d）。"""
     triangles = [None if c.get('pseudo') else np.vstack([np.zeros(d), np.asarray(c['V'], float).T]) for c in cones]
     outers = [clip_box(cone_outer(c['U'], c['halfspace'])) for c in cones] if d == 2 else [None]*len(cones)
     chosen = [k for k, p in enumerate(inner_sets) if len(p) > d and polytope_volume(p) > 0.]
     inner_sets = [np.asarray(inner_sets[k], float) for k in chosen]
     keys = [None]*len(inner_sets) if keys is None else [keys[k] for k in chosen]
     if d == 2:
-        inner = _union([*(t for t in triangles if t is not None), *inner_sets]).area
+        inner = _union([*(t for t in triangles if t is not None), *inner_sets])
+        inner = (inner.intersection(_union([p for p in outers if len(p) > d])) if clip else inner).area
         if cover_faces is None:
             return inner, sum(polytope_volume(p) for p in outers)
         covers = [p for p in (faces_polytope(f, d) for f in cover_faces) if len(p) > d]
@@ -234,7 +236,7 @@ def h_measures(cones, inner_sets, cover_faces, d, keys=None, cache=None):
         geometry = (np.asarray(cone['U'], float).tobytes(), np.asarray(cone['V'], float).tobytes(),
                     None if cone['halfspace'] is None else (np.asarray(cone['halfspace'][0], float).tobytes(),
                                                             float(cone['halfspace'][1])))
-        key = ('inner', geometry, tuple(keys[k] for k in touching))
+        key = ('inner', geometry, tuple(keys[k] for k in touching), clip)
         if cache is not None and None not in key[2] and key in cache:
             inner += cache[key]
         else:
@@ -242,6 +244,11 @@ def h_measures(cones, inner_sets, cover_faces, d, keys=None, cache=None):
             for k in touching:
                 try:
                     piece = cone_clip(inner_sets[k], cone['U'])
+                    if clip and len(piece) > d:   # 再与本锥外界 c@xi<=mu 及盒取交（T_k 本就在其内）
+                        if cone['halfspace'] is not None:
+                            piece = clip_polytope(piece, float(cone['halfspace'][1]),
+                                                  -np.asarray(cone['halfspace'][0], float))
+                        piece = clip_box(piece)
                 except GEOMETRY_ERRORS:
                     continue   # 近退化的 P_x∩锥：不计入内域（低估 vol I_H，间隙只会偏大）
                 if len(piece) > d:
@@ -296,8 +303,8 @@ def meets_cone(vertices, rows, tol=1e-12):
     return not np.any(np.all(np.asarray(vertices, float)@rows.T < -tol, axis=0))
 
 
-def h_geometry(cones, inner_sets, cover_faces):
-    """二维绘图用的 shapely 几何（xi）：内域 I_R ∪ (∪P_x)，外界 (O_R∩盒) [∩ (∪E_x)]。"""
+def h_geometry(cones, inner_sets, cover_faces, clip=False):
+    """二维绘图用的 shapely 几何（xi）：内域 I_R ∪ (∪P_x)，外界 (O_R∩盒) [∩ (∪E_x)]；clip 时内域再与外界取交。"""
     triangles = [np.vstack([np.zeros(2), np.asarray(c['V'], float).T]) for c in cones if not c.get('pseudo')]
     outers = [clip_box(cone_outer(c['U'], c['halfspace'])) for c in cones]
     close = lambda geometry: geometry.buffer(1e-9).buffer(-1e-9)   # 相邻锥多边形共边的浮点细缝
@@ -306,13 +313,13 @@ def h_geometry(cones, inner_sets, cover_faces):
     if cover_faces is not None:
         covers = [p for p in (faces_polytope(f, 2) for f in cover_faces) if len(p) > 2]
         outer = outer.intersection(_union(covers))
-    return inner, outer
+    return (inner.intersection(outer) if clip else inner), outer
 
 
 # ---- 逐格指标与有效性 ----------------------------------------------------------------------------
-def grid_metrics(inner, outer, ac_states, socp_states):
+def grid_metrics(inner, outer, ac_states, socp_states, inner_exact=True):
     """FR=|域∧非可行|/|域|，MR=|可行∧非域|/|可行|（comparison_metrics，百分数）；参考标签 0（未决）不计入该参考。
-    AC 为主参考；SOCP 只用于区分误差来自松弛还是模型。"""
+    AC 为主参考；SOCP 只用于区分误差来自松弛还是模型。inner_exact 见 validity。"""
     inner, outer = np.asarray(inner, bool), np.asarray(outer, bool)
     ac_states, socp_states = np.asarray(ac_states), np.asarray(socp_states)
     known_ac, known_socp = ac_states != 0, socp_states != 0
@@ -320,14 +327,15 @@ def grid_metrics(inner, outer, ac_states, socp_states):
     return dict(inner_ac=pair(inner, ac_states == 1, known_ac), inner_socp=pair(inner, socp_states == 1, known_socp),
                 outer_ac=pair(outer, ac_states == 1, known_ac), outer_socp=pair(outer, socp_states == 1, known_socp),
                 inner_cells=int(inner.sum()), outer_cells=int(outer.sum()),
-                **validity(inner, outer, ac_states, socp_states))
+                **validity(inner, outer, ac_states, socp_states, inner_exact))
 
 
-def validity(inner, outer, ac_states, socp_states):
+def validity(inner, outer, ac_states, socp_states, inner_exact=True):
     """有效性（逐格的必要条件）：
     1. 内域不含 SOCP 已证不可行格——紧化模型 ⊆ SOCP 松弛，违反即内域证书失效；
     2. AC 可行格都在外界内——真实可行域 ⊆ 紧化模型 ⊆ 外界，违反即外界证书失效；
-    3. AC 未决格（0）单列，不计为不可行。SOCP 可行而落在外界外的格是 OBBT 去掉的 SOCP-only 区域，只作诊断。"""
+    3. AC 未决格（0）单列，不计为不可行。SOCP 可行而落在外界外的格是 OBBT 去掉的 SOCP-only 区域，只作诊断。
+    inner_exact=False（RCUT：内域含割平面外近似 N_x，本来就不是认证内域）时第 1 条只作诊断，不参与 valid。"""
     inner, outer = np.asarray(inner, bool), np.asarray(outer, bool)
     ac_states, socp_states = np.asarray(ac_states), np.asarray(socp_states)
     inner_socp_infeasible = int(np.count_nonzero(inner & (socp_states == -1)))
@@ -337,7 +345,7 @@ def validity(inner, outer, ac_states, socp_states):
                 undecided_ac_cells=int(np.count_nonzero(ac_states == 0)),
                 undecided_socp_cells=int(np.count_nonzero(socp_states == 0)),
                 inner_undecided_ac_cells=int(np.count_nonzero(inner & (ac_states == 0))),
-                valid=inner_socp_infeasible == 0 and outer_missed_ac == 0)
+                valid=(inner_socp_infeasible == 0 or not inner_exact) and outer_missed_ac == 0)
 
 
 def network_cells(xi, vertices, tolerance=GEOMETRY_TOL):
