@@ -15,7 +15,8 @@ from itertools import product
 
 import numpy as np
 from scipy.optimize import linprog
-from scipy.spatial import ConvexHull
+from scipy.spatial import ConvexHull, QhullError
+from shapely.errors import GEOSException
 
 from monitor import _union, comparison_metrics
 from region import GEOMETRY_TOL, clip_polytope, contains, halfspaces, polytope_volume, union_measure
@@ -23,6 +24,7 @@ from region import GEOMETRY_TOL, clip_polytope, contains, halfspaces, polytope_v
 ORIGIN_CLEARANCE = 1e-6   # auto 判据：原点到非分区边界面的最小距离（xi）
 BOUNDARY_TOL = 1e-7       # 分区边界面识别容差（法向与截距，xi）
 FACE_TOL = 1e-9           # 顶点在面上的判定容差（xi）
+GEOMETRY_ERRORS = (QhullError, GEOSException, ValueError, np.linalg.LinAlgError)   # 近退化几何的数值失败（取保守值）
 ALPHA_TOL = 1e-12         # 锥内重心坐标 α>=0 的舍入容差，同径向脚本
 
 
@@ -55,8 +57,10 @@ def face_measures(vertices, faces, tol=FACE_TOL):
         coordinates = on@basis.T
         if d == 2:
             measures[f] = float(np.ptp(coordinates[:, 0]))
-        elif len(on) >= 3 and np.linalg.matrix_rank(coordinates-coordinates[0], tol=1e-12) == 2:
-            measures[f] = float(ConvexHull(coordinates).volume)
+        elif len(on) >= 3:
+            # 面上顶点构成凸多边形：按绕形心的角度排序后用鞋带公式（比逐面 Qhull 快，只用于排序）
+            ring = ordered_polygon(coordinates)
+            measures[f] = .5*abs(float(np.sum(ring[:, 0]*np.roll(ring[:, 1], -1)-ring[:, 1]*np.roll(ring[:, 0], -1))))
     return measures
 
 
@@ -234,9 +238,18 @@ def h_measures(cones, inner_sets, cover_faces, d, keys=None, cache=None):
         if cache is not None and None not in key[2] and key in cache:
             inner += cache[key]
         else:
-            pieces = [cone_clip(inner_sets[k], cone['U']) for k in touching]
-            pieces = [*([] if triangle is None else [triangle]), *(p for p in pieces if len(p) > d)]
-            value = union_measure(pieces, d) if pieces else 0.
+            pieces = [] if triangle is None else [triangle]
+            for k in touching:
+                try:
+                    piece = cone_clip(inner_sets[k], cone['U'])
+                except GEOMETRY_ERRORS:
+                    continue   # 近退化的 P_x∩锥：不计入内域（低估 vol I_H，间隙只会偏大）
+                if len(piece) > d:
+                    pieces.append(piece)
+            try:
+                value = union_measure(pieces, d) if pieces else 0.
+            except GEOMETRY_ERRORS:
+                value = polytope_volume(triangle) if triangle is not None else 0.
             if cache is not None and None not in key[2]:
                 cache[key] = value
             inner += value
@@ -247,13 +260,27 @@ def h_measures(cones, inner_sets, cover_faces, d, keys=None, cache=None):
         if cache is not None and key in cache:
             outer += cache[key]
             continue
-        pieces = [p for p in (intersect_faces(poly, faces) for faces, cover in zip(cover_faces, covers)
-                              if len(cover) > d and meets_cone(cover, rows)) if len(p) > d]
-        value = union_measure(pieces, d) if pieces else 0.
+        try:
+            pieces = [p for p in (intersect_faces(poly, faces) for faces, cover in zip(cover_faces, covers)
+                                  if len(cover) > d and meets_cone(cover, rows)) if len(p) > d]
+            value = union_measure(pieces, d) if pieces else 0.
+        except GEOMETRY_ERRORS:
+            value = polytope_volume(poly)   # 外界取整锥（高估 vol O_H，间隙只会偏大）
         if cache is not None:
             cache[key] = value
         outer += value
     return inner, outer
+
+
+def cone_faces(region, faces, tol=GEOMETRY_TOL):
+    """按区域（锥∩盒，顶点给出）判定 E_x 的面：返回 (是否整体覆盖区域, 是否与区域不交, 切过区域的面)。
+    区域是凸多面体，逐面看顶点即精确：全部顶点在内侧的面多余，全部顶点在外侧的面使 E_x∩区域=∅。"""
+    faces = np.asarray(faces, float)
+    values = np.asarray(region, float)@faces[:, :-1].T+faces[:, -1]
+    if np.any(values.min(axis=0) > tol):
+        return False, True, np.empty((0, faces.shape[1]))
+    cut = values.max(axis=0) > tol
+    return not cut.any(), False, faces[cut]
 
 
 def meets_cone(vertices, rows, tol=1e-12):
@@ -308,6 +335,9 @@ def validity(inner, outer, ac_states, socp_states):
 def network_cells(xi, vertices, tolerance=GEOMETRY_TOL):
     """格心是否在多面体 conv(vertices) 内（xi，容差 GEOMETRY_TOL）。"""
     vertices = np.asarray(vertices, float)
-    if len(vertices) <= xi.shape[1] or polytope_volume(vertices) <= 0.:
-        return np.zeros(len(xi), bool)
-    return contains(xi, halfspaces(vertices), tolerance)
+    try:
+        if len(vertices) <= xi.shape[1] or polytope_volume(vertices) <= 0.:
+            return np.zeros(len(xi), bool)
+        return contains(xi, halfspaces(vertices), tolerance)
+    except GEOMETRY_ERRORS:
+        return np.zeros(len(xi), bool)   # 不标内域（保守）

@@ -48,7 +48,7 @@ O_H ⊆ O_R、I_H ⊇ I_R，H 继承 R 的证书）。覆盖完成而间隙仍�
 4. 每轮 B 最多用剩余时间的 SUPPORT_PASS_SHARE，其余留给 C；单次支撑 SOCP 不超过 SUPPORT_SECONDS，覆盖 MISOCP 不超过
    --mip-seconds（与锥 MISOCP 相同）。--coverage cone 未实现（任务说明允许先不做）。
 5. 检查点快照是该时刻的确切状态：每次几何变化之前处理已到的检查点（锥求解期间到达的检查点按求解前的外界记录）。
-   三维 H 的测度按锥分解求并集体积，B 阶段时间线行最多每 TIMELINE_INTERVAL_3D 秒一行（检查点不受影响）。
+   三维 H 的测度按锥分解求并集体积，时间线行最多每 TIMELINE_INTERVAL_3D 秒一行（认证判定与检查点不受影响）。
 
 记号（docs/notation.md「方案二对照实验」）
 ----
@@ -109,7 +109,7 @@ from test_support_face_certification_fourbus_2d import (SupportOracle, audit_inc
 CHECKPOINTS = (15., 30., 60., 120., 180., 240., 300.)
 SUPPORT_SECONDS = 30.        # 单次支撑 SOCP 的时限上限（同时受分区剩余时间限制）
 SUPPORT_PASS_SHARE = .75     # 每轮 B 最多占剩余时间的比例，其余留给覆盖证书 C
-TIMELINE_INTERVAL_3D = 2.    # 三维 H 的 B 阶段时间线最短间隔（秒）
+TIMELINE_INTERVAL_3D = 10.   # 三维 H 的时间线最短间隔（秒）：每行要按锥求并集体积，检查点不受影响
 MAX_ROUNDS = 200             # B→C 循环轮数上限
 GAP_LEVELS = (.10, .05, .02)
 DEFAULT_OUTPUT = ROOT/'results'/'compare_plan2'
@@ -117,7 +117,7 @@ SMOKE = dict(case='case33', nodes=(18, 25), partitions=('nn',), seconds=60., rep
              workers=(1, 16))
 CERTIFIED_FACES = ('BOUNDARY', 'GEOMETRY_CERTIFIED', 'SUPPORT_CERTIFIED')
 SURFACE, INK, INK_2, MUTED, GRID = '#fcfcfb', '#0b0b0b', '#52514e', '#898781', '#e1e0d9'
-METHOD_COLORS = dict(R='#2a78d6', H='#eb6834')      # 分类色前两槽（径向脚本已校验的配色）
+METHOD_COLORS = dict(R='#2a78d6', H='#eb6834', Hc='#1baf7a')   # 分类色前三槽（径向脚本已校验的配色）
 PURPOSES = ('discovery', 'cone_outer', 'support', 'coverage', 'obbt', 'ray', 'zero_sp')
 PURPOSE_COLORS = dict(zip(PURPOSES, ('#2a78d6', '#eb6834', '#1baf7a', '#eda100', '#e87ba4', '#008300', '#4a3aa7')))
 TYPE_COLORS = dict(MISOCP='#2a78d6', SOCP='#eb6834', LP='#1baf7a')
@@ -554,10 +554,15 @@ class NetworkState:
         self.cache, self.inflight, self.lost = {}, set(), set()
         self.status, self.reason, self.urgent = 'active', None, False
         self.strict = False   # 出过覆盖见证：不再按 ε_B 提前停止，直到全部非分区边界面认证
-        self.calls = self.violations = self.rebuilds = 0
+        self.calls = self.violations = self.rebuilds = self.geometry_failures = 0
         self.seconds = 0.
         self.slice_end = None
-        self.rebuild()
+        while True:
+            try:
+                self.rebuild()
+                break
+            except geo.GEOMETRY_ERRORS:   # 近退化的初始种子：去掉最后一个点重试
+                self.points, self.geometry_failures = self.points[:-1], self.geometry_failures+1
 
     # 几何与面状态
     def rebuild(self):
@@ -630,9 +635,16 @@ class NetworkState:
         return tasks
 
     def add_points(self, points):
-        before = self.vertices
+        """补点并重建；凸包在近退化输入上数值失败时撤回补点（返回 False，调用方把该面记 UNRESOLVED）。"""
+        before, previous = self.vertices, self.points
         self.points = np.vstack([self.points, np.asarray(points, float).reshape(-1, self.d)])
-        self.rebuild()
+        try:
+            self.rebuild()
+        except geo.GEOMETRY_ERRORS:
+            self.points = previous
+            self.rebuild()
+            self.geometry_failures += 1
+            return False
         return self.empty or len(self.vertices) != len(before) or not np.array_equal(self.vertices, before)
 
     def on_result(self, normal, entry):
@@ -644,7 +656,10 @@ class NetworkState:
         self.seconds += float(entry.get('solve_seconds', 0.))
         unit = np.asarray(entry['normal'], float)
         if np.isfinite(entry['ub']):
-            self.outer = clip_polytope(self.outer, entry['ub'], -unit)
+            try:
+                self.outer = clip_polytope(self.outer, entry['ub'], -unit)
+            except geo.GEOMETRY_ERRORS:
+                self.geometry_failures += 1   # 保留裁剪前的 O_x：仍是有效外界，只是不够紧
         point = entry['point']
         if point is not None:
             point = np.asarray(point, float)
@@ -671,11 +686,17 @@ class NetworkState:
         status = self.face_status
         if np.isin(status, CERTIFIED_FACES).all():
             self.status, self.reason = 'done', 'certified'
-        elif (not self.strict and self.full and len(self.outer) > self.d
-              and polytope_volume(self.outer)/polytope_volume(self.vertices)-1. <= self.network_eps):
+        elif not self.strict and self.full and len(self.outer) > self.d and self.volume_ratio() <= self.network_eps:
             self.status, self.reason = 'done', 'eps_B'
         elif not (status == 'PENDING').any():
             self.status, self.reason = 'done', 'unresolved'
+
+    def volume_ratio(self):
+        """vol(O_x)/vol(P_x)-1；数值失败时为 inf（不按 ε_B 停止）。"""
+        try:
+            return polytope_volume(self.outer)/polytope_volume(self.vertices)-1.
+        except geo.GEOMETRY_ERRORS:
+            return np.inf
 
     def expanded(self):
         return geo.expanded_faces(self.faces, self.criterion, self.center, self.tau)
@@ -691,12 +712,17 @@ class NetworkState:
                     criterion=self.criterion, center=self.center, status=self.status, reason=self.reason)
 
     def summary(self):
-        volume = polytope_volume(self.vertices) if self.full else 0.
+        try:
+            volume = polytope_volume(self.vertices) if self.full else 0.
+            outer_volume = polytope_volume(self.outer) if len(self.outer) else 0.
+        except geo.GEOMETRY_ERRORS:
+            volume = outer_volume = None
         return dict(scheme=self.label, weight=self.weight, points=len(self.points), vertices=len(self.vertices),
                     full=self.full, criterion=self.criterion, center_source=self.center_source, strict=self.strict,
                     status=self.status, reason=self.reason, support_calls=self.calls,
                     support_seconds=self.seconds, violations_added=self.violations, rebuilds=self.rebuilds,
-                    inner_volume_xi=volume, outer_volume_xi=polytope_volume(self.outer) if len(self.outer) else 0.,
+                    geometry_failures=self.geometry_failures,
+                    inner_volume_xi=volume, outer_volume_xi=outer_volume,
                     **self.counts())
 
 
@@ -704,8 +730,9 @@ class NetworkState:
 class SupportPhase:
     """方法 H 在 A 阶段之后的支撑查询（B）与覆盖证书（C），以及覆盖完成后续跑的径向部分。"""
 
-    def __init__(self, case, code, radial, args, recorder, clock, deadline_t, pool, workers):
+    def __init__(self, case, code, radial, args, recorder, clock, deadline_t, pool, workers, coverage='global'):
         self.case, self.code, self.radial, self.args = case, code, radial, args
+        self.coverage_mode, self.cone_certificates = coverage, set()
         self.recorder, self.clock, self.deadline, self.pool = recorder, clock, deadline_t, pool
         self.workers = workers if pool is not None else 1
         self.d, self.bounds, self.tau, self.eps = case.d, case.bounds, args.tau, args.eps
@@ -948,18 +975,64 @@ class SupportPhase:
 
     # C：覆盖证书
     def coverage(self):
-        radial, equations = self.radial, self.radial.equations
+        """C：x 自由的覆盖证书。global：一个 RemainingRegionModel（全部 E_x）；cone（方法 Hc）：按 A 阶段叶锥分解，
+        每锥只保留切过 锥∩盒 的面（按区域顶点逐面判定，精确），某个 E_x 包含整个 锥∩盒 时该锥无需求解；锥证书在
+        相关网架未变时复用（紧化只缩小可行集、新网架只扩大覆盖，旧证书仍成立）。"""
         nets = [st for st in self.networks.values() if st.full]
         faces = [st.expanded() for st in nets]
         if not faces:
             return dict(complete=False, witness=None, status='no_inner')
+        if self.coverage_mode == 'cone':
+            answer = self.coverage_by_cone(nets, faces)
+        else:
+            answer = self.coverage_solve(faces, None, dict(scope='global'))
+        if answer['complete']:
+            answer['faces'] = faces
+        return answer
+
+    def coverage_by_cone(self, nets, faces):
+        cones = cone_rows(self.radial)
+        regions = [geo.clip_box(geo.cone_outer(c['U'], None)) for c in cones]
+        order = sorted(range(len(cones)),
+                       key=lambda k: -polytope_volume(regions[k]) if len(regions[k]) > self.d else 0.)
+        bounds = []
+        for k in order:
+            cone, region = cones[k], regions[k]
+            kept, used, covered = [], [], False
+            for st, E in zip(nets, faces):
+                whole, disjoint, cut = geo.cone_faces(region, E)
+                if whole:
+                    covered = True
+                    break
+                if not disjoint:
+                    kept.append(cut)
+                    used.append((st.label, st.rebuilds))
+            if covered:
+                continue
+            key = (np.asarray(cone['U'], float).tobytes(), frozenset(used))
+            if key in self.cone_certificates:
+                continue
+            rows = np.linalg.inv(np.asarray(cone['U'], float))
+            answer = self.coverage_solve(kept, rows/np.linalg.norm(rows, axis=1, keepdims=True),
+                                         dict(scope='cone', cone=k, cones=len(cones)))
+            if not answer['complete']:
+                return answer
+            self.cone_certificates.add(key)
+            bounds.append(answer['bound'])
+        finite = [b for b in bounds if b is not None]
+        return dict(complete=True, witness=None, status='complete', bound=max(finite) if finite else None)
+
+    def coverage_solve(self, faces, rows, info):
+        """一个覆盖 MISOCP：RemainingRegionModel 直接接收 E_x 面并令 tau=0（s=1），加全部已紧化方案的提升行；
+        rows 为锥约束 rows@xi>=0（None 为整个分区）。见证方案未紧化时懒惰 OBBT 后重解。"""
+        radial, equations = self.radial, self.radial.equations
         for _ in range(len(equations.keys)+len(self.networks)+8):
             limit = min(self.args.mip_seconds, self.deadline-self.clock.now())
             if limit <= 0.:
                 raise PartitionTimeout('partition time limit')
             answer, witness, bound = None, None, None
             row_info = dict(networks=len(faces), faces=int(sum(len(f) for f in faces)),
-                            tightened=len(equations.boxes))
+                            tightened=len(equations.boxes), **info)
             with self.recorder.log('MISOCP', 'coverage', **row_info) as row:
                 problem = RemainingRegionModel(equations, self.case.budget, self.bounds, float(self.bounds.sum()), [],
                                                faces, 0., axis_bounds=self.bounds, threads=self.args.threads)
@@ -968,6 +1041,11 @@ class SupportPhase:
                     choices = dict(zip(equations.keys, problem.problem.x.tolist()))
                     for scheme in equations.boxes:
                         equations._tighten(model, choices, problem.problem.operation, scheme)
+                    if rows is not None:
+                        power = [problem.problem.power[j].item() for j in range(self.d)]
+                        for j, cone_row in enumerate(rows):
+                            model.addConstr(gp.quicksum(float(cone_row[i]/self.bounds[i])*power[i] for i in range(self.d))
+                                            >= 0., name=f'coverage_cone_{j}')
                     model.Params.BarQCPConvTol = COVER_CONV_TOL
                     model.Params.Seed = self.args.seed
                     try:
@@ -994,7 +1072,7 @@ class SupportPhase:
             if answer is None:
                 return dict(complete=False, witness=None, status=row['status'], bound=bound)
             if answer['complete']:
-                return dict(complete=True, witness=None, status='complete', bound=answer['bound'], faces=faces)
+                return dict(complete=True, witness=None, status='complete', bound=answer['bound'])
             if witness[0] not in equations.boxes:
                 radial.tighten(witness[0])   # 懒惰 OBBT：见证方案加入提升行后重解
                 continue
@@ -1065,8 +1143,9 @@ STATUS_NAMES = {getattr(GRB.Status, name): name for name in dir(GRB.Status) if n
 STATUS_NAMES[-1] = 'ERROR'
 
 
-def run_H(case, code, args, clock, deadline_t, workers):
-    recorder = Recorder(code, 'H', clock, checkpoint_times(args.seconds),
+def run_H(case, code, args, clock, deadline_t, workers, method='H'):
+    """方法 H（coverage=args.coverage）或 Hc（同 H，覆盖证书按锥分解）的一个分区。"""
+    recorder = Recorder(code, method, clock, checkpoint_times(args.seconds),
                         TIMELINE_INTERVAL_3D if case.d == 3 else 0.)
     pool = SupportPool(case, code, args, workers) if workers > 1 else None
     start = clock.now()
@@ -1077,7 +1156,8 @@ def run_H(case, code, args, clock, deadline_t, workers):
     recorder.measure = lambda: (*radial_measure(radial), False,
                                 dict(volume_ratio=radial.volume_ratio() if leaves(radial) else None,
                                      cones=len(leaves(radial))))
-    support = SupportPhase(case, code, radial, args, recorder, clock, deadline_t, pool, workers)
+    support = SupportPhase(case, code, radial, args, recorder, clock, deadline_t, pool, workers,
+                           'cone' if method == 'Hc' else args.coverage)
     phase_a = dict(status='not_started', seconds=0.)
     try:
         with threadpool_limits(limits=1):
@@ -1098,7 +1178,9 @@ def run_H(case, code, args, clock, deadline_t, workers):
 # ---- 一次运行：分区调度、合并、离线评价 -------------------------------------------------------------
 def run_partition(method, case, code, args, clock, deadline_t, workers):
     try:
-        return (run_R if method == 'R' else run_H)(case, code, args, clock, deadline_t, workers)
+        if method == 'R':
+            return run_R(case, code, args, clock, deadline_t, workers)
+        return run_H(case, code, args, clock, deadline_t, workers, method)
     except Exception as exc:
         print(traceback.format_exc(), flush=True)
         recorder = Recorder(code, method, clock, checkpoint_times(args.seconds))
@@ -1489,20 +1571,22 @@ def write_report(output, case_tag):
 
 def conclusions(groups):
     lines = []
-    for workers in sorted({w for _, w in groups}):
-        r, h = groups.get(('R', workers), []), groups.get(('H', workers), [])
+    for workers, method in [(w, m) for w in sorted({w for _, w in groups}) for m in ('H', 'Hc')]:
+        r, h = groups.get(('R', workers), []), groups.get((method, workers), [])
         if not r or not h:
             continue
         cert = lambda items: sum(i['status'] == 'certified' for i in items)
         med = lambda items, key: (float(np.median([i[key] for i in items if i[key] is not None]))
                                   if any(i[key] is not None for i in items) else None)
-        line = (f'- workers {workers}: R certified {cert(r)}/{len(r)} runs, H {cert(h)}/{len(h)}; median final gap '
-                f'R {cell(med(r, "gap_final"), 4)} vs H {cell(med(h, "gap_final"), 4)}; median t_cert '
-                f'R {cell(med(r, "t_cert"), 1)} s vs H {cell(med(h, "t_cert"), 1)} s; inner-AC MR '
-                f'R {cell(med(r, "inner_ac_mr"))}% vs H {cell(med(h, "inner_ac_mr"))}%, inner-AC FR '
-                f'R {cell(med(r, "inner_ac_fr"))}% vs H {cell(med(h, "inner_ac_fr"))}%.')
+        m = method
+        line = (f'- workers {workers}: R certified {cert(r)}/{len(r)} runs, {m} {cert(h)}/{len(h)}; median final gap '
+                f'R {cell(med(r, "gap_final"), 4)} vs {m} {cell(med(h, "gap_final"), 4)}; median t_cert '
+                f'R {cell(med(r, "t_cert"), 1)} s vs {m} {cell(med(h, "t_cert"), 1)} s; inner-AC MR '
+                f'R {cell(med(r, "inner_ac_mr"))}% vs {m} {cell(med(h, "inner_ac_mr"))}%, inner-AC FR '
+                f'R {cell(med(r, "inner_ac_fr"))}% vs {m} {cell(med(h, "inner_ac_fr"))}%.')
         phases = {p: med(h, f'phase_{p}_seconds') for p in ('A', 'B', 'C', 'A+')}
-        line += ' H phase medians (s): ' + ', '.join(f'{p} {cell(v, 1)}' for p, v in phases.items() if v is not None) + '.'
+        line += (f' {m} phase medians (s): '
+                 + ', '.join(f'{p} {cell(v, 1)}' for p, v in phases.items() if v is not None) + '.')
         lines.append(line)
     return lines or ['- (needs both methods for the same workers setting)']
 
@@ -1562,7 +1646,8 @@ def plot_report(output, rows):
                     textcoords='offset points', ha='right', color=INK_2, fontsize=8)
         ax.set_xlim(0., seconds*1.02)
         _frame(ax, f'Volume gap (outer∩box - inner) / inner, workers = {w}', 'Run wall-clock time (s)', log=True)
-    handles = [Line2D([], [], color=METHOD_COLORS[m], lw=2, label=f'{m} (each repeat)') for m in ('R', 'H')]
+    methods = [m for m in METHOD_COLORS if any(r['summary']['method'] == m for r in rows)]
+    handles = [Line2D([], [], color=METHOD_COLORS[m], lw=2, label=f'{m} (each repeat)') for m in methods]
     handles.append(Line2D([], [], color=INK_2, marker='o', ls='none', ms=7, label='certified (all partitions)'))
     figure.legend(handles=handles, loc='lower center', ncol=len(handles), frameon=False, fontsize=9, labelcolor=INK_2)
     figure.tight_layout(rect=(0, .07, 1, 1))
@@ -1587,7 +1672,7 @@ def plot_report(output, rows):
                     ax.plot(xs, ys, ls=style, marker='o', ms=3.5, lw=1.4, color=METHOD_COLORS[s['method']], alpha=.85)
             _frame(ax, f'{title} vs AC (solid) and SOCP (dashed), workers = {w}', 'Checkpoint time (s)')
             ax.set_xlim(0., seconds*1.02)
-    handles = [Line2D([], [], color=METHOD_COLORS[m], lw=2, label=m) for m in ('R', 'H')]
+    handles = [Line2D([], [], color=METHOD_COLORS[m], lw=2, label=m) for m in methods]
     handles += [Line2D([], [], color=INK_2, lw=1.4, label='vs AC scan'),
                 Line2D([], [], color=INK_2, lw=1.4, ls='--', label='vs SOCP scan (diagnostic)')]
     figure.legend(handles=handles, loc='lower center', ncol=len(handles), frameon=False, fontsize=9, labelcolor=INK_2)
@@ -1732,8 +1817,9 @@ def parse_args(argv=None):
     parser.add_argument('--discovery-share', type=float, default=.25)
     parser.add_argument('--criterion', choices=('origin', 'center', 'auto'), default='auto')
     parser.add_argument('--network-eps', type=float, help='per-network stop vol(O_x)/vol(P_x)-1 (default eps/2)')
-    parser.add_argument('--coverage', choices=('global',), default='global',
-                        help='global coverage MISOCP (the optional per-cone variant is not implemented)')
+    parser.add_argument('--coverage', choices=('global', 'cone'), default='global',
+                        help='coverage certificate of method H: one global MISOCP, or one per phase-A cone '
+                             '(method Hc always uses cone)')
     parser.add_argument('--seed', type=int, default=0, help='Gurobi Seed of every MISOCP/SOCP model built here')
     parser.add_argument('--mip-seconds', type=float, default=60., help='time cap of one MISOCP (cone or coverage)')
     parser.add_argument('--mip-gap', type=float, default=1e-3)
@@ -1754,8 +1840,8 @@ def parse_args(argv=None):
     d = len(args.nodes)
     args.eps = args.eps if args.eps is not None else d*args.tau
     args.network_eps = args.network_eps if args.network_eps is not None else args.eps/2.
-    if set(args.methods)-{'R', 'H'}:
-        parser.error('--methods takes R and/or H')
+    if set(args.methods)-{'R', 'H', 'Hc'}:
+        parser.error('--methods takes R, H and/or Hc (H with the per-cone coverage certificate)')
     tag = f'{args.case}_{"_".join(map(str, args.nodes))}'
     if args.output is None:
         args.output = DEFAULT_OUTPUT/(tag+('_smoke' if args.smoke else ''))

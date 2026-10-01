@@ -5,8 +5,8 @@ from unittest.mock import patch
 import numpy as np
 
 from experiments.plan2_geometry import (allowed_offsets, boundary_faces, chebyshev_center, choose_criterion,
-                                        classify_center, expanded_faces, face_margins, faces_polytope, grid_metrics,
-                                        interior_point, validity)
+                                        classify_center, cone_faces, expanded_faces, face_margins, faces_polytope,
+                                        grid_metrics, interior_point, validity)
 from experiments.test_support_face_certification_fourbus_2d import classify_support
 from region import GEOMETRY_TOL, contains, halfspaces
 
@@ -89,6 +89,24 @@ class ExpansionTests(unittest.TestCase):
         faces = halfspaces(polygon)
         expanded = expanded_faces(faces, 'origin', None, TAU)
         self.assertTrue(same_faces(expanded, halfspaces(polygon/(1.-TAU))))
+
+    def test_cone_faces_keeps_only_faces_cutting_the_region(self):
+        region = np.array(((0., 0.), (.5, 0.), (.5, .5), (0., .5)))   # 锥∩盒的一块
+        inside = halfspaces(np.array(((.1, .1), (.4, .1), (.4, .4), (.1, .4))))
+        whole, disjoint, cut = cone_faces(region, inside)
+        self.assertFalse(whole or disjoint)
+        self.assertEqual(len(cut), 4)
+        whole, disjoint, cut = cone_faces(region, halfspaces(np.array(((0., 0.), (1., 0.), (1., 1.), (0., 1.)))))
+        self.assertTrue(whole)
+        self.assertEqual(len(cut), 0)
+        whole, disjoint, _ = cone_faces(region, halfspaces(np.array(((.6, .6), (.9, .6), (.9, .9), (.6, .9)))))
+        self.assertTrue(disjoint)
+        # 与区域部分相交：只保留切过区域的两条边
+        corner = halfspaces(np.array(((.3, .3), (.9, .3), (.9, .9), (.3, .9))))
+        whole, disjoint, cut = cone_faces(region, corner)
+        self.assertFalse(whole or disjoint)
+        self.assertTrue(same_faces(cut, corner[np.all(np.isclose(corner[:, :-1], (-1., 0.)), axis=1)
+                                               | np.all(np.isclose(corner[:, :-1], (0., -1.)), axis=1)]))
 
     def test_expanded_polytope_is_clipped_to_the_box(self):
         polygon = np.array(((.0, .0), (1., 0.), (1., 1.), (0., 1.)))
