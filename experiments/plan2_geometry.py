@@ -216,7 +216,7 @@ def h_measures(cones, inner_sets, cover_faces, d, keys=None, cache=None):
     分解（叶锥内部互不相交），每锥只对与之相交的多面体做 plot.union_volume，keys（各 P_x 的版本标识）与 cache
     给出时按 (锥几何, 相交的 P_x 版本) 缓存每锥测度。返回 (vol I_H, vol O_H)（xi^d）。"""
     triangles = [None if c.get('pseudo') else np.vstack([np.zeros(d), np.asarray(c['V'], float).T]) for c in cones]
-    outers = [clip_box(cone_outer(c['U'], c['halfspace'])) for c in cones]
+    outers = [clip_box(cone_outer(c['U'], c['halfspace'])) for c in cones] if d == 2 else [None]*len(cones)
     chosen = [k for k, p in enumerate(inner_sets) if len(p) > d and polytope_volume(p) > 0.]
     inner_sets = [np.asarray(inner_sets[k], float) for k in chosen]
     keys = [None]*len(inner_sets) if keys is None else [keys[k] for k in chosen]
@@ -253,8 +253,16 @@ def h_measures(cones, inner_sets, cover_faces, d, keys=None, cache=None):
             if cache is not None and None not in key[2]:
                 cache[key] = value
             inner += value
+        box_key = ('box', geometry)
+        if cache is not None and covers is None and box_key in cache:
+            outer += cache[box_key]
+            continue
+        poly = clip_box(cone_outer(cone['U'], cone['halfspace']))
         if covers is None:
-            outer += polytope_volume(poly)
+            value = polytope_volume(poly)
+            if cache is not None:
+                cache[box_key] = value
+            outer += value
             continue
         key = ('outer', geometry, len(cover_faces))
         if cache is not None and key in cache:

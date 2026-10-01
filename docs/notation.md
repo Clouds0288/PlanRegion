@@ -105,7 +105,7 @@ schema 为 `support-face-fourbus-physical-v3`，coverage.mode=physical。`global
 | ε、ε_A、share_A、ε_B | `settings:eps / discovery_eps / discovery_share / network_eps` | 体积目标（默认 d·tau）、A 阶段放宽目标与时限占比、网架停止 vol(O_x)/vol(P_x)-1 |
 | I_H、O_H | `h_measures` | I_R ∪ (∪P_x)；覆盖前 O_R∩盒，覆盖后 O_R∩盒∩(∪E_x)；返回 xi^d，乘 prod(bounds) 得 kW^d |
 
-方法 Hc 与 H 相同，只把覆盖证书按 A 阶段叶锥分解（`SupportPhase.coverage_mode='cone'`，`SupportPhase.coverage_by_cone`）：`cone_faces` 用 锥∩盒 的顶点逐面判定 E_x 的面（全部顶点在内侧者多余、全部在外侧者使该 E_x 与区域不交），某个 E_x 包含整个 锥∩盒 时该锥无需求解；每锥一个 `SupportPhase.coverage_solve`（加锥约束），锥证书在相关网架版本未变时复用。覆盖见证落在 x∈X* 时置 `NetworkState.strict`：该网架此后不按 ε_B 提前停止，查完全部非分区边界面。近退化几何的数值失败（`GEOMETRY_ERRORS`）只影响测度与补点：测度取保守值（内域低估、外界高估），补点失败即撤回。
+方法 RB 是 R + B、去掉 C（`SupportPhase.coverage_mode='none'`）：外界始终是有证书的 O_R∩盒，内域 I_H=I_R∪(∪P_x)，每次锥决策后 `SupportPhase.certified_now` 检查 vol(O_R)-vol(I_H)<=ε·vol(I_H)。方法 Hc 与 H 相同，只把覆盖证书按 A 阶段叶锥分解（`SupportPhase.coverage_mode='cone'`，`SupportPhase.coverage_by_cone`）：`cone_faces` 用 锥∩盒 的顶点逐面判定 E_x 的面（全部顶点在内侧者多余、全部在外侧者使该 E_x 与区域不交），某个 E_x 包含整个 锥∩盒 时该锥无需求解；每锥一个 `SupportPhase.coverage_solve`（加锥约束），锥证书在相关网架版本未变时复用。覆盖见证落在 x∈X* 时置 `NetworkState.strict`：该网架此后不按 ε_B 提前停止，查完全部非分区边界面。近退化几何的数值失败（`GEOMETRY_ERRORS`）只影响测度与补点：测度取保守值（内域低估、外界高估），补点失败即撤回。
 
 `PartitionOracle` 是 `SupportOracle` 加分区盒 0<=u<=bounds 与种子，只接受 OPTIMAL；非 OPTIMAL 不重求，该面记 UNRESOLVED（代码库没有重试流程）。`boundary_faces` 识别分区边界面（xi_j>=0 或 xi_j<=1，容差 `BOUNDARY_TOL`），它们由分区盒本身认证。覆盖证书用 `RemainingRegionModel` 直接接收 E_x 面并令 tau=0（即 s=1），再加全部已紧化方案的提升行，见证方案未紧化时懒惰 OBBT 后重解；上界<=GEOMETRY_TOL 或已证不可行即覆盖完成。H 的分区认证为：覆盖完成、无 UNRESOLVED 面且 vol(O_H)-vol(I_H)<=ε·vol(I_H)；或径向部分自身满足体积准则（继承 R 的证书，`SupportPhase.certified_now`）。
 

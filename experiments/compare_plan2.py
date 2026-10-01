@@ -32,6 +32,12 @@ C  x 自由的覆盖证书：RemainingRegionModel 直接接收外扩面 E_x 并�
 认证：覆盖完成、没有 UNRESOLVED 面且 vol(O_H)-vol(I_H) <= ε·vol(I_H)；或径向部分自身满足 R 的体积准则（此时
 O_H ⊆ O_R、I_H ⊇ I_R，H 继承 R 的证书）。覆盖完成而间隙仍大于 ε 时，续跑 A（目标 ε），每次锥决策后复核 H 的间隙。
 
+方法 Hc 与 RB
+----
+Hc：同 H，覆盖证书按 A 阶段叶锥分解（--coverage cone）。RB：R + B，去掉 C——A 与 B 同 H，之后续跑径向部分；外界始终
+是有证书的 O_R∩盒，内域 I_H=I_R∪(∪P_x)，每次锥决策后检查 vol(O_R)-vol(I_H) <= ε·vol(I_H)，满足即认证（P_x ⊆ R_x
+只依赖审计过的点，与面是否认证无关）。
+
 实现约定（任务说明未覆盖或需取舍之处）
 ----
 1. 时间：--seconds 是每次运行的墙钟总时限（含 OBBT、求解、几何与记录，不含事后逐格评价），t=0 为运行开始。分区
@@ -117,7 +123,7 @@ SMOKE = dict(case='case33', nodes=(18, 25), partitions=('nn',), seconds=60., rep
              workers=(1, 16))
 CERTIFIED_FACES = ('BOUNDARY', 'GEOMETRY_CERTIFIED', 'SUPPORT_CERTIFIED')
 SURFACE, INK, INK_2, MUTED, GRID = '#fcfcfb', '#0b0b0b', '#52514e', '#898781', '#e1e0d9'
-METHOD_COLORS = dict(R='#2a78d6', H='#eb6834', Hc='#1baf7a')   # 分类色前三槽（径向脚本已校验的配色）
+METHOD_COLORS = dict(R='#2a78d6', H='#eb6834', Hc='#1baf7a', RB='#eda100')   # 分类色前四槽（已校验的配色）
 PURPOSES = ('discovery', 'cone_outer', 'support', 'coverage', 'obbt', 'ray', 'zero_sp')
 PURPOSE_COLORS = dict(zip(PURPOSES, ('#2a78d6', '#eb6834', '#1baf7a', '#eda100', '#e87ba4', '#008300', '#4a3aa7')))
 TYPE_COLORS = dict(MISOCP='#2a78d6', SOCP='#eb6834', LP='#1baf7a')
@@ -766,9 +772,13 @@ class SupportPhase:
         return sum(st.counts()['unresolved'] for st in self.networks.values() if not st.empty)
 
     def certified_now(self):
-        """H 的分区认证：覆盖完成、无 UNRESOLVED 面且间隙 <= ε；或径向部分自身满足体积准则（继承 R 的证书）。"""
+        """H 的分区认证：覆盖完成、无 UNRESOLVED 面且间隙 <= ε；或径向部分自身满足体积准则（继承 R 的证书）。
+        RB（无 C）：外界就是有证书的 O_R∩盒，内域 I_H=I_R∪(∪P_x)，vol(O_R)-vol(I_H) <= ε·vol(I_H) 即认证。"""
         if leaves(self.radial) and self.radial.volume_ratio() <= self.eps:
             return 'radial'
+        if self.coverage_mode == 'none':
+            inner, outer = self.measure_raw()
+            return 'inner' if inner > 0 and outer-inner <= self.eps*inner else None
         if self.cover is None or self.unresolved():
             return None
         inner, outer = self.measure_raw()
@@ -808,6 +818,12 @@ class SupportPhase:
                     self.support_pass()
                 if self.clock.now() >= self.deadline:
                     raise PartitionTimeout('partition time limit')
+                if self.coverage_mode == 'none':   # RB：不做覆盖证书，B 之后直接续跑径向部分
+                    how = self.certified_now()
+                    if how:
+                        self.certify(how)
+                        return
+                    break
                 with self.phase('C'):
                     answer = self.coverage()
                 if answer['complete']:
@@ -1144,7 +1160,7 @@ STATUS_NAMES[-1] = 'ERROR'
 
 
 def run_H(case, code, args, clock, deadline_t, workers, method='H'):
-    """方法 H（coverage=args.coverage）或 Hc（同 H，覆盖证书按锥分解）的一个分区。"""
+    """方法 H（coverage=args.coverage）、Hc（同 H，覆盖证书按锥分解）或 RB（R + B，无覆盖证书）的一个分区。"""
     recorder = Recorder(code, method, clock, checkpoint_times(args.seconds),
                         TIMELINE_INTERVAL_3D if case.d == 3 else 0.)
     pool = SupportPool(case, code, args, workers) if workers > 1 else None
@@ -1157,7 +1173,7 @@ def run_H(case, code, args, clock, deadline_t, workers, method='H'):
                                 dict(volume_ratio=radial.volume_ratio() if leaves(radial) else None,
                                      cones=len(leaves(radial))))
     support = SupportPhase(case, code, radial, args, recorder, clock, deadline_t, pool, workers,
-                           'cone' if method == 'Hc' else args.coverage)
+                           {'Hc': 'cone', 'RB': 'none'}.get(method, args.coverage))
     phase_a = dict(status='not_started', seconds=0.)
     try:
         with threadpool_limits(limits=1):
@@ -1571,7 +1587,7 @@ def write_report(output, case_tag):
 
 def conclusions(groups):
     lines = []
-    for workers, method in [(w, m) for w in sorted({w for _, w in groups}) for m in ('H', 'Hc')]:
+    for workers, method in [(w, m) for w in sorted({w for _, w in groups}) for m in ('H', 'Hc', 'RB')]:
         r, h = groups.get(('R', workers), []), groups.get((method, workers), [])
         if not r or not h:
             continue
@@ -1840,8 +1856,8 @@ def parse_args(argv=None):
     d = len(args.nodes)
     args.eps = args.eps if args.eps is not None else d*args.tau
     args.network_eps = args.network_eps if args.network_eps is not None else args.eps/2.
-    if set(args.methods)-{'R', 'H', 'Hc'}:
-        parser.error('--methods takes R, H and/or Hc (H with the per-cone coverage certificate)')
+    if set(args.methods)-{'R', 'H', 'Hc', 'RB'}:
+        parser.error('--methods takes R, H, Hc (per-cone coverage) and/or RB (R + phase B, no coverage)')
     tag = f'{args.case}_{"_".join(map(str, args.nodes))}'
     if args.output is None:
         args.output = DEFAULT_OUTPUT/(tag+('_smoke' if args.smoke else ''))
