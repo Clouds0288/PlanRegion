@@ -43,7 +43,8 @@ O_H ⊆ O_R、I_H ⊇ I_R，H 继承 R 的证书）。覆盖完成而间隙仍�
    去掉的 SOCP-only 区域，只作诊断：主指标是相对 AC 的 FR/MR，SOCP 只用来分辨误差来自松弛还是模型。
 3. 代码库没有求解重试流程（主线失败即停、SupportOracle 不在失败后改精度），故非 OPTIMAL 的支撑 SOCP 不重求，该面
    记 UNRESOLVED。“未决面”指 UNRESOLVED 面；因 ε_B 或时间片停止而未查的面记 unchecked，不阻止认证（外界的有效性
-   由覆盖证书保证）。
+   由覆盖证书保证）。覆盖见证落在 x∈X* 时“对这个网架重新做 B”：补点后该网架不再按 ε_B 提前停止，查完全部非分区
+   边界面才停（否则补点只会让 vol(O_x)/vol(P_x)-1 更小、立即再次停止，未查面附近的见证要靠一轮轮覆盖 MISOCP 逐点补）。
 4. 每轮 B 最多用剩余时间的 SUPPORT_PASS_SHARE，其余留给 C；单次支撑 SOCP 不超过 SUPPORT_SECONDS，覆盖 MISOCP 不超过
    --mip-seconds（与锥 MISOCP 相同）。--coverage cone 未实现（任务说明允许先不做）。
 5. 检查点快照是该时刻的确切状态：每次几何变化之前处理已到的检查点（锥求解期间到达的检查点按求解前的外界记录）。
@@ -552,6 +553,7 @@ class NetworkState:
         self.outer = geo.box_vertices(d)
         self.cache, self.inflight, self.lost = {}, set(), set()
         self.status, self.reason, self.urgent = 'active', None, False
+        self.strict = False   # 出过覆盖见证：不再按 ε_B 提前停止，直到全部非分区边界面认证
         self.calls = self.violations = self.rebuilds = 0
         self.seconds = 0.
         self.slice_end = None
@@ -669,7 +671,7 @@ class NetworkState:
         status = self.face_status
         if np.isin(status, CERTIFIED_FACES).all():
             self.status, self.reason = 'done', 'certified'
-        elif (self.full and len(self.outer) > self.d
+        elif (not self.strict and self.full and len(self.outer) > self.d
               and polytope_volume(self.outer)/polytope_volume(self.vertices)-1. <= self.network_eps):
             self.status, self.reason = 'done', 'eps_B'
         elif not (status == 'PENDING').any():
@@ -691,7 +693,7 @@ class NetworkState:
     def summary(self):
         volume = polytope_volume(self.vertices) if self.full else 0.
         return dict(scheme=self.label, weight=self.weight, points=len(self.points), vertices=len(self.vertices),
-                    full=self.full, criterion=self.criterion, center_source=self.center_source,
+                    full=self.full, criterion=self.criterion, center_source=self.center_source, strict=self.strict,
                     status=self.status, reason=self.reason, support_calls=self.calls,
                     support_seconds=self.seconds, violations_added=self.violations, rebuilds=self.rebuilds,
                     inner_volume_xi=volume, outer_volume_xi=polytope_volume(self.outer) if len(self.outer) else 0.,
@@ -1014,7 +1016,8 @@ class SupportPhase:
             self.recorder.before_change()
             st.add_points([point])
             self.recorder.changed()
-        st.status, st.urgent = 'active', True
+        # 重新做 B：见证说明按 ε_B 停下的 P_x 的外扩不足以覆盖 R_x，故该网架此后查完全部面才停（时间片仍有效）。
+        st.status, st.urgent, st.strict = 'active', True, True
 
     def certify_witness(self, x, xi, st):
         radial, equations = self.radial, self.radial.equations
