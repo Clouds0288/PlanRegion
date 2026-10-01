@@ -1046,7 +1046,7 @@ class NativeWindow:
                 outer = validation['metrics']['outer']
                 title = f"G′：{title}\nG：遗漏 {fmt(outer['mr_percent'])}    多余 {fmt(outer['fr_percent'])}"
             ax.set_title(title, fontsize=9)
-            kind = 'AC' if validation.get('method') == 'ac_grid_v3' else '历史'
+            kind = 'AC' if validation.get('method', '').startswith('ac_') else '历史'
             handles = [Line2D([], [], color='#526c80', label=f'{kind} 扫描参考'),
                        Line2D([], [], color=INNER, label='认证内域 G′' if key == 'inner' else '联合割外域并集')]
             if key == 'inner' and 'outer' in validation.get('metrics', {}):
@@ -1088,7 +1088,7 @@ class NativeWindow:
         from region import clip_polytope
         if state.get('event') != 'cut':
             return []
-        before = self.monitor.frame(self.index-1)['schemes']
+        before = self.monitor.frame(self.index-1).get('schemes', {})
         latest = next(reversed(state['cut_history'].values()))
         cut = np.asarray(latest['cut'])
         bounds = np.asarray(state['bounds'])
@@ -1121,7 +1121,7 @@ class NativeWindow:
             metrics = validation['metrics'][key]
             labels.append(f"{symbol}：遗漏 {fmt(metrics['mr_percent'])} · 多余 {fmt(metrics['fr_percent'])}")
         ax.set_title('\n'.join(labels)+'  · '+'×'.join(map(str, states.shape))+' 网格', fontsize=8, pad=8)
-        kind = 'AC' if validation.get('method') == 'ac_grid_v3' else '历史'
+        kind = 'AC' if validation.get('method', '').startswith('ac_') else '历史'
         ax.legend(handles=[Line2D([], [], color='#7e9bae', label=f'{kind} 扫描'),
                            Line2D([], [], color=INNER, label="$G'$"),
                            Line2D([], [], color=OUTER, ls='--', label='$G$'),

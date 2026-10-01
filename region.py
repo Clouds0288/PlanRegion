@@ -605,8 +605,9 @@ class Cutting:
                 raise CutSlice()
             return radial.remaining(min(rest, SP_TIME_LIMIT['socp']))
 
-        # 1. N_x 初值：分区盒被已有联合割裁剪
+        # 1. N_x 初值：分区盒被已有联合割裁剪；先记录初值，回放时第一刀也有割前的 N_x
         state = self.networks[x] = dict(vertices=self.clip(box_vertices(d), x, self.cuts), status='slice', version=0)
+        monitor._emit('network', phase='网架切割', active_scheme=label, schemes={label: self.row(x)})
         cache, powers, applied, failed, history, fresh = {}, [], set(), set(), [], []
 
         def score(index):
