@@ -146,6 +146,8 @@ RCUT 只把状态属于 `CUT_ACCEPTED`（stagnated / exact / empty）的 N_x 计
 
 比较使用最终 inner 作为计算域，另保留 outer 指标。`comparison_metrics` 的 MR=`missed/reference`、FR=`extra/computed`，百分数，空分母 None；同时保留 missed_cells/extra_cells/reference_cells/computed_cells。`comparisons` 键为 result_ac/result_socp/socp_ac。导出版本 paired_scan_v2，NPZ 的 power 为 `(N,d)` kW，ac_states/socp_states/inner/outer 对应同坐标；CSV 标签列为 ac_state/socp_state。网格误差不是连续体积证明。
 
+方法对照实验的精选运行归档在 `results/methods/<算例>/<方法>/workers_<w>/run_<r>/`（summary.json、metrics.json、timeline.csv、solves.csv.gz、snapshots/final.json.gz），登记于 `results/manifest.json` 的 `method_archive`、`runs`、`files`；各方法的代码版本由 tag `method-<方法>-v1` 固定，归档整体为 `results-methods-v1`。
+
 回放 version=4：history 保存增量过程，validation_state 保存最终扫描；version=3 兼容读取。`RunMonitor._geometry:x` 保留完整型号顺序，`cut_history` 保存真实割。符号分区由 partition/sign 标记；各图按初始化包络定范围，显示层不改模型坐标。仅当前帧之前的网架、割、点可出现在过程图；最终扫描独立显示。result 包含 status/certified/inner/outer/counts/timing，分区证书在 partition_end；数值未决和时限未完不能改成 certified。JSON 非有限值为 null，仅预算 null 可按 inf 解释。
 
 ## 容差与默认设置

@@ -1,0 +1,1764 @@
+{
+ "scan": "results/scan/case33bw/18_25/d0121a1ad0ba8cc1e009da6cc204ad9cf53881d3e5f4c488a439cb11d5f6fb69/region_17ceb84375dc2cc1.npz",
+ "shape": [
+  160,
+  160
+ ],
+ "checkpoints": {
+  "final": {
+   "overall": {
+    "inner_ac": {
+     "mr_percent": 0.07963734378828718,
+     "fr_percent": 0.8268985225269047,
+     "missed_cells": 13,
+     "extra_cells": 136,
+     "reference_cells": 16324,
+     "computed_cells": 16447
+    },
+    "inner_socp": {
+     "mr_percent": 12.483371468099824,
+     "fr_percent": 0.0,
+     "missed_cells": 2346,
+     "extra_cells": 0,
+     "reference_cells": 18793,
+     "computed_cells": 16447
+    },
+    "outer_ac": {
+     "mr_percent": 0.0,
+     "fr_percent": 1.1206008843661033,
+     "missed_cells": 0,
+     "extra_cells": 185,
+     "reference_cells": 16324,
+     "computed_cells": 16509
+    },
+    "outer_socp": {
+     "mr_percent": 12.227957218113128,
+     "fr_percent": 0.08480222908716457,
+     "missed_cells": 2298,
+     "extra_cells": 14,
+     "reference_cells": 18793,
+     "computed_cells": 16509
+    },
+    "inner_cells": 16447,
+    "outer_cells": 16509,
+    "inner_socp_infeasible_cells": 0,
+    "outer_missed_ac_cells": 0,
+    "outer_missed_socp_cells": 2298,
+    "undecided_ac_cells": 0,
+    "undecided_socp_cells": 0,
+    "inner_undecided_ac_cells": 0,
+    "valid": true,
+    "outer_missed_ac_kw": [],
+    "inner_socp_infeasible_kw": []
+   },
+   "partitions": {
+    "pp": {
+     "inner_ac": {
+      "mr_percent": 0.0,
+      "fr_percent": 0.0,
+      "missed_cells": 0,
+      "extra_cells": 0,
+      "reference_cells": 28,
+      "computed_cells": 28
+     },
+     "inner_socp": {
+      "mr_percent": 0.0,
+      "fr_percent": 0.0,
+      "missed_cells": 0,
+      "extra_cells": 0,
+      "reference_cells": 28,
+      "computed_cells": 28
+     },
+     "outer_ac": {
+      "mr_percent": 0.0,
+      "fr_percent": 0.0,
+      "missed_cells": 0,
+      "extra_cells": 0,
+      "reference_cells": 28,
+      "computed_cells": 28
+     },
+     "outer_socp": {
+      "mr_percent": 0.0,
+      "fr_percent": 0.0,
+      "missed_cells": 0,
+      "extra_cells": 0,
+      "reference_cells": 28,
+      "computed_cells": 28
+     },
+     "inner_cells": 28,
+     "outer_cells": 28,
+     "inner_socp_infeasible_cells": 0,
+     "outer_missed_ac_cells": 0,
+     "outer_missed_socp_cells": 0,
+     "undecided_ac_cells": 0,
+     "undecided_socp_cells": 0,
+     "inner_undecided_ac_cells": 0,
+     "valid": true
+    },
+    "pn": {
+     "inner_ac": {
+      "mr_percent": 0.14771048744460857,
+      "fr_percent": 0.0,
+      "missed_cells": 2,
+      "extra_cells": 0,
+      "reference_cells": 1354,
+      "computed_cells": 1352
+     },
+     "inner_socp": {
+      "mr_percent": 0.14771048744460857,
+      "fr_percent": 0.0,
+      "missed_cells": 2,
+      "extra_cells": 0,
+      "reference_cells": 1354,
+      "computed_cells": 1352
+     },
+     "outer_ac": {
+      "mr_percent": 0.0,
+      "fr_percent": 0.14749262536873156,
+      "missed_cells": 0,
+      "extra_cells": 2,
+      "reference_cells": 1354,
+      "computed_cells": 1356
+     },
+     "outer_socp": {
+      "mr_percent": 0.0,
+      "fr_percent": 0.14749262536873156,
+      "missed_cells": 0,
+      "extra_cells": 2,
+      "reference_cells": 1354,
+      "computed_cells": 1356
+     },
+     "inner_cells": 1352,
+     "outer_cells": 1356,
+     "inner_socp_infeasible_cells": 0,
+     "outer_missed_ac_cells": 0,
+     "outer_missed_socp_cells": 0,
+     "undecided_ac_cells": 0,
+     "undecided_socp_cells": 0,
+     "inner_undecided_ac_cells": 0,
+     "valid": true
+    },
+    "np": {
+     "inner_ac": {
+      "mr_percent": 0.1816860465116279,
+      "fr_percent": 0.30847396116857195,
+      "missed_cells": 10,
+      "extra_cells": 17,
+      "reference_cells": 5504,
+      "computed_cells": 5511
+     },
+     "inner_socp": {
+      "mr_percent": 15.084745762711865,
+      "fr_percent": 0.0,
+      "missed_cells": 979,
+      "extra_cells": 0,
+      "reference_cells": 6490,
+      "computed_cells": 5511
+     },
+     "outer_ac": {
+      "mr_percent": 0.0,
+      "fr_percent": 0.6318830113738942,
+      "missed_cells": 0,
+      "extra_cells": 35,
+      "reference_cells": 5504,
+      "computed_cells": 5539
+     },
+     "outer_socp": {
+      "mr_percent": 14.761171032357472,
+      "fr_percent": 0.12637660227477884,
+      "missed_cells": 958,
+      "extra_cells": 7,
+      "reference_cells": 6490,
+      "computed_cells": 5539
+     },
+     "inner_cells": 5511,
+     "outer_cells": 5539,
+     "inner_socp_infeasible_cells": 0,
+     "outer_missed_ac_cells": 0,
+     "outer_missed_socp_cells": 958,
+     "undecided_ac_cells": 0,
+     "undecided_socp_cells": 0,
+     "inner_undecided_ac_cells": 0,
+     "valid": true
+    },
+    "nn": {
+     "inner_ac": {
+      "mr_percent": 0.010595465140919686,
+      "fr_percent": 1.2452909167015487,
+      "missed_cells": 1,
+      "extra_cells": 119,
+      "reference_cells": 9438,
+      "computed_cells": 9556
+     },
+     "inner_socp": {
+      "mr_percent": 12.49885541617068,
+      "fr_percent": 0.0,
+      "missed_cells": 1365,
+      "extra_cells": 0,
+      "reference_cells": 10921,
+      "computed_cells": 9556
+     },
+     "outer_ac": {
+      "mr_percent": 0.0,
+      "fr_percent": 1.543918214062174,
+      "missed_cells": 0,
+      "extra_cells": 148,
+      "reference_cells": 9438,
+      "computed_cells": 9586
+     },
+     "outer_socp": {
+      "mr_percent": 12.269938650306749,
+      "fr_percent": 0.0521593991237221,
+      "missed_cells": 1340,
+      "extra_cells": 5,
+      "reference_cells": 10921,
+      "computed_cells": 9586
+     },
+     "inner_cells": 9556,
+     "outer_cells": 9586,
+     "inner_socp_infeasible_cells": 0,
+     "outer_missed_ac_cells": 0,
+     "outer_missed_socp_cells": 1340,
+     "undecided_ac_cells": 0,
+     "undecided_socp_cells": 0,
+     "inner_undecided_ac_cells": 0,
+     "valid": true
+    }
+   }
+  },
+  "15": {
+   "overall": {
+    "inner_ac": {
+     "mr_percent": 57.95760842930654,
+     "fr_percent": 0.24709302325581395,
+     "missed_cells": 9461,
+     "extra_cells": 17,
+     "reference_cells": 16324,
+     "computed_cells": 6880
+    },
+    "inner_socp": {
+     "mr_percent": 63.3906241685734,
+     "fr_percent": 0.0,
+     "missed_cells": 11913,
+     "extra_cells": 0,
+     "reference_cells": 18793,
+     "computed_cells": 6880
+    },
+    "outer_ac": {
+     "mr_percent": 0.0,
+     "fr_percent": 21.322537112010796,
+     "missed_cells": 0,
+     "extra_cells": 4424,
+     "reference_cells": 16324,
+     "computed_cells": 20748
+    },
+    "outer_socp": {
+     "mr_percent": 4.682594583089448,
+     "fr_percent": 13.663967611336032,
+     "missed_cells": 880,
+     "extra_cells": 2835,
+     "reference_cells": 18793,
+     "computed_cells": 20748
+    },
+    "inner_cells": 6880,
+    "outer_cells": 20748,
+    "inner_socp_infeasible_cells": 0,
+    "outer_missed_ac_cells": 0,
+    "outer_missed_socp_cells": 880,
+    "undecided_ac_cells": 0,
+    "undecided_socp_cells": 0,
+    "inner_undecided_ac_cells": 0,
+    "valid": true
+   },
+   "partitions": {
+    "pp": {
+     "inner_ac": {
+      "mr_percent": 0.0,
+      "fr_percent": 0.0,
+      "missed_cells": 0,
+      "extra_cells": 0,
+      "reference_cells": 28,
+      "computed_cells": 28
+     },
+     "inner_socp": {
+      "mr_percent": 0.0,
+      "fr_percent": 0.0,
+      "missed_cells": 0,
+      "extra_cells": 0,
+      "reference_cells": 28,
+      "computed_cells": 28
+     },
+     "outer_ac": {
+      "mr_percent": 0.0,
+      "fr_percent": 0.0,
+      "missed_cells": 0,
+      "extra_cells": 0,
+      "reference_cells": 28,
+      "computed_cells": 28
+     },
+     "outer_socp": {
+      "mr_percent": 0.0,
+      "fr_percent": 0.0,
+      "missed_cells": 0,
+      "extra_cells": 0,
+      "reference_cells": 28,
+      "computed_cells": 28
+     },
+     "inner_cells": 28,
+     "outer_cells": 28,
+     "inner_socp_infeasible_cells": 0,
+     "outer_missed_ac_cells": 0,
+     "outer_missed_socp_cells": 0,
+     "undecided_ac_cells": 0,
+     "undecided_socp_cells": 0,
+     "inner_undecided_ac_cells": 0,
+     "valid": true
+    },
+    "pn": {
+     "inner_ac": {
+      "mr_percent": 0.14771048744460857,
+      "fr_percent": 0.0,
+      "missed_cells": 2,
+      "extra_cells": 0,
+      "reference_cells": 1354,
+      "computed_cells": 1352
+     },
+     "inner_socp": {
+      "mr_percent": 0.14771048744460857,
+      "fr_percent": 0.0,
+      "missed_cells": 2,
+      "extra_cells": 0,
+      "reference_cells": 1354,
+      "computed_cells": 1352
+     },
+     "outer_ac": {
+      "mr_percent": 0.0,
+      "fr_percent": 0.14749262536873156,
+      "missed_cells": 0,
+      "extra_cells": 2,
+      "reference_cells": 1354,
+      "computed_cells": 1356
+     },
+     "outer_socp": {
+      "mr_percent": 0.0,
+      "fr_percent": 0.14749262536873156,
+      "missed_cells": 0,
+      "extra_cells": 2,
+      "reference_cells": 1354,
+      "computed_cells": 1356
+     },
+     "inner_cells": 1352,
+     "outer_cells": 1356,
+     "inner_socp_infeasible_cells": 0,
+     "outer_missed_ac_cells": 0,
+     "outer_missed_socp_cells": 0,
+     "undecided_ac_cells": 0,
+     "undecided_socp_cells": 0,
+     "inner_undecided_ac_cells": 0,
+     "valid": true
+    },
+    "np": {
+     "inner_ac": {
+      "mr_percent": 0.3815406976744186,
+      "fr_percent": 0.3090909090909091,
+      "missed_cells": 21,
+      "extra_cells": 17,
+      "reference_cells": 5504,
+      "computed_cells": 5500
+     },
+     "inner_socp": {
+      "mr_percent": 15.254237288135593,
+      "fr_percent": 0.0,
+      "missed_cells": 990,
+      "extra_cells": 0,
+      "reference_cells": 6490,
+      "computed_cells": 5500
+     },
+     "outer_ac": {
+      "mr_percent": 0.0,
+      "fr_percent": 4.011161492849669,
+      "missed_cells": 0,
+      "extra_cells": 230,
+      "reference_cells": 5504,
+      "computed_cells": 5734
+     },
+     "outer_socp": {
+      "mr_percent": 13.559322033898304,
+      "fr_percent": 2.1625392396232996,
+      "missed_cells": 880,
+      "extra_cells": 124,
+      "reference_cells": 6490,
+      "computed_cells": 5734
+     },
+     "inner_cells": 5500,
+     "outer_cells": 5734,
+     "inner_socp_infeasible_cells": 0,
+     "outer_missed_ac_cells": 0,
+     "outer_missed_socp_cells": 880,
+     "undecided_ac_cells": 0,
+     "undecided_socp_cells": 0,
+     "inner_undecided_ac_cells": 0,
+     "valid": true
+    },
+    "nn": {
+     "inner_ac": {
+      "mr_percent": 100.0,
+      "fr_percent": null,
+      "missed_cells": 9438,
+      "extra_cells": 0,
+      "reference_cells": 9438,
+      "computed_cells": 0
+     },
+     "inner_socp": {
+      "mr_percent": 100.0,
+      "fr_percent": null,
+      "missed_cells": 10921,
+      "extra_cells": 0,
+      "reference_cells": 10921,
+      "computed_cells": 0
+     },
+     "outer_ac": {
+      "mr_percent": 0.0,
+      "fr_percent": 30.755685986793836,
+      "missed_cells": 0,
+      "extra_cells": 4192,
+      "reference_cells": 9438,
+      "computed_cells": 13630
+     },
+     "outer_socp": {
+      "mr_percent": 0.0,
+      "fr_percent": 19.875275128393252,
+      "missed_cells": 0,
+      "extra_cells": 2709,
+      "reference_cells": 10921,
+      "computed_cells": 13630
+     },
+     "inner_cells": 0,
+     "outer_cells": 13630,
+     "inner_socp_infeasible_cells": 0,
+     "outer_missed_ac_cells": 0,
+     "outer_missed_socp_cells": 0,
+     "undecided_ac_cells": 0,
+     "undecided_socp_cells": 0,
+     "inner_undecided_ac_cells": 0,
+     "valid": true
+    }
+   }
+  },
+  "30": {
+   "overall": {
+    "inner_ac": {
+     "mr_percent": 0.1470227885322225,
+     "fr_percent": 0.827451934777318,
+     "missed_cells": 24,
+     "extra_cells": 136,
+     "reference_cells": 16324,
+     "computed_cells": 16436
+    },
+    "inner_socp": {
+     "mr_percent": 12.541903900388442,
+     "fr_percent": 0.0,
+     "missed_cells": 2357,
+     "extra_cells": 0,
+     "reference_cells": 18793,
+     "computed_cells": 16436
+    },
+    "outer_ac": {
+     "mr_percent": 0.0,
+     "fr_percent": 2.274904214559387,
+     "missed_cells": 0,
+     "extra_cells": 380,
+     "reference_cells": 16324,
+     "computed_cells": 16704
+    },
+    "outer_socp": {
+     "mr_percent": 11.812909061884744,
+     "fr_percent": 0.7842432950191571,
+     "missed_cells": 2220,
+     "extra_cells": 131,
+     "reference_cells": 18793,
+     "computed_cells": 16704
+    },
+    "inner_cells": 16436,
+    "outer_cells": 16704,
+    "inner_socp_infeasible_cells": 0,
+    "outer_missed_ac_cells": 0,
+    "outer_missed_socp_cells": 2220,
+    "undecided_ac_cells": 0,
+    "undecided_socp_cells": 0,
+    "inner_undecided_ac_cells": 0,
+    "valid": true
+   },
+   "partitions": {
+    "pp": {
+     "inner_ac": {
+      "mr_percent": 0.0,
+      "fr_percent": 0.0,
+      "missed_cells": 0,
+      "extra_cells": 0,
+      "reference_cells": 28,
+      "computed_cells": 28
+     },
+     "inner_socp": {
+      "mr_percent": 0.0,
+      "fr_percent": 0.0,
+      "missed_cells": 0,
+      "extra_cells": 0,
+      "reference_cells": 28,
+      "computed_cells": 28
+     },
+     "outer_ac": {
+      "mr_percent": 0.0,
+      "fr_percent": 0.0,
+      "missed_cells": 0,
+      "extra_cells": 0,
+      "reference_cells": 28,
+      "computed_cells": 28
+     },
+     "outer_socp": {
+      "mr_percent": 0.0,
+      "fr_percent": 0.0,
+      "missed_cells": 0,
+      "extra_cells": 0,
+      "reference_cells": 28,
+      "computed_cells": 28
+     },
+     "inner_cells": 28,
+     "outer_cells": 28,
+     "inner_socp_infeasible_cells": 0,
+     "outer_missed_ac_cells": 0,
+     "outer_missed_socp_cells": 0,
+     "undecided_ac_cells": 0,
+     "undecided_socp_cells": 0,
+     "inner_undecided_ac_cells": 0,
+     "valid": true
+    },
+    "pn": {
+     "inner_ac": {
+      "mr_percent": 0.14771048744460857,
+      "fr_percent": 0.0,
+      "missed_cells": 2,
+      "extra_cells": 0,
+      "reference_cells": 1354,
+      "computed_cells": 1352
+     },
+     "inner_socp": {
+      "mr_percent": 0.14771048744460857,
+      "fr_percent": 0.0,
+      "missed_cells": 2,
+      "extra_cells": 0,
+      "reference_cells": 1354,
+      "computed_cells": 1352
+     },
+     "outer_ac": {
+      "mr_percent": 0.0,
+      "fr_percent": 0.14749262536873156,
+      "missed_cells": 0,
+      "extra_cells": 2,
+      "reference_cells": 1354,
+      "computed_cells": 1356
+     },
+     "outer_socp": {
+      "mr_percent": 0.0,
+      "fr_percent": 0.14749262536873156,
+      "missed_cells": 0,
+      "extra_cells": 2,
+      "reference_cells": 1354,
+      "computed_cells": 1356
+     },
+     "inner_cells": 1352,
+     "outer_cells": 1356,
+     "inner_socp_infeasible_cells": 0,
+     "outer_missed_ac_cells": 0,
+     "outer_missed_socp_cells": 0,
+     "undecided_ac_cells": 0,
+     "undecided_socp_cells": 0,
+     "inner_undecided_ac_cells": 0,
+     "valid": true
+    },
+    "np": {
+     "inner_ac": {
+      "mr_percent": 0.3815406976744186,
+      "fr_percent": 0.3090909090909091,
+      "missed_cells": 21,
+      "extra_cells": 17,
+      "reference_cells": 5504,
+      "computed_cells": 5500
+     },
+     "inner_socp": {
+      "mr_percent": 15.254237288135593,
+      "fr_percent": 0.0,
+      "missed_cells": 990,
+      "extra_cells": 0,
+      "reference_cells": 6490,
+      "computed_cells": 5500
+     },
+     "outer_ac": {
+      "mr_percent": 0.0,
+      "fr_percent": 4.011161492849669,
+      "missed_cells": 0,
+      "extra_cells": 230,
+      "reference_cells": 5504,
+      "computed_cells": 5734
+     },
+     "outer_socp": {
+      "mr_percent": 13.559322033898304,
+      "fr_percent": 2.1625392396232996,
+      "missed_cells": 880,
+      "extra_cells": 124,
+      "reference_cells": 6490,
+      "computed_cells": 5734
+     },
+     "inner_cells": 5500,
+     "outer_cells": 5734,
+     "inner_socp_infeasible_cells": 0,
+     "outer_missed_ac_cells": 0,
+     "outer_missed_socp_cells": 880,
+     "undecided_ac_cells": 0,
+     "undecided_socp_cells": 0,
+     "inner_undecided_ac_cells": 0,
+     "valid": true
+    },
+    "nn": {
+     "inner_ac": {
+      "mr_percent": 0.010595465140919686,
+      "fr_percent": 1.2452909167015487,
+      "missed_cells": 1,
+      "extra_cells": 119,
+      "reference_cells": 9438,
+      "computed_cells": 9556
+     },
+     "inner_socp": {
+      "mr_percent": 12.49885541617068,
+      "fr_percent": 0.0,
+      "missed_cells": 1365,
+      "extra_cells": 0,
+      "reference_cells": 10921,
+      "computed_cells": 9556
+     },
+     "outer_ac": {
+      "mr_percent": 0.0,
+      "fr_percent": 1.543918214062174,
+      "missed_cells": 0,
+      "extra_cells": 148,
+      "reference_cells": 9438,
+      "computed_cells": 9586
+     },
+     "outer_socp": {
+      "mr_percent": 12.269938650306749,
+      "fr_percent": 0.0521593991237221,
+      "missed_cells": 1340,
+      "extra_cells": 5,
+      "reference_cells": 10921,
+      "computed_cells": 9586
+     },
+     "inner_cells": 9556,
+     "outer_cells": 9586,
+     "inner_socp_infeasible_cells": 0,
+     "outer_missed_ac_cells": 0,
+     "outer_missed_socp_cells": 1340,
+     "undecided_ac_cells": 0,
+     "undecided_socp_cells": 0,
+     "inner_undecided_ac_cells": 0,
+     "valid": true
+    }
+   }
+  },
+  "60": {
+   "overall": {
+    "inner_ac": {
+     "mr_percent": 0.07963734378828718,
+     "fr_percent": 0.8268985225269047,
+     "missed_cells": 13,
+     "extra_cells": 136,
+     "reference_cells": 16324,
+     "computed_cells": 16447
+    },
+    "inner_socp": {
+     "mr_percent": 12.483371468099824,
+     "fr_percent": 0.0,
+     "missed_cells": 2346,
+     "extra_cells": 0,
+     "reference_cells": 18793,
+     "computed_cells": 16447
+    },
+    "outer_ac": {
+     "mr_percent": 0.0,
+     "fr_percent": 2.274904214559387,
+     "missed_cells": 0,
+     "extra_cells": 380,
+     "reference_cells": 16324,
+     "computed_cells": 16704
+    },
+    "outer_socp": {
+     "mr_percent": 11.812909061884744,
+     "fr_percent": 0.7842432950191571,
+     "missed_cells": 2220,
+     "extra_cells": 131,
+     "reference_cells": 18793,
+     "computed_cells": 16704
+    },
+    "inner_cells": 16447,
+    "outer_cells": 16704,
+    "inner_socp_infeasible_cells": 0,
+    "outer_missed_ac_cells": 0,
+    "outer_missed_socp_cells": 2220,
+    "undecided_ac_cells": 0,
+    "undecided_socp_cells": 0,
+    "inner_undecided_ac_cells": 0,
+    "valid": true
+   },
+   "partitions": {
+    "pp": {
+     "inner_ac": {
+      "mr_percent": 0.0,
+      "fr_percent": 0.0,
+      "missed_cells": 0,
+      "extra_cells": 0,
+      "reference_cells": 28,
+      "computed_cells": 28
+     },
+     "inner_socp": {
+      "mr_percent": 0.0,
+      "fr_percent": 0.0,
+      "missed_cells": 0,
+      "extra_cells": 0,
+      "reference_cells": 28,
+      "computed_cells": 28
+     },
+     "outer_ac": {
+      "mr_percent": 0.0,
+      "fr_percent": 0.0,
+      "missed_cells": 0,
+      "extra_cells": 0,
+      "reference_cells": 28,
+      "computed_cells": 28
+     },
+     "outer_socp": {
+      "mr_percent": 0.0,
+      "fr_percent": 0.0,
+      "missed_cells": 0,
+      "extra_cells": 0,
+      "reference_cells": 28,
+      "computed_cells": 28
+     },
+     "inner_cells": 28,
+     "outer_cells": 28,
+     "inner_socp_infeasible_cells": 0,
+     "outer_missed_ac_cells": 0,
+     "outer_missed_socp_cells": 0,
+     "undecided_ac_cells": 0,
+     "undecided_socp_cells": 0,
+     "inner_undecided_ac_cells": 0,
+     "valid": true
+    },
+    "pn": {
+     "inner_ac": {
+      "mr_percent": 0.14771048744460857,
+      "fr_percent": 0.0,
+      "missed_cells": 2,
+      "extra_cells": 0,
+      "reference_cells": 1354,
+      "computed_cells": 1352
+     },
+     "inner_socp": {
+      "mr_percent": 0.14771048744460857,
+      "fr_percent": 0.0,
+      "missed_cells": 2,
+      "extra_cells": 0,
+      "reference_cells": 1354,
+      "computed_cells": 1352
+     },
+     "outer_ac": {
+      "mr_percent": 0.0,
+      "fr_percent": 0.14749262536873156,
+      "missed_cells": 0,
+      "extra_cells": 2,
+      "reference_cells": 1354,
+      "computed_cells": 1356
+     },
+     "outer_socp": {
+      "mr_percent": 0.0,
+      "fr_percent": 0.14749262536873156,
+      "missed_cells": 0,
+      "extra_cells": 2,
+      "reference_cells": 1354,
+      "computed_cells": 1356
+     },
+     "inner_cells": 1352,
+     "outer_cells": 1356,
+     "inner_socp_infeasible_cells": 0,
+     "outer_missed_ac_cells": 0,
+     "outer_missed_socp_cells": 0,
+     "undecided_ac_cells": 0,
+     "undecided_socp_cells": 0,
+     "inner_undecided_ac_cells": 0,
+     "valid": true
+    },
+    "np": {
+     "inner_ac": {
+      "mr_percent": 0.1816860465116279,
+      "fr_percent": 0.30847396116857195,
+      "missed_cells": 10,
+      "extra_cells": 17,
+      "reference_cells": 5504,
+      "computed_cells": 5511
+     },
+     "inner_socp": {
+      "mr_percent": 15.084745762711865,
+      "fr_percent": 0.0,
+      "missed_cells": 979,
+      "extra_cells": 0,
+      "reference_cells": 6490,
+      "computed_cells": 5511
+     },
+     "outer_ac": {
+      "mr_percent": 0.0,
+      "fr_percent": 4.011161492849669,
+      "missed_cells": 0,
+      "extra_cells": 230,
+      "reference_cells": 5504,
+      "computed_cells": 5734
+     },
+     "outer_socp": {
+      "mr_percent": 13.559322033898304,
+      "fr_percent": 2.1625392396232996,
+      "missed_cells": 880,
+      "extra_cells": 124,
+      "reference_cells": 6490,
+      "computed_cells": 5734
+     },
+     "inner_cells": 5511,
+     "outer_cells": 5734,
+     "inner_socp_infeasible_cells": 0,
+     "outer_missed_ac_cells": 0,
+     "outer_missed_socp_cells": 880,
+     "undecided_ac_cells": 0,
+     "undecided_socp_cells": 0,
+     "inner_undecided_ac_cells": 0,
+     "valid": true
+    },
+    "nn": {
+     "inner_ac": {
+      "mr_percent": 0.010595465140919686,
+      "fr_percent": 1.2452909167015487,
+      "missed_cells": 1,
+      "extra_cells": 119,
+      "reference_cells": 9438,
+      "computed_cells": 9556
+     },
+     "inner_socp": {
+      "mr_percent": 12.49885541617068,
+      "fr_percent": 0.0,
+      "missed_cells": 1365,
+      "extra_cells": 0,
+      "reference_cells": 10921,
+      "computed_cells": 9556
+     },
+     "outer_ac": {
+      "mr_percent": 0.0,
+      "fr_percent": 1.543918214062174,
+      "missed_cells": 0,
+      "extra_cells": 148,
+      "reference_cells": 9438,
+      "computed_cells": 9586
+     },
+     "outer_socp": {
+      "mr_percent": 12.269938650306749,
+      "fr_percent": 0.0521593991237221,
+      "missed_cells": 1340,
+      "extra_cells": 5,
+      "reference_cells": 10921,
+      "computed_cells": 9586
+     },
+     "inner_cells": 9556,
+     "outer_cells": 9586,
+     "inner_socp_infeasible_cells": 0,
+     "outer_missed_ac_cells": 0,
+     "outer_missed_socp_cells": 1340,
+     "undecided_ac_cells": 0,
+     "undecided_socp_cells": 0,
+     "inner_undecided_ac_cells": 0,
+     "valid": true
+    }
+   }
+  },
+  "120": {
+   "overall": {
+    "inner_ac": {
+     "mr_percent": 0.07963734378828718,
+     "fr_percent": 0.8268985225269047,
+     "missed_cells": 13,
+     "extra_cells": 136,
+     "reference_cells": 16324,
+     "computed_cells": 16447
+    },
+    "inner_socp": {
+     "mr_percent": 12.483371468099824,
+     "fr_percent": 0.0,
+     "missed_cells": 2346,
+     "extra_cells": 0,
+     "reference_cells": 18793,
+     "computed_cells": 16447
+    },
+    "outer_ac": {
+     "mr_percent": 0.0,
+     "fr_percent": 1.1206008843661033,
+     "missed_cells": 0,
+     "extra_cells": 185,
+     "reference_cells": 16324,
+     "computed_cells": 16509
+    },
+    "outer_socp": {
+     "mr_percent": 12.227957218113128,
+     "fr_percent": 0.08480222908716457,
+     "missed_cells": 2298,
+     "extra_cells": 14,
+     "reference_cells": 18793,
+     "computed_cells": 16509
+    },
+    "inner_cells": 16447,
+    "outer_cells": 16509,
+    "inner_socp_infeasible_cells": 0,
+    "outer_missed_ac_cells": 0,
+    "outer_missed_socp_cells": 2298,
+    "undecided_ac_cells": 0,
+    "undecided_socp_cells": 0,
+    "inner_undecided_ac_cells": 0,
+    "valid": true
+   },
+   "partitions": {
+    "pp": {
+     "inner_ac": {
+      "mr_percent": 0.0,
+      "fr_percent": 0.0,
+      "missed_cells": 0,
+      "extra_cells": 0,
+      "reference_cells": 28,
+      "computed_cells": 28
+     },
+     "inner_socp": {
+      "mr_percent": 0.0,
+      "fr_percent": 0.0,
+      "missed_cells": 0,
+      "extra_cells": 0,
+      "reference_cells": 28,
+      "computed_cells": 28
+     },
+     "outer_ac": {
+      "mr_percent": 0.0,
+      "fr_percent": 0.0,
+      "missed_cells": 0,
+      "extra_cells": 0,
+      "reference_cells": 28,
+      "computed_cells": 28
+     },
+     "outer_socp": {
+      "mr_percent": 0.0,
+      "fr_percent": 0.0,
+      "missed_cells": 0,
+      "extra_cells": 0,
+      "reference_cells": 28,
+      "computed_cells": 28
+     },
+     "inner_cells": 28,
+     "outer_cells": 28,
+     "inner_socp_infeasible_cells": 0,
+     "outer_missed_ac_cells": 0,
+     "outer_missed_socp_cells": 0,
+     "undecided_ac_cells": 0,
+     "undecided_socp_cells": 0,
+     "inner_undecided_ac_cells": 0,
+     "valid": true
+    },
+    "pn": {
+     "inner_ac": {
+      "mr_percent": 0.14771048744460857,
+      "fr_percent": 0.0,
+      "missed_cells": 2,
+      "extra_cells": 0,
+      "reference_cells": 1354,
+      "computed_cells": 1352
+     },
+     "inner_socp": {
+      "mr_percent": 0.14771048744460857,
+      "fr_percent": 0.0,
+      "missed_cells": 2,
+      "extra_cells": 0,
+      "reference_cells": 1354,
+      "computed_cells": 1352
+     },
+     "outer_ac": {
+      "mr_percent": 0.0,
+      "fr_percent": 0.14749262536873156,
+      "missed_cells": 0,
+      "extra_cells": 2,
+      "reference_cells": 1354,
+      "computed_cells": 1356
+     },
+     "outer_socp": {
+      "mr_percent": 0.0,
+      "fr_percent": 0.14749262536873156,
+      "missed_cells": 0,
+      "extra_cells": 2,
+      "reference_cells": 1354,
+      "computed_cells": 1356
+     },
+     "inner_cells": 1352,
+     "outer_cells": 1356,
+     "inner_socp_infeasible_cells": 0,
+     "outer_missed_ac_cells": 0,
+     "outer_missed_socp_cells": 0,
+     "undecided_ac_cells": 0,
+     "undecided_socp_cells": 0,
+     "inner_undecided_ac_cells": 0,
+     "valid": true
+    },
+    "np": {
+     "inner_ac": {
+      "mr_percent": 0.1816860465116279,
+      "fr_percent": 0.30847396116857195,
+      "missed_cells": 10,
+      "extra_cells": 17,
+      "reference_cells": 5504,
+      "computed_cells": 5511
+     },
+     "inner_socp": {
+      "mr_percent": 15.084745762711865,
+      "fr_percent": 0.0,
+      "missed_cells": 979,
+      "extra_cells": 0,
+      "reference_cells": 6490,
+      "computed_cells": 5511
+     },
+     "outer_ac": {
+      "mr_percent": 0.0,
+      "fr_percent": 0.6318830113738942,
+      "missed_cells": 0,
+      "extra_cells": 35,
+      "reference_cells": 5504,
+      "computed_cells": 5539
+     },
+     "outer_socp": {
+      "mr_percent": 14.761171032357472,
+      "fr_percent": 0.12637660227477884,
+      "missed_cells": 958,
+      "extra_cells": 7,
+      "reference_cells": 6490,
+      "computed_cells": 5539
+     },
+     "inner_cells": 5511,
+     "outer_cells": 5539,
+     "inner_socp_infeasible_cells": 0,
+     "outer_missed_ac_cells": 0,
+     "outer_missed_socp_cells": 958,
+     "undecided_ac_cells": 0,
+     "undecided_socp_cells": 0,
+     "inner_undecided_ac_cells": 0,
+     "valid": true
+    },
+    "nn": {
+     "inner_ac": {
+      "mr_percent": 0.010595465140919686,
+      "fr_percent": 1.2452909167015487,
+      "missed_cells": 1,
+      "extra_cells": 119,
+      "reference_cells": 9438,
+      "computed_cells": 9556
+     },
+     "inner_socp": {
+      "mr_percent": 12.49885541617068,
+      "fr_percent": 0.0,
+      "missed_cells": 1365,
+      "extra_cells": 0,
+      "reference_cells": 10921,
+      "computed_cells": 9556
+     },
+     "outer_ac": {
+      "mr_percent": 0.0,
+      "fr_percent": 1.543918214062174,
+      "missed_cells": 0,
+      "extra_cells": 148,
+      "reference_cells": 9438,
+      "computed_cells": 9586
+     },
+     "outer_socp": {
+      "mr_percent": 12.269938650306749,
+      "fr_percent": 0.0521593991237221,
+      "missed_cells": 1340,
+      "extra_cells": 5,
+      "reference_cells": 10921,
+      "computed_cells": 9586
+     },
+     "inner_cells": 9556,
+     "outer_cells": 9586,
+     "inner_socp_infeasible_cells": 0,
+     "outer_missed_ac_cells": 0,
+     "outer_missed_socp_cells": 1340,
+     "undecided_ac_cells": 0,
+     "undecided_socp_cells": 0,
+     "inner_undecided_ac_cells": 0,
+     "valid": true
+    }
+   }
+  },
+  "180": {
+   "overall": {
+    "inner_ac": {
+     "mr_percent": 0.07963734378828718,
+     "fr_percent": 0.8268985225269047,
+     "missed_cells": 13,
+     "extra_cells": 136,
+     "reference_cells": 16324,
+     "computed_cells": 16447
+    },
+    "inner_socp": {
+     "mr_percent": 12.483371468099824,
+     "fr_percent": 0.0,
+     "missed_cells": 2346,
+     "extra_cells": 0,
+     "reference_cells": 18793,
+     "computed_cells": 16447
+    },
+    "outer_ac": {
+     "mr_percent": 0.0,
+     "fr_percent": 1.1206008843661033,
+     "missed_cells": 0,
+     "extra_cells": 185,
+     "reference_cells": 16324,
+     "computed_cells": 16509
+    },
+    "outer_socp": {
+     "mr_percent": 12.227957218113128,
+     "fr_percent": 0.08480222908716457,
+     "missed_cells": 2298,
+     "extra_cells": 14,
+     "reference_cells": 18793,
+     "computed_cells": 16509
+    },
+    "inner_cells": 16447,
+    "outer_cells": 16509,
+    "inner_socp_infeasible_cells": 0,
+    "outer_missed_ac_cells": 0,
+    "outer_missed_socp_cells": 2298,
+    "undecided_ac_cells": 0,
+    "undecided_socp_cells": 0,
+    "inner_undecided_ac_cells": 0,
+    "valid": true
+   },
+   "partitions": {
+    "pp": {
+     "inner_ac": {
+      "mr_percent": 0.0,
+      "fr_percent": 0.0,
+      "missed_cells": 0,
+      "extra_cells": 0,
+      "reference_cells": 28,
+      "computed_cells": 28
+     },
+     "inner_socp": {
+      "mr_percent": 0.0,
+      "fr_percent": 0.0,
+      "missed_cells": 0,
+      "extra_cells": 0,
+      "reference_cells": 28,
+      "computed_cells": 28
+     },
+     "outer_ac": {
+      "mr_percent": 0.0,
+      "fr_percent": 0.0,
+      "missed_cells": 0,
+      "extra_cells": 0,
+      "reference_cells": 28,
+      "computed_cells": 28
+     },
+     "outer_socp": {
+      "mr_percent": 0.0,
+      "fr_percent": 0.0,
+      "missed_cells": 0,
+      "extra_cells": 0,
+      "reference_cells": 28,
+      "computed_cells": 28
+     },
+     "inner_cells": 28,
+     "outer_cells": 28,
+     "inner_socp_infeasible_cells": 0,
+     "outer_missed_ac_cells": 0,
+     "outer_missed_socp_cells": 0,
+     "undecided_ac_cells": 0,
+     "undecided_socp_cells": 0,
+     "inner_undecided_ac_cells": 0,
+     "valid": true
+    },
+    "pn": {
+     "inner_ac": {
+      "mr_percent": 0.14771048744460857,
+      "fr_percent": 0.0,
+      "missed_cells": 2,
+      "extra_cells": 0,
+      "reference_cells": 1354,
+      "computed_cells": 1352
+     },
+     "inner_socp": {
+      "mr_percent": 0.14771048744460857,
+      "fr_percent": 0.0,
+      "missed_cells": 2,
+      "extra_cells": 0,
+      "reference_cells": 1354,
+      "computed_cells": 1352
+     },
+     "outer_ac": {
+      "mr_percent": 0.0,
+      "fr_percent": 0.14749262536873156,
+      "missed_cells": 0,
+      "extra_cells": 2,
+      "reference_cells": 1354,
+      "computed_cells": 1356
+     },
+     "outer_socp": {
+      "mr_percent": 0.0,
+      "fr_percent": 0.14749262536873156,
+      "missed_cells": 0,
+      "extra_cells": 2,
+      "reference_cells": 1354,
+      "computed_cells": 1356
+     },
+     "inner_cells": 1352,
+     "outer_cells": 1356,
+     "inner_socp_infeasible_cells": 0,
+     "outer_missed_ac_cells": 0,
+     "outer_missed_socp_cells": 0,
+     "undecided_ac_cells": 0,
+     "undecided_socp_cells": 0,
+     "inner_undecided_ac_cells": 0,
+     "valid": true
+    },
+    "np": {
+     "inner_ac": {
+      "mr_percent": 0.1816860465116279,
+      "fr_percent": 0.30847396116857195,
+      "missed_cells": 10,
+      "extra_cells": 17,
+      "reference_cells": 5504,
+      "computed_cells": 5511
+     },
+     "inner_socp": {
+      "mr_percent": 15.084745762711865,
+      "fr_percent": 0.0,
+      "missed_cells": 979,
+      "extra_cells": 0,
+      "reference_cells": 6490,
+      "computed_cells": 5511
+     },
+     "outer_ac": {
+      "mr_percent": 0.0,
+      "fr_percent": 0.6318830113738942,
+      "missed_cells": 0,
+      "extra_cells": 35,
+      "reference_cells": 5504,
+      "computed_cells": 5539
+     },
+     "outer_socp": {
+      "mr_percent": 14.761171032357472,
+      "fr_percent": 0.12637660227477884,
+      "missed_cells": 958,
+      "extra_cells": 7,
+      "reference_cells": 6490,
+      "computed_cells": 5539
+     },
+     "inner_cells": 5511,
+     "outer_cells": 5539,
+     "inner_socp_infeasible_cells": 0,
+     "outer_missed_ac_cells": 0,
+     "outer_missed_socp_cells": 958,
+     "undecided_ac_cells": 0,
+     "undecided_socp_cells": 0,
+     "inner_undecided_ac_cells": 0,
+     "valid": true
+    },
+    "nn": {
+     "inner_ac": {
+      "mr_percent": 0.010595465140919686,
+      "fr_percent": 1.2452909167015487,
+      "missed_cells": 1,
+      "extra_cells": 119,
+      "reference_cells": 9438,
+      "computed_cells": 9556
+     },
+     "inner_socp": {
+      "mr_percent": 12.49885541617068,
+      "fr_percent": 0.0,
+      "missed_cells": 1365,
+      "extra_cells": 0,
+      "reference_cells": 10921,
+      "computed_cells": 9556
+     },
+     "outer_ac": {
+      "mr_percent": 0.0,
+      "fr_percent": 1.543918214062174,
+      "missed_cells": 0,
+      "extra_cells": 148,
+      "reference_cells": 9438,
+      "computed_cells": 9586
+     },
+     "outer_socp": {
+      "mr_percent": 12.269938650306749,
+      "fr_percent": 0.0521593991237221,
+      "missed_cells": 1340,
+      "extra_cells": 5,
+      "reference_cells": 10921,
+      "computed_cells": 9586
+     },
+     "inner_cells": 9556,
+     "outer_cells": 9586,
+     "inner_socp_infeasible_cells": 0,
+     "outer_missed_ac_cells": 0,
+     "outer_missed_socp_cells": 1340,
+     "undecided_ac_cells": 0,
+     "undecided_socp_cells": 0,
+     "inner_undecided_ac_cells": 0,
+     "valid": true
+    }
+   }
+  },
+  "240": {
+   "overall": {
+    "inner_ac": {
+     "mr_percent": 0.07963734378828718,
+     "fr_percent": 0.8268985225269047,
+     "missed_cells": 13,
+     "extra_cells": 136,
+     "reference_cells": 16324,
+     "computed_cells": 16447
+    },
+    "inner_socp": {
+     "mr_percent": 12.483371468099824,
+     "fr_percent": 0.0,
+     "missed_cells": 2346,
+     "extra_cells": 0,
+     "reference_cells": 18793,
+     "computed_cells": 16447
+    },
+    "outer_ac": {
+     "mr_percent": 0.0,
+     "fr_percent": 1.1206008843661033,
+     "missed_cells": 0,
+     "extra_cells": 185,
+     "reference_cells": 16324,
+     "computed_cells": 16509
+    },
+    "outer_socp": {
+     "mr_percent": 12.227957218113128,
+     "fr_percent": 0.08480222908716457,
+     "missed_cells": 2298,
+     "extra_cells": 14,
+     "reference_cells": 18793,
+     "computed_cells": 16509
+    },
+    "inner_cells": 16447,
+    "outer_cells": 16509,
+    "inner_socp_infeasible_cells": 0,
+    "outer_missed_ac_cells": 0,
+    "outer_missed_socp_cells": 2298,
+    "undecided_ac_cells": 0,
+    "undecided_socp_cells": 0,
+    "inner_undecided_ac_cells": 0,
+    "valid": true
+   },
+   "partitions": {
+    "pp": {
+     "inner_ac": {
+      "mr_percent": 0.0,
+      "fr_percent": 0.0,
+      "missed_cells": 0,
+      "extra_cells": 0,
+      "reference_cells": 28,
+      "computed_cells": 28
+     },
+     "inner_socp": {
+      "mr_percent": 0.0,
+      "fr_percent": 0.0,
+      "missed_cells": 0,
+      "extra_cells": 0,
+      "reference_cells": 28,
+      "computed_cells": 28
+     },
+     "outer_ac": {
+      "mr_percent": 0.0,
+      "fr_percent": 0.0,
+      "missed_cells": 0,
+      "extra_cells": 0,
+      "reference_cells": 28,
+      "computed_cells": 28
+     },
+     "outer_socp": {
+      "mr_percent": 0.0,
+      "fr_percent": 0.0,
+      "missed_cells": 0,
+      "extra_cells": 0,
+      "reference_cells": 28,
+      "computed_cells": 28
+     },
+     "inner_cells": 28,
+     "outer_cells": 28,
+     "inner_socp_infeasible_cells": 0,
+     "outer_missed_ac_cells": 0,
+     "outer_missed_socp_cells": 0,
+     "undecided_ac_cells": 0,
+     "undecided_socp_cells": 0,
+     "inner_undecided_ac_cells": 0,
+     "valid": true
+    },
+    "pn": {
+     "inner_ac": {
+      "mr_percent": 0.14771048744460857,
+      "fr_percent": 0.0,
+      "missed_cells": 2,
+      "extra_cells": 0,
+      "reference_cells": 1354,
+      "computed_cells": 1352
+     },
+     "inner_socp": {
+      "mr_percent": 0.14771048744460857,
+      "fr_percent": 0.0,
+      "missed_cells": 2,
+      "extra_cells": 0,
+      "reference_cells": 1354,
+      "computed_cells": 1352
+     },
+     "outer_ac": {
+      "mr_percent": 0.0,
+      "fr_percent": 0.14749262536873156,
+      "missed_cells": 0,
+      "extra_cells": 2,
+      "reference_cells": 1354,
+      "computed_cells": 1356
+     },
+     "outer_socp": {
+      "mr_percent": 0.0,
+      "fr_percent": 0.14749262536873156,
+      "missed_cells": 0,
+      "extra_cells": 2,
+      "reference_cells": 1354,
+      "computed_cells": 1356
+     },
+     "inner_cells": 1352,
+     "outer_cells": 1356,
+     "inner_socp_infeasible_cells": 0,
+     "outer_missed_ac_cells": 0,
+     "outer_missed_socp_cells": 0,
+     "undecided_ac_cells": 0,
+     "undecided_socp_cells": 0,
+     "inner_undecided_ac_cells": 0,
+     "valid": true
+    },
+    "np": {
+     "inner_ac": {
+      "mr_percent": 0.1816860465116279,
+      "fr_percent": 0.30847396116857195,
+      "missed_cells": 10,
+      "extra_cells": 17,
+      "reference_cells": 5504,
+      "computed_cells": 5511
+     },
+     "inner_socp": {
+      "mr_percent": 15.084745762711865,
+      "fr_percent": 0.0,
+      "missed_cells": 979,
+      "extra_cells": 0,
+      "reference_cells": 6490,
+      "computed_cells": 5511
+     },
+     "outer_ac": {
+      "mr_percent": 0.0,
+      "fr_percent": 0.6318830113738942,
+      "missed_cells": 0,
+      "extra_cells": 35,
+      "reference_cells": 5504,
+      "computed_cells": 5539
+     },
+     "outer_socp": {
+      "mr_percent": 14.761171032357472,
+      "fr_percent": 0.12637660227477884,
+      "missed_cells": 958,
+      "extra_cells": 7,
+      "reference_cells": 6490,
+      "computed_cells": 5539
+     },
+     "inner_cells": 5511,
+     "outer_cells": 5539,
+     "inner_socp_infeasible_cells": 0,
+     "outer_missed_ac_cells": 0,
+     "outer_missed_socp_cells": 958,
+     "undecided_ac_cells": 0,
+     "undecided_socp_cells": 0,
+     "inner_undecided_ac_cells": 0,
+     "valid": true
+    },
+    "nn": {
+     "inner_ac": {
+      "mr_percent": 0.010595465140919686,
+      "fr_percent": 1.2452909167015487,
+      "missed_cells": 1,
+      "extra_cells": 119,
+      "reference_cells": 9438,
+      "computed_cells": 9556
+     },
+     "inner_socp": {
+      "mr_percent": 12.49885541617068,
+      "fr_percent": 0.0,
+      "missed_cells": 1365,
+      "extra_cells": 0,
+      "reference_cells": 10921,
+      "computed_cells": 9556
+     },
+     "outer_ac": {
+      "mr_percent": 0.0,
+      "fr_percent": 1.543918214062174,
+      "missed_cells": 0,
+      "extra_cells": 148,
+      "reference_cells": 9438,
+      "computed_cells": 9586
+     },
+     "outer_socp": {
+      "mr_percent": 12.269938650306749,
+      "fr_percent": 0.0521593991237221,
+      "missed_cells": 1340,
+      "extra_cells": 5,
+      "reference_cells": 10921,
+      "computed_cells": 9586
+     },
+     "inner_cells": 9556,
+     "outer_cells": 9586,
+     "inner_socp_infeasible_cells": 0,
+     "outer_missed_ac_cells": 0,
+     "outer_missed_socp_cells": 1340,
+     "undecided_ac_cells": 0,
+     "undecided_socp_cells": 0,
+     "inner_undecided_ac_cells": 0,
+     "valid": true
+    }
+   }
+  },
+  "300": {
+   "overall": {
+    "inner_ac": {
+     "mr_percent": 0.07963734378828718,
+     "fr_percent": 0.8268985225269047,
+     "missed_cells": 13,
+     "extra_cells": 136,
+     "reference_cells": 16324,
+     "computed_cells": 16447
+    },
+    "inner_socp": {
+     "mr_percent": 12.483371468099824,
+     "fr_percent": 0.0,
+     "missed_cells": 2346,
+     "extra_cells": 0,
+     "reference_cells": 18793,
+     "computed_cells": 16447
+    },
+    "outer_ac": {
+     "mr_percent": 0.0,
+     "fr_percent": 1.1206008843661033,
+     "missed_cells": 0,
+     "extra_cells": 185,
+     "reference_cells": 16324,
+     "computed_cells": 16509
+    },
+    "outer_socp": {
+     "mr_percent": 12.227957218113128,
+     "fr_percent": 0.08480222908716457,
+     "missed_cells": 2298,
+     "extra_cells": 14,
+     "reference_cells": 18793,
+     "computed_cells": 16509
+    },
+    "inner_cells": 16447,
+    "outer_cells": 16509,
+    "inner_socp_infeasible_cells": 0,
+    "outer_missed_ac_cells": 0,
+    "outer_missed_socp_cells": 2298,
+    "undecided_ac_cells": 0,
+    "undecided_socp_cells": 0,
+    "inner_undecided_ac_cells": 0,
+    "valid": true
+   },
+   "partitions": {
+    "pp": {
+     "inner_ac": {
+      "mr_percent": 0.0,
+      "fr_percent": 0.0,
+      "missed_cells": 0,
+      "extra_cells": 0,
+      "reference_cells": 28,
+      "computed_cells": 28
+     },
+     "inner_socp": {
+      "mr_percent": 0.0,
+      "fr_percent": 0.0,
+      "missed_cells": 0,
+      "extra_cells": 0,
+      "reference_cells": 28,
+      "computed_cells": 28
+     },
+     "outer_ac": {
+      "mr_percent": 0.0,
+      "fr_percent": 0.0,
+      "missed_cells": 0,
+      "extra_cells": 0,
+      "reference_cells": 28,
+      "computed_cells": 28
+     },
+     "outer_socp": {
+      "mr_percent": 0.0,
+      "fr_percent": 0.0,
+      "missed_cells": 0,
+      "extra_cells": 0,
+      "reference_cells": 28,
+      "computed_cells": 28
+     },
+     "inner_cells": 28,
+     "outer_cells": 28,
+     "inner_socp_infeasible_cells": 0,
+     "outer_missed_ac_cells": 0,
+     "outer_missed_socp_cells": 0,
+     "undecided_ac_cells": 0,
+     "undecided_socp_cells": 0,
+     "inner_undecided_ac_cells": 0,
+     "valid": true
+    },
+    "pn": {
+     "inner_ac": {
+      "mr_percent": 0.14771048744460857,
+      "fr_percent": 0.0,
+      "missed_cells": 2,
+      "extra_cells": 0,
+      "reference_cells": 1354,
+      "computed_cells": 1352
+     },
+     "inner_socp": {
+      "mr_percent": 0.14771048744460857,
+      "fr_percent": 0.0,
+      "missed_cells": 2,
+      "extra_cells": 0,
+      "reference_cells": 1354,
+      "computed_cells": 1352
+     },
+     "outer_ac": {
+      "mr_percent": 0.0,
+      "fr_percent": 0.14749262536873156,
+      "missed_cells": 0,
+      "extra_cells": 2,
+      "reference_cells": 1354,
+      "computed_cells": 1356
+     },
+     "outer_socp": {
+      "mr_percent": 0.0,
+      "fr_percent": 0.14749262536873156,
+      "missed_cells": 0,
+      "extra_cells": 2,
+      "reference_cells": 1354,
+      "computed_cells": 1356
+     },
+     "inner_cells": 1352,
+     "outer_cells": 1356,
+     "inner_socp_infeasible_cells": 0,
+     "outer_missed_ac_cells": 0,
+     "outer_missed_socp_cells": 0,
+     "undecided_ac_cells": 0,
+     "undecided_socp_cells": 0,
+     "inner_undecided_ac_cells": 0,
+     "valid": true
+    },
+    "np": {
+     "inner_ac": {
+      "mr_percent": 0.1816860465116279,
+      "fr_percent": 0.30847396116857195,
+      "missed_cells": 10,
+      "extra_cells": 17,
+      "reference_cells": 5504,
+      "computed_cells": 5511
+     },
+     "inner_socp": {
+      "mr_percent": 15.084745762711865,
+      "fr_percent": 0.0,
+      "missed_cells": 979,
+      "extra_cells": 0,
+      "reference_cells": 6490,
+      "computed_cells": 5511
+     },
+     "outer_ac": {
+      "mr_percent": 0.0,
+      "fr_percent": 0.6318830113738942,
+      "missed_cells": 0,
+      "extra_cells": 35,
+      "reference_cells": 5504,
+      "computed_cells": 5539
+     },
+     "outer_socp": {
+      "mr_percent": 14.761171032357472,
+      "fr_percent": 0.12637660227477884,
+      "missed_cells": 958,
+      "extra_cells": 7,
+      "reference_cells": 6490,
+      "computed_cells": 5539
+     },
+     "inner_cells": 5511,
+     "outer_cells": 5539,
+     "inner_socp_infeasible_cells": 0,
+     "outer_missed_ac_cells": 0,
+     "outer_missed_socp_cells": 958,
+     "undecided_ac_cells": 0,
+     "undecided_socp_cells": 0,
+     "inner_undecided_ac_cells": 0,
+     "valid": true
+    },
+    "nn": {
+     "inner_ac": {
+      "mr_percent": 0.010595465140919686,
+      "fr_percent": 1.2452909167015487,
+      "missed_cells": 1,
+      "extra_cells": 119,
+      "reference_cells": 9438,
+      "computed_cells": 9556
+     },
+     "inner_socp": {
+      "mr_percent": 12.49885541617068,
+      "fr_percent": 0.0,
+      "missed_cells": 1365,
+      "extra_cells": 0,
+      "reference_cells": 10921,
+      "computed_cells": 9556
+     },
+     "outer_ac": {
+      "mr_percent": 0.0,
+      "fr_percent": 1.543918214062174,
+      "missed_cells": 0,
+      "extra_cells": 148,
+      "reference_cells": 9438,
+      "computed_cells": 9586
+     },
+     "outer_socp": {
+      "mr_percent": 12.269938650306749,
+      "fr_percent": 0.0521593991237221,
+      "missed_cells": 1340,
+      "extra_cells": 5,
+      "reference_cells": 10921,
+      "computed_cells": 9586
+     },
+     "inner_cells": 9556,
+     "outer_cells": 9586,
+     "inner_socp_infeasible_cells": 0,
+     "outer_missed_ac_cells": 0,
+     "outer_missed_socp_cells": 1340,
+     "undecided_ac_cells": 0,
+     "undecided_socp_cells": 0,
+     "inner_undecided_ac_cells": 0,
+     "valid": true
+    }
+   }
+  }
+ },
+ "valid": true
+}

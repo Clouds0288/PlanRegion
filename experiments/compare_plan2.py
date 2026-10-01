@@ -76,7 +76,7 @@ share_A=--discovery-share，ε_B=--network-eps（默认 ε/2）。测度 *_measu
 <output>/<method>/workers_<w>/run_<r>/：summary.json、solves.csv（每次求解一行）、timeline.csv（内外测度每变化一次
 一行；partition=all 为全部分区之和）、snapshots/（各检查点与 final 的几何）、metrics.json（各检查点的逐格指标）。
 <output>/：comparison.csv、comparison.md、gap_time.png、mr_fr_time.png、regions.png（二维）、time_breakdown.png。
-结果不加入 results/manifest.json。
+运行目录本身不加入 results/manifest.json；精选结果另行归档到 results/methods 并登记于 manifest（见其 README.md）。
 """
 from __future__ import annotations
 

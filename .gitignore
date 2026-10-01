@@ -53,3 +53,6 @@ results/**
 !results/radial/case33_18_25_30_near/*
 !results/radial/case33_18_25_30_volume/
 !results/radial/case33_18_25_30_volume/*
+# Curated method-comparison runs (compare_plan2, 2026-10-01): see results/methods/README.md and the manifest.
+!results/methods/
+!results/methods/**

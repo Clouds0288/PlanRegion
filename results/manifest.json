@@ -200,6 +200,2274 @@
         }
       },
       "source_provenance": "Original recording has no run-time source hashes. Archived with baseline e79f18b30f667c007968135d8865c6d0e37fc30c; do not infer exact generating revision."
+    },
+    {
+      "id": "case33_18_25_H_w1_r1",
+      "recording": "results/methods/case33_18_25/H/workers_1/run_1/summary.json",
+      "metrics_file": "results/methods/case33_18_25/H/workers_1/run_1/metrics.json",
+      "scan": "results/scan/case33bw/18_25/d0121a1ad0ba8cc1e009da6cc204ad9cf53881d3e5f4c488a439cb11d5f6fb69/region_17ceb84375dc2cc1.npz",
+      "parameters": {
+        "mode": 1,
+        "network": "case33bw",
+        "load_nodes": [
+          18,
+          25
+        ],
+        "budget": 7.0,
+        "method": "socp",
+        "region_method": "H",
+        "base_method": "H",
+        "workers": 1,
+        "repeat": 1,
+        "time_limit": 300.0,
+        "tau": 0.005,
+        "eps": 0.01,
+        "threads": 1,
+        "seed": 0,
+        "mip_seconds": 60.0,
+        "mip_gap": 0.001,
+        "inner_cert": "near",
+        "discovery_eps": 0.15,
+        "discovery_share": 0.25,
+        "criterion": "auto",
+        "network_eps": 0.005,
+        "coverage": "global"
+      },
+      "status": "certified",
+      "certified": true,
+      "certified_partitions": 4,
+      "partitions": 4,
+      "timing": {
+        "total_seconds": 76.01709046843462,
+        "t_cert": 75.80640136823058
+      },
+      "gap_final": 0.004253837946857297,
+      "metrics": {
+        "inner": {
+          "mr_percent": 0.0673854447439353,
+          "fr_percent": 0.8087072844460659,
+          "missed_cells": 11,
+          "extra_cells": 133,
+          "reference_cells": 16324,
+          "computed_cells": 16446
+        },
+        "outer": {
+          "mr_percent": 0.0,
+          "fr_percent": 1.0966373826113298,
+          "missed_cells": 0,
+          "extra_cells": 181,
+          "reference_cells": 16324,
+          "computed_cells": 16505
+        },
+        "inner_socp": {
+          "mr_percent": 12.48869259830788,
+          "fr_percent": 0.0,
+          "missed_cells": 2347,
+          "extra_cells": 0,
+          "reference_cells": 18793,
+          "computed_cells": 16446
+        },
+        "outer_socp": {
+          "mr_percent": 12.23859947852924,
+          "fr_percent": 0.07270524083611027,
+          "missed_cells": 2300,
+          "extra_cells": 12,
+          "reference_cells": 18793,
+          "computed_cells": 16505
+        }
+      },
+      "validity": {
+        "valid": true,
+        "inner_exact": true,
+        "inner_socp_infeasible_cells": 0,
+        "outer_missed_ac_cells": 0,
+        "undecided_ac_cells": 0
+      },
+      "comparisons": null,
+      "source_provenance": "experiments/compare_plan2.py at commit b619864cfa81d54d9a1c637535565583e0a540b8 (clean tree: True); method tag method-H-v1"
+    },
+    {
+      "id": "case33_18_25_H_w1_r2",
+      "recording": "results/methods/case33_18_25/H/workers_1/run_2/summary.json",
+      "metrics_file": "results/methods/case33_18_25/H/workers_1/run_2/metrics.json",
+      "scan": "results/scan/case33bw/18_25/d0121a1ad0ba8cc1e009da6cc204ad9cf53881d3e5f4c488a439cb11d5f6fb69/region_17ceb84375dc2cc1.npz",
+      "parameters": {
+        "mode": 1,
+        "network": "case33bw",
+        "load_nodes": [
+          18,
+          25
+        ],
+        "budget": 7.0,
+        "method": "socp",
+        "region_method": "H",
+        "base_method": "H",
+        "workers": 1,
+        "repeat": 2,
+        "time_limit": 300.0,
+        "tau": 0.005,
+        "eps": 0.01,
+        "threads": 1,
+        "seed": 0,
+        "mip_seconds": 60.0,
+        "mip_gap": 0.001,
+        "inner_cert": "near",
+        "discovery_eps": 0.15,
+        "discovery_share": 0.25,
+        "criterion": "auto",
+        "network_eps": 0.005,
+        "coverage": "global"
+      },
+      "status": "certified",
+      "certified": true,
+      "certified_partitions": 4,
+      "partitions": 4,
+      "timing": {
+        "total_seconds": 78.23922546883114,
+        "t_cert": 78.04538726899773
+      },
+      "gap_final": 0.004253837946857297,
+      "metrics": {
+        "inner": {
+          "mr_percent": 0.0673854447439353,
+          "fr_percent": 0.8087072844460659,
+          "missed_cells": 11,
+          "extra_cells": 133,
+          "reference_cells": 16324,
+          "computed_cells": 16446
+        },
+        "outer": {
+          "mr_percent": 0.0,
+          "fr_percent": 1.0966373826113298,
+          "missed_cells": 0,
+          "extra_cells": 181,
+          "reference_cells": 16324,
+          "computed_cells": 16505
+        },
+        "inner_socp": {
+          "mr_percent": 12.48869259830788,
+          "fr_percent": 0.0,
+          "missed_cells": 2347,
+          "extra_cells": 0,
+          "reference_cells": 18793,
+          "computed_cells": 16446
+        },
+        "outer_socp": {
+          "mr_percent": 12.23859947852924,
+          "fr_percent": 0.07270524083611027,
+          "missed_cells": 2300,
+          "extra_cells": 12,
+          "reference_cells": 18793,
+          "computed_cells": 16505
+        }
+      },
+      "validity": {
+        "valid": true,
+        "inner_exact": true,
+        "inner_socp_infeasible_cells": 0,
+        "outer_missed_ac_cells": 0,
+        "undecided_ac_cells": 0
+      },
+      "comparisons": null,
+      "source_provenance": "experiments/compare_plan2.py at commit b619864cfa81d54d9a1c637535565583e0a540b8 (clean tree: True); method tag method-H-v1"
+    },
+    {
+      "id": "case33_18_25_H_w1_r3",
+      "recording": "results/methods/case33_18_25/H/workers_1/run_3/summary.json",
+      "metrics_file": "results/methods/case33_18_25/H/workers_1/run_3/metrics.json",
+      "scan": "results/scan/case33bw/18_25/d0121a1ad0ba8cc1e009da6cc204ad9cf53881d3e5f4c488a439cb11d5f6fb69/region_17ceb84375dc2cc1.npz",
+      "parameters": {
+        "mode": 1,
+        "network": "case33bw",
+        "load_nodes": [
+          18,
+          25
+        ],
+        "budget": 7.0,
+        "method": "socp",
+        "region_method": "H",
+        "base_method": "H",
+        "workers": 1,
+        "repeat": 3,
+        "time_limit": 300.0,
+        "tau": 0.005,
+        "eps": 0.01,
+        "threads": 1,
+        "seed": 0,
+        "mip_seconds": 60.0,
+        "mip_gap": 0.001,
+        "inner_cert": "near",
+        "discovery_eps": 0.15,
+        "discovery_share": 0.25,
+        "criterion": "auto",
+        "network_eps": 0.005,
+        "coverage": "global"
+      },
+      "status": "certified",
+      "certified": true,
+      "certified_partitions": 4,
+      "partitions": 4,
+      "timing": {
+        "total_seconds": 78.04371600737795,
+        "t_cert": 77.85046640736982
+      },
+      "gap_final": 0.004253837946857297,
+      "metrics": {
+        "inner": {
+          "mr_percent": 0.0673854447439353,
+          "fr_percent": 0.8087072844460659,
+          "missed_cells": 11,
+          "extra_cells": 133,
+          "reference_cells": 16324,
+          "computed_cells": 16446
+        },
+        "outer": {
+          "mr_percent": 0.0,
+          "fr_percent": 1.0966373826113298,
+          "missed_cells": 0,
+          "extra_cells": 181,
+          "reference_cells": 16324,
+          "computed_cells": 16505
+        },
+        "inner_socp": {
+          "mr_percent": 12.48869259830788,
+          "fr_percent": 0.0,
+          "missed_cells": 2347,
+          "extra_cells": 0,
+          "reference_cells": 18793,
+          "computed_cells": 16446
+        },
+        "outer_socp": {
+          "mr_percent": 12.23859947852924,
+          "fr_percent": 0.07270524083611027,
+          "missed_cells": 2300,
+          "extra_cells": 12,
+          "reference_cells": 18793,
+          "computed_cells": 16505
+        }
+      },
+      "validity": {
+        "valid": true,
+        "inner_exact": true,
+        "inner_socp_infeasible_cells": 0,
+        "outer_missed_ac_cells": 0,
+        "undecided_ac_cells": 0
+      },
+      "comparisons": null,
+      "source_provenance": "experiments/compare_plan2.py at commit b619864cfa81d54d9a1c637535565583e0a540b8 (clean tree: True); method tag method-H-v1"
+    },
+    {
+      "id": "case33_18_25_H_w16_r1",
+      "recording": "results/methods/case33_18_25/H/workers_16/run_1/summary.json",
+      "metrics_file": "results/methods/case33_18_25/H/workers_16/run_1/metrics.json",
+      "scan": "results/scan/case33bw/18_25/d0121a1ad0ba8cc1e009da6cc204ad9cf53881d3e5f4c488a439cb11d5f6fb69/region_17ceb84375dc2cc1.npz",
+      "parameters": {
+        "mode": 1,
+        "network": "case33bw",
+        "load_nodes": [
+          18,
+          25
+        ],
+        "budget": 7.0,
+        "method": "socp",
+        "region_method": "H",
+        "base_method": "H",
+        "workers": 16,
+        "repeat": 1,
+        "time_limit": 300.0,
+        "tau": 0.005,
+        "eps": 0.01,
+        "threads": 1,
+        "seed": 0,
+        "mip_seconds": 60.0,
+        "mip_gap": 0.001,
+        "inner_cert": "near",
+        "discovery_eps": 0.15,
+        "discovery_share": 0.25,
+        "criterion": "auto",
+        "network_eps": 0.005,
+        "coverage": "global"
+      },
+      "status": "certified",
+      "certified": true,
+      "certified_partitions": 4,
+      "partitions": 4,
+      "timing": {
+        "total_seconds": 48.550194530515,
+        "t_cert": 47.91612192662433
+      },
+      "gap_final": 0.0043154837775094546,
+      "metrics": {
+        "inner": {
+          "mr_percent": 0.07963734378828718,
+          "fr_percent": 0.8268985225269047,
+          "missed_cells": 13,
+          "extra_cells": 136,
+          "reference_cells": 16324,
+          "computed_cells": 16447
+        },
+        "outer": {
+          "mr_percent": 0.0,
+          "fr_percent": 1.1206008843661033,
+          "missed_cells": 0,
+          "extra_cells": 185,
+          "reference_cells": 16324,
+          "computed_cells": 16509
+        },
+        "inner_socp": {
+          "mr_percent": 12.483371468099824,
+          "fr_percent": 0.0,
+          "missed_cells": 2346,
+          "extra_cells": 0,
+          "reference_cells": 18793,
+          "computed_cells": 16447
+        },
+        "outer_socp": {
+          "mr_percent": 12.227957218113128,
+          "fr_percent": 0.08480222908716457,
+          "missed_cells": 2298,
+          "extra_cells": 14,
+          "reference_cells": 18793,
+          "computed_cells": 16509
+        }
+      },
+      "validity": {
+        "valid": true,
+        "inner_exact": true,
+        "inner_socp_infeasible_cells": 0,
+        "outer_missed_ac_cells": 0,
+        "undecided_ac_cells": 0
+      },
+      "comparisons": null,
+      "source_provenance": "experiments/compare_plan2.py at commit b619864cfa81d54d9a1c637535565583e0a540b8 (clean tree: True); method tag method-H-v1"
+    },
+    {
+      "id": "case33_18_25_H_w16_r2",
+      "recording": "results/methods/case33_18_25/H/workers_16/run_2/summary.json",
+      "metrics_file": "results/methods/case33_18_25/H/workers_16/run_2/metrics.json",
+      "scan": "results/scan/case33bw/18_25/d0121a1ad0ba8cc1e009da6cc204ad9cf53881d3e5f4c488a439cb11d5f6fb69/region_17ceb84375dc2cc1.npz",
+      "parameters": {
+        "mode": 1,
+        "network": "case33bw",
+        "load_nodes": [
+          18,
+          25
+        ],
+        "budget": 7.0,
+        "method": "socp",
+        "region_method": "H",
+        "base_method": "H",
+        "workers": 16,
+        "repeat": 2,
+        "time_limit": 300.0,
+        "tau": 0.005,
+        "eps": 0.01,
+        "threads": 1,
+        "seed": 0,
+        "mip_seconds": 60.0,
+        "mip_gap": 0.001,
+        "inner_cert": "near",
+        "discovery_eps": 0.15,
+        "discovery_share": 0.25,
+        "criterion": "auto",
+        "network_eps": 0.005,
+        "coverage": "global"
+      },
+      "status": "certified",
+      "certified": true,
+      "certified_partitions": 4,
+      "partitions": 4,
+      "timing": {
+        "total_seconds": 74.20519502274692,
+        "t_cert": 73.47408077446744
+      },
+      "gap_final": 0.004280596309987006,
+      "metrics": {
+        "inner": {
+          "mr_percent": 0.07963734378828718,
+          "fr_percent": 0.8268985225269047,
+          "missed_cells": 13,
+          "extra_cells": 136,
+          "reference_cells": 16324,
+          "computed_cells": 16447
+        },
+        "outer": {
+          "mr_percent": 0.0,
+          "fr_percent": 1.1206008843661033,
+          "missed_cells": 0,
+          "extra_cells": 185,
+          "reference_cells": 16324,
+          "computed_cells": 16509
+        },
+        "inner_socp": {
+          "mr_percent": 12.483371468099824,
+          "fr_percent": 0.0,
+          "missed_cells": 2346,
+          "extra_cells": 0,
+          "reference_cells": 18793,
+          "computed_cells": 16447
+        },
+        "outer_socp": {
+          "mr_percent": 12.227957218113128,
+          "fr_percent": 0.08480222908716457,
+          "missed_cells": 2298,
+          "extra_cells": 14,
+          "reference_cells": 18793,
+          "computed_cells": 16509
+        }
+      },
+      "validity": {
+        "valid": true,
+        "inner_exact": true,
+        "inner_socp_infeasible_cells": 0,
+        "outer_missed_ac_cells": 0,
+        "undecided_ac_cells": 0
+      },
+      "comparisons": null,
+      "source_provenance": "experiments/compare_plan2.py at commit b619864cfa81d54d9a1c637535565583e0a540b8 (clean tree: True); method tag method-H-v1"
+    },
+    {
+      "id": "case33_18_25_H_w16_r3",
+      "recording": "results/methods/case33_18_25/H/workers_16/run_3/summary.json",
+      "metrics_file": "results/methods/case33_18_25/H/workers_16/run_3/metrics.json",
+      "scan": "results/scan/case33bw/18_25/d0121a1ad0ba8cc1e009da6cc204ad9cf53881d3e5f4c488a439cb11d5f6fb69/region_17ceb84375dc2cc1.npz",
+      "parameters": {
+        "mode": 1,
+        "network": "case33bw",
+        "load_nodes": [
+          18,
+          25
+        ],
+        "budget": 7.0,
+        "method": "socp",
+        "region_method": "H",
+        "base_method": "H",
+        "workers": 16,
+        "repeat": 3,
+        "time_limit": 300.0,
+        "tau": 0.005,
+        "eps": 0.01,
+        "threads": 1,
+        "seed": 0,
+        "mip_seconds": 60.0,
+        "mip_gap": 0.001,
+        "inner_cert": "near",
+        "discovery_eps": 0.15,
+        "discovery_share": 0.25,
+        "criterion": "auto",
+        "network_eps": 0.005,
+        "coverage": "global"
+      },
+      "status": "certified",
+      "certified": true,
+      "certified_partitions": 4,
+      "partitions": 4,
+      "timing": {
+        "total_seconds": 51.54692060733214,
+        "t_cert": 50.812618006486446
+      },
+      "gap_final": 0.004244877001459146,
+      "metrics": {
+        "inner": {
+          "mr_percent": 0.07351139426611125,
+          "fr_percent": 0.808756460930374,
+          "missed_cells": 12,
+          "extra_cells": 133,
+          "reference_cells": 16324,
+          "computed_cells": 16445
+        },
+        "outer": {
+          "mr_percent": 0.0,
+          "fr_percent": 1.1026293469041561,
+          "missed_cells": 0,
+          "extra_cells": 182,
+          "reference_cells": 16324,
+          "computed_cells": 16506
+        },
+        "inner_socp": {
+          "mr_percent": 12.494013728515936,
+          "fr_percent": 0.0,
+          "missed_cells": 2348,
+          "extra_cells": 0,
+          "reference_cells": 18793,
+          "computed_cells": 16445
+        },
+        "outer_socp": {
+          "mr_percent": 12.23859947852924,
+          "fr_percent": 0.07875923906458257,
+          "missed_cells": 2300,
+          "extra_cells": 13,
+          "reference_cells": 18793,
+          "computed_cells": 16506
+        }
+      },
+      "validity": {
+        "valid": true,
+        "inner_exact": true,
+        "inner_socp_infeasible_cells": 0,
+        "outer_missed_ac_cells": 0,
+        "undecided_ac_cells": 0
+      },
+      "comparisons": null,
+      "source_provenance": "experiments/compare_plan2.py at commit b619864cfa81d54d9a1c637535565583e0a540b8 (clean tree: True); method tag method-H-v1"
+    },
+    {
+      "id": "case33_18_25_R_w1_r1",
+      "recording": "results/methods/case33_18_25/R/workers_1/run_1/summary.json",
+      "metrics_file": "results/methods/case33_18_25/R/workers_1/run_1/metrics.json",
+      "scan": "results/scan/case33bw/18_25/d0121a1ad0ba8cc1e009da6cc204ad9cf53881d3e5f4c488a439cb11d5f6fb69/region_17ceb84375dc2cc1.npz",
+      "parameters": {
+        "mode": 1,
+        "network": "case33bw",
+        "load_nodes": [
+          18,
+          25
+        ],
+        "budget": 7.0,
+        "method": "socp",
+        "region_method": "R",
+        "base_method": "R",
+        "workers": 1,
+        "repeat": 1,
+        "time_limit": 300.0,
+        "tau": 0.005,
+        "eps": 0.01,
+        "threads": 1,
+        "seed": 0,
+        "mip_seconds": 60.0,
+        "mip_gap": 0.001,
+        "inner_cert": "near"
+      },
+      "status": "certified",
+      "certified": true,
+      "certified_partitions": 4,
+      "partitions": 4,
+      "timing": {
+        "total_seconds": 73.95252929953858,
+        "t_cert": 73.95088289957494
+      },
+      "gap_final": 0.00749539392821319,
+      "metrics": {
+        "inner": {
+          "mr_percent": 0.27566772849791715,
+          "fr_percent": 0.7499085477380807,
+          "missed_cells": 45,
+          "extra_cells": 123,
+          "reference_cells": 16324,
+          "computed_cells": 16402
+        },
+        "outer": {
+          "mr_percent": 0.0,
+          "fr_percent": 1.0786571324687917,
+          "missed_cells": 0,
+          "extra_cells": 178,
+          "reference_cells": 16324,
+          "computed_cells": 16502
+        },
+        "inner_socp": {
+          "mr_percent": 12.722822327462353,
+          "fr_percent": 0.0,
+          "missed_cells": 2391,
+          "extra_cells": 0,
+          "reference_cells": 18793,
+          "computed_cells": 16402
+        },
+        "outer_socp": {
+          "mr_percent": 12.270526259777577,
+          "fr_percent": 0.09089807296085323,
+          "missed_cells": 2306,
+          "extra_cells": 15,
+          "reference_cells": 18793,
+          "computed_cells": 16502
+        }
+      },
+      "validity": {
+        "valid": true,
+        "inner_exact": true,
+        "inner_socp_infeasible_cells": 0,
+        "outer_missed_ac_cells": 0,
+        "undecided_ac_cells": 0
+      },
+      "comparisons": null,
+      "source_provenance": "experiments/compare_plan2.py at commit b619864cfa81d54d9a1c637535565583e0a540b8 (clean tree: True); method tag method-R-v1 (4c5b2a4; the R code path is unchanged since the run commit)"
+    },
+    {
+      "id": "case33_18_25_R_w1_r2",
+      "recording": "results/methods/case33_18_25/R/workers_1/run_2/summary.json",
+      "metrics_file": "results/methods/case33_18_25/R/workers_1/run_2/metrics.json",
+      "scan": "results/scan/case33bw/18_25/d0121a1ad0ba8cc1e009da6cc204ad9cf53881d3e5f4c488a439cb11d5f6fb69/region_17ceb84375dc2cc1.npz",
+      "parameters": {
+        "mode": 1,
+        "network": "case33bw",
+        "load_nodes": [
+          18,
+          25
+        ],
+        "budget": 7.0,
+        "method": "socp",
+        "region_method": "R",
+        "base_method": "R",
+        "workers": 1,
+        "repeat": 2,
+        "time_limit": 300.0,
+        "tau": 0.005,
+        "eps": 0.01,
+        "threads": 1,
+        "seed": 0,
+        "mip_seconds": 60.0,
+        "mip_gap": 0.001,
+        "inner_cert": "near"
+      },
+      "status": "certified",
+      "certified": true,
+      "certified_partitions": 4,
+      "partitions": 4,
+      "timing": {
+        "total_seconds": 75.53327880729921,
+        "t_cert": 75.53151290724054
+      },
+      "gap_final": 0.00749539392821319,
+      "metrics": {
+        "inner": {
+          "mr_percent": 0.27566772849791715,
+          "fr_percent": 0.7499085477380807,
+          "missed_cells": 45,
+          "extra_cells": 123,
+          "reference_cells": 16324,
+          "computed_cells": 16402
+        },
+        "outer": {
+          "mr_percent": 0.0,
+          "fr_percent": 1.0786571324687917,
+          "missed_cells": 0,
+          "extra_cells": 178,
+          "reference_cells": 16324,
+          "computed_cells": 16502
+        },
+        "inner_socp": {
+          "mr_percent": 12.722822327462353,
+          "fr_percent": 0.0,
+          "missed_cells": 2391,
+          "extra_cells": 0,
+          "reference_cells": 18793,
+          "computed_cells": 16402
+        },
+        "outer_socp": {
+          "mr_percent": 12.270526259777577,
+          "fr_percent": 0.09089807296085323,
+          "missed_cells": 2306,
+          "extra_cells": 15,
+          "reference_cells": 18793,
+          "computed_cells": 16502
+        }
+      },
+      "validity": {
+        "valid": true,
+        "inner_exact": true,
+        "inner_socp_infeasible_cells": 0,
+        "outer_missed_ac_cells": 0,
+        "undecided_ac_cells": 0
+      },
+      "comparisons": null,
+      "source_provenance": "experiments/compare_plan2.py at commit b619864cfa81d54d9a1c637535565583e0a540b8 (clean tree: True); method tag method-R-v1 (4c5b2a4; the R code path is unchanged since the run commit)"
+    },
+    {
+      "id": "case33_18_25_R_w1_r3",
+      "recording": "results/methods/case33_18_25/R/workers_1/run_3/summary.json",
+      "metrics_file": "results/methods/case33_18_25/R/workers_1/run_3/metrics.json",
+      "scan": "results/scan/case33bw/18_25/d0121a1ad0ba8cc1e009da6cc204ad9cf53881d3e5f4c488a439cb11d5f6fb69/region_17ceb84375dc2cc1.npz",
+      "parameters": {
+        "mode": 1,
+        "network": "case33bw",
+        "load_nodes": [
+          18,
+          25
+        ],
+        "budget": 7.0,
+        "method": "socp",
+        "region_method": "R",
+        "base_method": "R",
+        "workers": 1,
+        "repeat": 3,
+        "time_limit": 300.0,
+        "tau": 0.005,
+        "eps": 0.01,
+        "threads": 1,
+        "seed": 0,
+        "mip_seconds": 60.0,
+        "mip_gap": 0.001,
+        "inner_cert": "near"
+      },
+      "status": "certified",
+      "certified": true,
+      "certified_partitions": 4,
+      "partitions": 4,
+      "timing": {
+        "total_seconds": 76.64095910731703,
+        "t_cert": 76.63918370753527
+      },
+      "gap_final": 0.00749539392821319,
+      "metrics": {
+        "inner": {
+          "mr_percent": 0.27566772849791715,
+          "fr_percent": 0.7499085477380807,
+          "missed_cells": 45,
+          "extra_cells": 123,
+          "reference_cells": 16324,
+          "computed_cells": 16402
+        },
+        "outer": {
+          "mr_percent": 0.0,
+          "fr_percent": 1.0786571324687917,
+          "missed_cells": 0,
+          "extra_cells": 178,
+          "reference_cells": 16324,
+          "computed_cells": 16502
+        },
+        "inner_socp": {
+          "mr_percent": 12.722822327462353,
+          "fr_percent": 0.0,
+          "missed_cells": 2391,
+          "extra_cells": 0,
+          "reference_cells": 18793,
+          "computed_cells": 16402
+        },
+        "outer_socp": {
+          "mr_percent": 12.270526259777577,
+          "fr_percent": 0.09089807296085323,
+          "missed_cells": 2306,
+          "extra_cells": 15,
+          "reference_cells": 18793,
+          "computed_cells": 16502
+        }
+      },
+      "validity": {
+        "valid": true,
+        "inner_exact": true,
+        "inner_socp_infeasible_cells": 0,
+        "outer_missed_ac_cells": 0,
+        "undecided_ac_cells": 0
+      },
+      "comparisons": null,
+      "source_provenance": "experiments/compare_plan2.py at commit b619864cfa81d54d9a1c637535565583e0a540b8 (clean tree: True); method tag method-R-v1 (4c5b2a4; the R code path is unchanged since the run commit)"
+    },
+    {
+      "id": "case33_18_25_R_w16_r1",
+      "recording": "results/methods/case33_18_25/R/workers_16/run_1/summary.json",
+      "metrics_file": "results/methods/case33_18_25/R/workers_16/run_1/metrics.json",
+      "scan": "results/scan/case33bw/18_25/d0121a1ad0ba8cc1e009da6cc204ad9cf53881d3e5f4c488a439cb11d5f6fb69/region_17ceb84375dc2cc1.npz",
+      "parameters": {
+        "mode": 1,
+        "network": "case33bw",
+        "load_nodes": [
+          18,
+          25
+        ],
+        "budget": 7.0,
+        "method": "socp",
+        "region_method": "R",
+        "base_method": "R",
+        "workers": 16,
+        "repeat": 1,
+        "time_limit": 300.0,
+        "tau": 0.005,
+        "eps": 0.01,
+        "threads": 1,
+        "seed": 0,
+        "mip_seconds": 60.0,
+        "mip_gap": 0.001,
+        "inner_cert": "near"
+      },
+      "status": "certified",
+      "certified": true,
+      "certified_partitions": 4,
+      "partitions": 4,
+      "timing": {
+        "total_seconds": 28.70586874592118,
+        "t_cert": 28.38693487131968
+      },
+      "gap_final": 0.00749539392821319,
+      "metrics": {
+        "inner": {
+          "mr_percent": 0.27566772849791715,
+          "fr_percent": 0.7499085477380807,
+          "missed_cells": 45,
+          "extra_cells": 123,
+          "reference_cells": 16324,
+          "computed_cells": 16402
+        },
+        "outer": {
+          "mr_percent": 0.0,
+          "fr_percent": 1.0786571324687917,
+          "missed_cells": 0,
+          "extra_cells": 178,
+          "reference_cells": 16324,
+          "computed_cells": 16502
+        },
+        "inner_socp": {
+          "mr_percent": 12.722822327462353,
+          "fr_percent": 0.0,
+          "missed_cells": 2391,
+          "extra_cells": 0,
+          "reference_cells": 18793,
+          "computed_cells": 16402
+        },
+        "outer_socp": {
+          "mr_percent": 12.270526259777577,
+          "fr_percent": 0.09089807296085323,
+          "missed_cells": 2306,
+          "extra_cells": 15,
+          "reference_cells": 18793,
+          "computed_cells": 16502
+        }
+      },
+      "validity": {
+        "valid": true,
+        "inner_exact": true,
+        "inner_socp_infeasible_cells": 0,
+        "outer_missed_ac_cells": 0,
+        "undecided_ac_cells": 0
+      },
+      "comparisons": null,
+      "source_provenance": "experiments/compare_plan2.py at commit b619864cfa81d54d9a1c637535565583e0a540b8 (clean tree: True); method tag method-R-v1 (4c5b2a4; the R code path is unchanged since the run commit)"
+    },
+    {
+      "id": "case33_18_25_R_w16_r2",
+      "recording": "results/methods/case33_18_25/R/workers_16/run_2/summary.json",
+      "metrics_file": "results/methods/case33_18_25/R/workers_16/run_2/metrics.json",
+      "scan": "results/scan/case33bw/18_25/d0121a1ad0ba8cc1e009da6cc204ad9cf53881d3e5f4c488a439cb11d5f6fb69/region_17ceb84375dc2cc1.npz",
+      "parameters": {
+        "mode": 1,
+        "network": "case33bw",
+        "load_nodes": [
+          18,
+          25
+        ],
+        "budget": 7.0,
+        "method": "socp",
+        "region_method": "R",
+        "base_method": "R",
+        "workers": 16,
+        "repeat": 2,
+        "time_limit": 300.0,
+        "tau": 0.005,
+        "eps": 0.01,
+        "threads": 1,
+        "seed": 0,
+        "mip_seconds": 60.0,
+        "mip_gap": 0.001,
+        "inner_cert": "near"
+      },
+      "status": "certified",
+      "certified": true,
+      "certified_partitions": 4,
+      "partitions": 4,
+      "timing": {
+        "total_seconds": 29.310572499409318,
+        "t_cert": 28.98216873127967
+      },
+      "gap_final": 0.00749539392821319,
+      "metrics": {
+        "inner": {
+          "mr_percent": 0.27566772849791715,
+          "fr_percent": 0.7499085477380807,
+          "missed_cells": 45,
+          "extra_cells": 123,
+          "reference_cells": 16324,
+          "computed_cells": 16402
+        },
+        "outer": {
+          "mr_percent": 0.0,
+          "fr_percent": 1.0786571324687917,
+          "missed_cells": 0,
+          "extra_cells": 178,
+          "reference_cells": 16324,
+          "computed_cells": 16502
+        },
+        "inner_socp": {
+          "mr_percent": 12.722822327462353,
+          "fr_percent": 0.0,
+          "missed_cells": 2391,
+          "extra_cells": 0,
+          "reference_cells": 18793,
+          "computed_cells": 16402
+        },
+        "outer_socp": {
+          "mr_percent": 12.270526259777577,
+          "fr_percent": 0.09089807296085323,
+          "missed_cells": 2306,
+          "extra_cells": 15,
+          "reference_cells": 18793,
+          "computed_cells": 16502
+        }
+      },
+      "validity": {
+        "valid": true,
+        "inner_exact": true,
+        "inner_socp_infeasible_cells": 0,
+        "outer_missed_ac_cells": 0,
+        "undecided_ac_cells": 0
+      },
+      "comparisons": null,
+      "source_provenance": "experiments/compare_plan2.py at commit b619864cfa81d54d9a1c637535565583e0a540b8 (clean tree: True); method tag method-R-v1 (4c5b2a4; the R code path is unchanged since the run commit)"
+    },
+    {
+      "id": "case33_18_25_R_w16_r3",
+      "recording": "results/methods/case33_18_25/R/workers_16/run_3/summary.json",
+      "metrics_file": "results/methods/case33_18_25/R/workers_16/run_3/metrics.json",
+      "scan": "results/scan/case33bw/18_25/d0121a1ad0ba8cc1e009da6cc204ad9cf53881d3e5f4c488a439cb11d5f6fb69/region_17ceb84375dc2cc1.npz",
+      "parameters": {
+        "mode": 1,
+        "network": "case33bw",
+        "load_nodes": [
+          18,
+          25
+        ],
+        "budget": 7.0,
+        "method": "socp",
+        "region_method": "R",
+        "base_method": "R",
+        "workers": 16,
+        "repeat": 3,
+        "time_limit": 300.0,
+        "tau": 0.005,
+        "eps": 0.01,
+        "threads": 1,
+        "seed": 0,
+        "mip_seconds": 60.0,
+        "mip_gap": 0.001,
+        "inner_cert": "near"
+      },
+      "status": "certified",
+      "certified": true,
+      "certified_partitions": 4,
+      "partitions": 4,
+      "timing": {
+        "total_seconds": 29.50190780730918,
+        "t_cert": 29.161877184873447
+      },
+      "gap_final": 0.00749539392821319,
+      "metrics": {
+        "inner": {
+          "mr_percent": 0.27566772849791715,
+          "fr_percent": 0.7499085477380807,
+          "missed_cells": 45,
+          "extra_cells": 123,
+          "reference_cells": 16324,
+          "computed_cells": 16402
+        },
+        "outer": {
+          "mr_percent": 0.0,
+          "fr_percent": 1.0786571324687917,
+          "missed_cells": 0,
+          "extra_cells": 178,
+          "reference_cells": 16324,
+          "computed_cells": 16502
+        },
+        "inner_socp": {
+          "mr_percent": 12.722822327462353,
+          "fr_percent": 0.0,
+          "missed_cells": 2391,
+          "extra_cells": 0,
+          "reference_cells": 18793,
+          "computed_cells": 16402
+        },
+        "outer_socp": {
+          "mr_percent": 12.270526259777577,
+          "fr_percent": 0.09089807296085323,
+          "missed_cells": 2306,
+          "extra_cells": 15,
+          "reference_cells": 18793,
+          "computed_cells": 16502
+        }
+      },
+      "validity": {
+        "valid": true,
+        "inner_exact": true,
+        "inner_socp_infeasible_cells": 0,
+        "outer_missed_ac_cells": 0,
+        "undecided_ac_cells": 0
+      },
+      "comparisons": null,
+      "source_provenance": "experiments/compare_plan2.py at commit b619864cfa81d54d9a1c637535565583e0a540b8 (clean tree: True); method tag method-R-v1 (4c5b2a4; the R code path is unchanged since the run commit)"
+    },
+    {
+      "id": "case33_18_25_RB_w16_r1",
+      "recording": "results/methods/case33_18_25/RB/workers_16/run_1/summary.json",
+      "metrics_file": "results/methods/case33_18_25/RB/workers_16/run_1/metrics.json",
+      "scan": "results/scan/case33bw/18_25/d0121a1ad0ba8cc1e009da6cc204ad9cf53881d3e5f4c488a439cb11d5f6fb69/region_17ceb84375dc2cc1.npz",
+      "parameters": {
+        "mode": 1,
+        "network": "case33bw",
+        "load_nodes": [
+          18,
+          25
+        ],
+        "budget": 7.0,
+        "method": "socp",
+        "region_method": "RB",
+        "base_method": "RB",
+        "workers": 16,
+        "repeat": 1,
+        "time_limit": 300.0,
+        "tau": 0.005,
+        "eps": 0.01,
+        "threads": 1,
+        "seed": 0,
+        "mip_seconds": 60.0,
+        "mip_gap": 0.001,
+        "inner_cert": "near",
+        "discovery_eps": 0.15,
+        "discovery_share": 0.25,
+        "criterion": "auto",
+        "network_eps": 0.005,
+        "coverage": "none"
+      },
+      "status": "certified",
+      "certified": true,
+      "certified_partitions": 4,
+      "partitions": 4,
+      "timing": {
+        "total_seconds": 28.310217461083084,
+        "t_cert": 27.843737544724718
+      },
+      "gap_final": 0.00762742830843588,
+      "metrics": {
+        "inner": {
+          "mr_percent": 0.14089683901004657,
+          "fr_percent": 0.8274015939648355,
+          "missed_cells": 23,
+          "extra_cells": 136,
+          "reference_cells": 16324,
+          "computed_cells": 16437
+        },
+        "outer": {
+          "mr_percent": 0.0,
+          "fr_percent": 1.3595987672971177,
+          "missed_cells": 0,
+          "extra_cells": 225,
+          "reference_cells": 16324,
+          "computed_cells": 16549
+        },
+        "inner_socp": {
+          "mr_percent": 12.536582770180386,
+          "fr_percent": 0.0,
+          "missed_cells": 2356,
+          "extra_cells": 0,
+          "reference_cells": 18793,
+          "computed_cells": 16437
+        },
+        "outer_socp": {
+          "mr_percent": 12.10025009311978,
+          "fr_percent": 0.1812798356396157,
+          "missed_cells": 2274,
+          "extra_cells": 30,
+          "reference_cells": 18793,
+          "computed_cells": 16549
+        }
+      },
+      "validity": {
+        "valid": true,
+        "inner_exact": true,
+        "inner_socp_infeasible_cells": 0,
+        "outer_missed_ac_cells": 0,
+        "undecided_ac_cells": 0
+      },
+      "comparisons": null,
+      "source_provenance": "experiments/compare_plan2.py at commit 4c5b2a407f4b708d3c5adc1460b206e702b75c4c (clean tree: True); method tag method-RB-v1"
+    },
+    {
+      "id": "case33_18_25_RCUT_w16_r1",
+      "recording": "results/methods/case33_18_25/RCUT/workers_16/run_1/summary.json",
+      "metrics_file": "results/methods/case33_18_25/RCUT/workers_16/run_1/metrics.json",
+      "scan": "results/scan/case33bw/18_25/d0121a1ad0ba8cc1e009da6cc204ad9cf53881d3e5f4c488a439cb11d5f6fb69/region_17ceb84375dc2cc1.npz",
+      "parameters": {
+        "mode": 1,
+        "network": "case33bw",
+        "load_nodes": [
+          18,
+          25
+        ],
+        "budget": 7.0,
+        "method": "socp",
+        "region_method": "RCUT",
+        "base_method": "RCUT",
+        "workers": 16,
+        "repeat": 1,
+        "time_limit": 300.0,
+        "tau": 0.005,
+        "eps": 0.01,
+        "threads": 1,
+        "seed": 0,
+        "mip_seconds": 60.0,
+        "mip_gap": 0.001,
+        "inner_cert": "near",
+        "discovery_eps": 0.15,
+        "discovery_share": 0.25,
+        "threshold": 0.01,
+        "patience": 3,
+        "cut_seconds": 30.0
+      },
+      "status": "certified",
+      "certified": true,
+      "certified_partitions": 4,
+      "partitions": 4,
+      "timing": {
+        "total_seconds": 29.924256037920713,
+        "t_cert": 29.448917102999985
+      },
+      "gap_final": 0.007034873368584771,
+      "metrics": {
+        "inner": {
+          "mr_percent": 0.02450379808870375,
+          "fr_percent": 0.9888976521264333,
+          "missed_cells": 4,
+          "extra_cells": 163,
+          "reference_cells": 16324,
+          "computed_cells": 16483
+        },
+        "outer": {
+          "mr_percent": 0.0,
+          "fr_percent": 1.4310730028379928,
+          "missed_cells": 0,
+          "extra_cells": 237,
+          "reference_cells": 16324,
+          "computed_cells": 16561
+        },
+        "inner_socp": {
+          "mr_percent": 12.387591124354813,
+          "fr_percent": 0.10920342170721349,
+          "missed_cells": 2328,
+          "extra_cells": 18,
+          "reference_cells": 18793,
+          "computed_cells": 16483
+        },
+        "outer_socp": {
+          "mr_percent": 12.10025009311978,
+          "fr_percent": 0.253607873920657,
+          "missed_cells": 2274,
+          "extra_cells": 42,
+          "reference_cells": 18793,
+          "computed_cells": 16561
+        }
+      },
+      "validity": {
+        "valid": true,
+        "inner_exact": false,
+        "inner_socp_infeasible_cells": 18,
+        "outer_missed_ac_cells": 0,
+        "undecided_ac_cells": 0
+      },
+      "comparisons": null,
+      "source_provenance": "experiments/compare_plan2.py at commit 3e8b0a16e605383f918c8f585a8cc8f2f873cdd9 (clean tree: True); method tag method-RCUT-v1"
+    },
+    {
+      "id": "case33_18_25_RCUT-t0.5_w16_r1",
+      "recording": "results/methods/case33_18_25/RCUT-t0.5/workers_16/run_1/summary.json",
+      "metrics_file": "results/methods/case33_18_25/RCUT-t0.5/workers_16/run_1/metrics.json",
+      "scan": "results/scan/case33bw/18_25/d0121a1ad0ba8cc1e009da6cc204ad9cf53881d3e5f4c488a439cb11d5f6fb69/region_17ceb84375dc2cc1.npz",
+      "parameters": {
+        "mode": 1,
+        "network": "case33bw",
+        "load_nodes": [
+          18,
+          25
+        ],
+        "budget": 7.0,
+        "method": "socp",
+        "region_method": "RCUT-t0.5",
+        "base_method": "RCUT",
+        "workers": 16,
+        "repeat": 1,
+        "time_limit": 300.0,
+        "tau": 0.005,
+        "eps": 0.01,
+        "threads": 1,
+        "seed": 0,
+        "mip_seconds": 60.0,
+        "mip_gap": 0.001,
+        "inner_cert": "near",
+        "discovery_eps": 0.15,
+        "discovery_share": 0.25,
+        "threshold": 0.005,
+        "patience": 3,
+        "cut_seconds": 30.0
+      },
+      "status": "certified",
+      "certified": true,
+      "certified_partitions": 4,
+      "partitions": 4,
+      "timing": {
+        "total_seconds": 30.318459099391475,
+        "t_cert": 29.885591722326353
+      },
+      "gap_final": 0.0057013977144220185,
+      "metrics": {
+        "inner": {
+          "mr_percent": 0.04288164665523156,
+          "fr_percent": 0.9349766255843603,
+          "missed_cells": 7,
+          "extra_cells": 154,
+          "reference_cells": 16324,
+          "computed_cells": 16471
+        },
+        "outer": {
+          "mr_percent": 0.0,
+          "fr_percent": 1.3595987672971177,
+          "missed_cells": 0,
+          "extra_cells": 225,
+          "reference_cells": 16324,
+          "computed_cells": 16549
+        },
+        "inner_socp": {
+          "mr_percent": 12.403554514978982,
+          "fr_percent": 0.054641491105579504,
+          "missed_cells": 2331,
+          "extra_cells": 9,
+          "reference_cells": 18793,
+          "computed_cells": 16471
+        },
+        "outer_socp": {
+          "mr_percent": 12.10025009311978,
+          "fr_percent": 0.1812798356396157,
+          "missed_cells": 2274,
+          "extra_cells": 30,
+          "reference_cells": 18793,
+          "computed_cells": 16549
+        }
+      },
+      "validity": {
+        "valid": true,
+        "inner_exact": false,
+        "inner_socp_infeasible_cells": 9,
+        "outer_missed_ac_cells": 0,
+        "undecided_ac_cells": 0
+      },
+      "comparisons": null,
+      "source_provenance": "experiments/compare_plan2.py at commit 3e8b0a16e605383f918c8f585a8cc8f2f873cdd9 (clean tree: True); method tag method-RCUT-v1"
+    },
+    {
+      "id": "case33_18_25_RCUT-t2_w16_r1",
+      "recording": "results/methods/case33_18_25/RCUT-t2/workers_16/run_1/summary.json",
+      "metrics_file": "results/methods/case33_18_25/RCUT-t2/workers_16/run_1/metrics.json",
+      "scan": "results/scan/case33bw/18_25/d0121a1ad0ba8cc1e009da6cc204ad9cf53881d3e5f4c488a439cb11d5f6fb69/region_17ceb84375dc2cc1.npz",
+      "parameters": {
+        "mode": 1,
+        "network": "case33bw",
+        "load_nodes": [
+          18,
+          25
+        ],
+        "budget": 7.0,
+        "method": "socp",
+        "region_method": "RCUT-t2",
+        "base_method": "RCUT",
+        "workers": 16,
+        "repeat": 1,
+        "time_limit": 300.0,
+        "tau": 0.005,
+        "eps": 0.01,
+        "threads": 1,
+        "seed": 0,
+        "mip_seconds": 60.0,
+        "mip_gap": 0.001,
+        "inner_cert": "near",
+        "discovery_eps": 0.15,
+        "discovery_share": 0.25,
+        "threshold": 0.02,
+        "patience": 3,
+        "cut_seconds": 30.0
+      },
+      "status": "certified",
+      "certified": true,
+      "certified_partitions": 4,
+      "partitions": 4,
+      "timing": {
+        "total_seconds": 29.313448698958382,
+        "t_cert": 28.78824140271172
+      },
+      "gap_final": 0.0055921557980276315,
+      "metrics": {
+        "inner": {
+          "mr_percent": 0.018377848566527813,
+          "fr_percent": 1.1148136928203574,
+          "missed_cells": 3,
+          "extra_cells": 184,
+          "reference_cells": 16324,
+          "computed_cells": 16505
+        },
+        "outer": {
+          "mr_percent": 0.0,
+          "fr_percent": 1.4310730028379928,
+          "missed_cells": 0,
+          "extra_cells": 237,
+          "reference_cells": 16324,
+          "computed_cells": 16561
+        },
+        "inner_socp": {
+          "mr_percent": 12.371627733730644,
+          "fr_percent": 0.22417449257800667,
+          "missed_cells": 2325,
+          "extra_cells": 37,
+          "reference_cells": 18793,
+          "computed_cells": 16505
+        },
+        "outer_socp": {
+          "mr_percent": 12.10025009311978,
+          "fr_percent": 0.253607873920657,
+          "missed_cells": 2274,
+          "extra_cells": 42,
+          "reference_cells": 18793,
+          "computed_cells": 16561
+        }
+      },
+      "validity": {
+        "valid": true,
+        "inner_exact": false,
+        "inner_socp_infeasible_cells": 37,
+        "outer_missed_ac_cells": 0,
+        "undecided_ac_cells": 0
+      },
+      "comparisons": null,
+      "source_provenance": "experiments/compare_plan2.py at commit 3e8b0a16e605383f918c8f585a8cc8f2f873cdd9 (clean tree: True); method tag method-RCUT-v1"
+    },
+    {
+      "id": "case33_18_25_RCUT2_w16_r1",
+      "recording": "results/methods/case33_18_25/RCUT2/workers_16/run_1/summary.json",
+      "metrics_file": "results/methods/case33_18_25/RCUT2/workers_16/run_1/metrics.json",
+      "scan": "results/scan/case33bw/18_25/d0121a1ad0ba8cc1e009da6cc204ad9cf53881d3e5f4c488a439cb11d5f6fb69/region_17ceb84375dc2cc1.npz",
+      "parameters": {
+        "mode": 1,
+        "network": "case33bw",
+        "load_nodes": [
+          18,
+          25
+        ],
+        "budget": 7.0,
+        "method": "socp",
+        "region_method": "RCUT2",
+        "base_method": "RCUT2",
+        "workers": 16,
+        "repeat": 1,
+        "time_limit": 300.0,
+        "tau": 0.005,
+        "eps": 0.01,
+        "threads": 1,
+        "seed": 0,
+        "mip_seconds": 60.0,
+        "mip_gap": 0.001,
+        "inner_cert": "near",
+        "discovery_eps": 0.15,
+        "discovery_share": 0.25,
+        "threshold": 0.01,
+        "patience": 3,
+        "cut_seconds": 30.0
+      },
+      "status": "certified",
+      "certified": true,
+      "certified_partitions": 4,
+      "partitions": 4,
+      "timing": {
+        "total_seconds": 32.93761429958977,
+        "t_cert": 32.394937973003834
+      },
+      "gap_final": 0.007435830678647504,
+      "metrics": {
+        "inner": {
+          "mr_percent": 0.10414114187699093,
+          "fr_percent": 0.8270996776743903,
+          "missed_cells": 17,
+          "extra_cells": 136,
+          "reference_cells": 16324,
+          "computed_cells": 16443
+        },
+        "outer": {
+          "mr_percent": 0.0,
+          "fr_percent": 1.3595987672971177,
+          "missed_cells": 0,
+          "extra_cells": 225,
+          "reference_cells": 16324,
+          "computed_cells": 16549
+        },
+        "inner_socp": {
+          "mr_percent": 12.504655988932049,
+          "fr_percent": 0.0,
+          "missed_cells": 2350,
+          "extra_cells": 0,
+          "reference_cells": 18793,
+          "computed_cells": 16443
+        },
+        "outer_socp": {
+          "mr_percent": 12.10025009311978,
+          "fr_percent": 0.1812798356396157,
+          "missed_cells": 2274,
+          "extra_cells": 30,
+          "reference_cells": 18793,
+          "computed_cells": 16549
+        }
+      },
+      "validity": {
+        "valid": true,
+        "inner_exact": true,
+        "inner_socp_infeasible_cells": 0,
+        "outer_missed_ac_cells": 0,
+        "undecided_ac_cells": 0
+      },
+      "comparisons": null,
+      "source_provenance": "experiments/compare_plan2.py at commit 3e8b0a16e605383f918c8f585a8cc8f2f873cdd9 (clean tree: True); method tag method-RCUT2-v1"
+    },
+    {
+      "id": "case33_18_25_RCUT2-t0.5_w16_r1",
+      "recording": "results/methods/case33_18_25/RCUT2-t0.5/workers_16/run_1/summary.json",
+      "metrics_file": "results/methods/case33_18_25/RCUT2-t0.5/workers_16/run_1/metrics.json",
+      "scan": "results/scan/case33bw/18_25/d0121a1ad0ba8cc1e009da6cc204ad9cf53881d3e5f4c488a439cb11d5f6fb69/region_17ceb84375dc2cc1.npz",
+      "parameters": {
+        "mode": 1,
+        "network": "case33bw",
+        "load_nodes": [
+          18,
+          25
+        ],
+        "budget": 7.0,
+        "method": "socp",
+        "region_method": "RCUT2-t0.5",
+        "base_method": "RCUT2",
+        "workers": 16,
+        "repeat": 1,
+        "time_limit": 300.0,
+        "tau": 0.005,
+        "eps": 0.01,
+        "threads": 1,
+        "seed": 0,
+        "mip_seconds": 60.0,
+        "mip_gap": 0.001,
+        "inner_cert": "near",
+        "discovery_eps": 0.15,
+        "discovery_share": 0.25,
+        "threshold": 0.005,
+        "patience": 3,
+        "cut_seconds": 30.0
+      },
+      "status": "certified",
+      "certified": true,
+      "certified_partitions": 4,
+      "partitions": 4,
+      "timing": {
+        "total_seconds": 33.53549783769995,
+        "t_cert": 32.96897794655524
+      },
+      "gap_final": 0.00734640870516734,
+      "metrics": {
+        "inner": {
+          "mr_percent": 0.10414114187699093,
+          "fr_percent": 0.8270996776743903,
+          "missed_cells": 17,
+          "extra_cells": 136,
+          "reference_cells": 16324,
+          "computed_cells": 16443
+        },
+        "outer": {
+          "mr_percent": 0.0,
+          "fr_percent": 1.3595987672971177,
+          "missed_cells": 0,
+          "extra_cells": 225,
+          "reference_cells": 16324,
+          "computed_cells": 16549
+        },
+        "inner_socp": {
+          "mr_percent": 12.504655988932049,
+          "fr_percent": 0.0,
+          "missed_cells": 2350,
+          "extra_cells": 0,
+          "reference_cells": 18793,
+          "computed_cells": 16443
+        },
+        "outer_socp": {
+          "mr_percent": 12.10025009311978,
+          "fr_percent": 0.1812798356396157,
+          "missed_cells": 2274,
+          "extra_cells": 30,
+          "reference_cells": 18793,
+          "computed_cells": 16549
+        }
+      },
+      "validity": {
+        "valid": true,
+        "inner_exact": true,
+        "inner_socp_infeasible_cells": 0,
+        "outer_missed_ac_cells": 0,
+        "undecided_ac_cells": 0
+      },
+      "comparisons": null,
+      "source_provenance": "experiments/compare_plan2.py at commit 3e8b0a16e605383f918c8f585a8cc8f2f873cdd9 (clean tree: True); method tag method-RCUT2-v1"
+    },
+    {
+      "id": "case33_18_25_RCUT2-t2_w16_r1",
+      "recording": "results/methods/case33_18_25/RCUT2-t2/workers_16/run_1/summary.json",
+      "metrics_file": "results/methods/case33_18_25/RCUT2-t2/workers_16/run_1/metrics.json",
+      "scan": "results/scan/case33bw/18_25/d0121a1ad0ba8cc1e009da6cc204ad9cf53881d3e5f4c488a439cb11d5f6fb69/region_17ceb84375dc2cc1.npz",
+      "parameters": {
+        "mode": 1,
+        "network": "case33bw",
+        "load_nodes": [
+          18,
+          25
+        ],
+        "budget": 7.0,
+        "method": "socp",
+        "region_method": "RCUT2-t2",
+        "base_method": "RCUT2",
+        "workers": 16,
+        "repeat": 1,
+        "time_limit": 300.0,
+        "tau": 0.005,
+        "eps": 0.01,
+        "threads": 1,
+        "seed": 0,
+        "mip_seconds": 60.0,
+        "mip_gap": 0.001,
+        "inner_cert": "near",
+        "discovery_eps": 0.15,
+        "discovery_share": 0.25,
+        "threshold": 0.02,
+        "patience": 3,
+        "cut_seconds": 30.0
+      },
+      "status": "certified",
+      "certified": true,
+      "certified_partitions": 4,
+      "partitions": 4,
+      "timing": {
+        "total_seconds": 32.525515537709,
+        "t_cert": 31.90340687171556
+      },
+      "gap_final": 0.007836804745507742,
+      "metrics": {
+        "inner": {
+          "mr_percent": 0.11026709139916688,
+          "fr_percent": 0.8150851581508516,
+          "missed_cells": 18,
+          "extra_cells": 134,
+          "reference_cells": 16324,
+          "computed_cells": 16440
+        },
+        "outer": {
+          "mr_percent": 0.0,
+          "fr_percent": 1.3595987672971177,
+          "missed_cells": 0,
+          "extra_cells": 225,
+          "reference_cells": 16324,
+          "computed_cells": 16549
+        },
+        "inner_socp": {
+          "mr_percent": 12.520619379556218,
+          "fr_percent": 0.0,
+          "missed_cells": 2353,
+          "extra_cells": 0,
+          "reference_cells": 18793,
+          "computed_cells": 16440
+        },
+        "outer_socp": {
+          "mr_percent": 12.10025009311978,
+          "fr_percent": 0.1812798356396157,
+          "missed_cells": 2274,
+          "extra_cells": 30,
+          "reference_cells": 18793,
+          "computed_cells": 16549
+        }
+      },
+      "validity": {
+        "valid": true,
+        "inner_exact": true,
+        "inner_socp_infeasible_cells": 0,
+        "outer_missed_ac_cells": 0,
+        "undecided_ac_cells": 0
+      },
+      "comparisons": null,
+      "source_provenance": "experiments/compare_plan2.py at commit 3e8b0a16e605383f918c8f585a8cc8f2f873cdd9 (clean tree: True); method tag method-RCUT2-v1"
+    },
+    {
+      "id": "case33_18_25_30_R_w16_r1",
+      "recording": "results/methods/case33_18_25_30/R/workers_16/run_1/summary.json",
+      "metrics_file": "results/methods/case33_18_25_30/R/workers_16/run_1/metrics.json",
+      "scan": "results/scan/case33bw/18_25_30/ea7124157cce5bcd61e5782f37e7cfeb3ae25dcc2f396a26d1cb9809e7e770b5/region_3837a4b56856fbc1.npz",
+      "parameters": {
+        "mode": 1,
+        "network": "case33bw",
+        "load_nodes": [
+          18,
+          25,
+          30
+        ],
+        "budget": 7.0,
+        "method": "socp",
+        "region_method": "R",
+        "base_method": "R",
+        "workers": 16,
+        "repeat": 1,
+        "time_limit": 300.0,
+        "tau": 0.005,
+        "eps": 0.015,
+        "threads": 1,
+        "seed": 0,
+        "mip_seconds": 60.0,
+        "mip_gap": 0.001,
+        "inner_cert": "near"
+      },
+      "status": "time_limit",
+      "certified": false,
+      "certified_partitions": 3,
+      "partitions": 8,
+      "timing": {
+        "total_seconds": 300.48228862998076,
+        "t_cert": null
+      },
+      "gap_final": 0.03689358048132707,
+      "metrics": {
+        "inner": {
+          "mr_percent": 0.7677977014013506,
+          "fr_percent": 2.421266736711657,
+          "missed_cells": 1121,
+          "extra_cells": 3595,
+          "reference_cells": 146002,
+          "computed_cells": 148476
+        },
+        "outer": {
+          "mr_percent": 0.0,
+          "fr_percent": 4.198791346513475,
+          "missed_cells": 0,
+          "extra_cells": 6399,
+          "reference_cells": 146002,
+          "computed_cells": 152401
+        },
+        "inner_socp": {
+          "mr_percent": 21.044822946966516,
+          "fr_percent": 0.0,
+          "missed_cells": 39575,
+          "extra_cells": 0,
+          "reference_cells": 188051,
+          "computed_cells": 148476
+        },
+        "outer_socp": {
+          "mr_percent": 19.63403544783064,
+          "fr_percent": 0.8326880930195935,
+          "missed_cells": 36922,
+          "extra_cells": 1269,
+          "reference_cells": 188051,
+          "computed_cells": 152398
+        }
+      },
+      "validity": {
+        "valid": true,
+        "inner_exact": true,
+        "inner_socp_infeasible_cells": 0,
+        "outer_missed_ac_cells": 0,
+        "undecided_ac_cells": 0
+      },
+      "comparisons": null,
+      "source_provenance": "experiments/compare_plan2.py at commit 4c5b2a407f4b708d3c5adc1460b206e702b75c4c (clean tree: True); method tag method-R-v1"
+    },
+    {
+      "id": "case33_18_25_30_RB_w16_r1",
+      "recording": "results/methods/case33_18_25_30/RB/workers_16/run_1/summary.json",
+      "metrics_file": "results/methods/case33_18_25_30/RB/workers_16/run_1/metrics.json",
+      "scan": "results/scan/case33bw/18_25_30/ea7124157cce5bcd61e5782f37e7cfeb3ae25dcc2f396a26d1cb9809e7e770b5/region_3837a4b56856fbc1.npz",
+      "parameters": {
+        "mode": 1,
+        "network": "case33bw",
+        "load_nodes": [
+          18,
+          25,
+          30
+        ],
+        "budget": 7.0,
+        "method": "socp",
+        "region_method": "RB",
+        "base_method": "RB",
+        "workers": 16,
+        "repeat": 1,
+        "time_limit": 300.0,
+        "tau": 0.005,
+        "eps": 0.015,
+        "threads": 1,
+        "seed": 0,
+        "mip_seconds": 60.0,
+        "mip_gap": 0.001,
+        "inner_cert": "near",
+        "discovery_eps": 0.15,
+        "discovery_share": 0.25,
+        "criterion": "auto",
+        "network_eps": 0.0075,
+        "coverage": "none"
+      },
+      "status": "time_limit",
+      "certified": false,
+      "certified_partitions": 3,
+      "partitions": 8,
+      "timing": {
+        "total_seconds": 300.89298940682784,
+        "t_cert": null
+      },
+      "gap_final": 0.023480544325917396,
+      "metrics": {
+        "inner": {
+          "mr_percent": 0.16369638772071615,
+          "fr_percent": 2.5791661654034836,
+          "missed_cells": 239,
+          "extra_cells": 3859,
+          "reference_cells": 146002,
+          "computed_cells": 149622
+        },
+        "outer": {
+          "mr_percent": 0.0,
+          "fr_percent": 4.350674449532569,
+          "missed_cells": 0,
+          "extra_cells": 6641,
+          "reference_cells": 146002,
+          "computed_cells": 152643
+        },
+        "inner_socp": {
+          "mr_percent": 20.435945567957628,
+          "fr_percent": 0.0,
+          "missed_cells": 38430,
+          "extra_cells": 0,
+          "reference_cells": 188051,
+          "computed_cells": 149621
+        },
+        "outer_socp": {
+          "mr_percent": 19.57660421906823,
+          "fr_percent": 0.9191561844863732,
+          "missed_cells": 36814,
+          "extra_cells": 1403,
+          "reference_cells": 188051,
+          "computed_cells": 152640
+        }
+      },
+      "validity": {
+        "valid": true,
+        "inner_exact": true,
+        "inner_socp_infeasible_cells": 0,
+        "outer_missed_ac_cells": 0,
+        "undecided_ac_cells": 0
+      },
+      "comparisons": null,
+      "source_provenance": "experiments/compare_plan2.py at commit 4c5b2a407f4b708d3c5adc1460b206e702b75c4c (clean tree: True); method tag method-RB-v1"
+    },
+    {
+      "id": "case33_18_25_30_RCUT_w16_r1",
+      "recording": "results/methods/case33_18_25_30/RCUT/workers_16/run_1/summary.json",
+      "metrics_file": "results/methods/case33_18_25_30/RCUT/workers_16/run_1/metrics.json",
+      "scan": "results/scan/case33bw/18_25_30/ea7124157cce5bcd61e5782f37e7cfeb3ae25dcc2f396a26d1cb9809e7e770b5/region_3837a4b56856fbc1.npz",
+      "parameters": {
+        "mode": 1,
+        "network": "case33bw",
+        "load_nodes": [
+          18,
+          25,
+          30
+        ],
+        "budget": 7.0,
+        "method": "socp",
+        "region_method": "RCUT",
+        "base_method": "RCUT",
+        "workers": 16,
+        "repeat": 1,
+        "time_limit": 300.0,
+        "tau": 0.005,
+        "eps": 0.015,
+        "threads": 1,
+        "seed": 0,
+        "mip_seconds": 60.0,
+        "mip_gap": 0.001,
+        "inner_cert": "near",
+        "discovery_eps": 0.15,
+        "discovery_share": 0.25,
+        "threshold": 0.01,
+        "patience": 3,
+        "cut_seconds": 30.0
+      },
+      "status": "time_limit",
+      "certified": false,
+      "certified_partitions": 7,
+      "partitions": 8,
+      "timing": {
+        "total_seconds": 300.70439109159634,
+        "t_cert": null
+      },
+      "gap_final": 0.017024622716315996,
+      "metrics": {
+        "inner": {
+          "mr_percent": 0.0,
+          "fr_percent": 4.2823239408918665,
+          "missed_cells": 0,
+          "extra_cells": 6532,
+          "reference_cells": 146002,
+          "computed_cells": 152534
+        },
+        "outer": {
+          "mr_percent": 0.0,
+          "fr_percent": 5.511943515036986,
+          "missed_cells": 0,
+          "extra_cells": 8517,
+          "reference_cells": 146002,
+          "computed_cells": 154519
+        },
+        "inner_socp": {
+          "mr_percent": 19.463337073453477,
+          "fr_percent": 0.708708393703575,
+          "missed_cells": 36601,
+          "extra_cells": 1081,
+          "reference_cells": 188051,
+          "computed_cells": 152531
+        },
+        "outer_socp": {
+          "mr_percent": 19.05972316020654,
+          "fr_percent": 1.4924117399605217,
+          "missed_cells": 35842,
+          "extra_cells": 2306,
+          "reference_cells": 188051,
+          "computed_cells": 154515
+        }
+      },
+      "validity": {
+        "valid": true,
+        "inner_exact": false,
+        "inner_socp_infeasible_cells": 1081,
+        "outer_missed_ac_cells": 0,
+        "undecided_ac_cells": 0
+      },
+      "comparisons": null,
+      "source_provenance": "experiments/compare_plan2.py at commit 3e8b0a16e605383f918c8f585a8cc8f2f873cdd9 (clean tree: True); method tag method-RCUT-v1"
+    },
+    {
+      "id": "case33_18_25_30_RCUT-t0.5_w16_r1",
+      "recording": "results/methods/case33_18_25_30/RCUT-t0.5/workers_16/run_1/summary.json",
+      "metrics_file": "results/methods/case33_18_25_30/RCUT-t0.5/workers_16/run_1/metrics.json",
+      "scan": "results/scan/case33bw/18_25_30/ea7124157cce5bcd61e5782f37e7cfeb3ae25dcc2f396a26d1cb9809e7e770b5/region_3837a4b56856fbc1.npz",
+      "parameters": {
+        "mode": 1,
+        "network": "case33bw",
+        "load_nodes": [
+          18,
+          25,
+          30
+        ],
+        "budget": 7.0,
+        "method": "socp",
+        "region_method": "RCUT-t0.5",
+        "base_method": "RCUT",
+        "workers": 16,
+        "repeat": 1,
+        "time_limit": 300.0,
+        "tau": 0.005,
+        "eps": 0.015,
+        "threads": 1,
+        "seed": 0,
+        "mip_seconds": 60.0,
+        "mip_gap": 0.001,
+        "inner_cert": "near",
+        "discovery_eps": 0.15,
+        "discovery_share": 0.25,
+        "threshold": 0.005,
+        "patience": 3,
+        "cut_seconds": 30.0
+      },
+      "status": "time_limit",
+      "certified": false,
+      "certified_partitions": 7,
+      "partitions": 8,
+      "timing": {
+        "total_seconds": 300.7102057915181,
+        "t_cert": null
+      },
+      "gap_final": 0.016455101799743188,
+      "metrics": {
+        "inner": {
+          "mr_percent": 0.0,
+          "fr_percent": 3.5972268075272367,
+          "missed_cells": 0,
+          "extra_cells": 5448,
+          "reference_cells": 146002,
+          "computed_cells": 151450
+        },
+        "outer": {
+          "mr_percent": 0.0,
+          "fr_percent": 4.829510269798124,
+          "missed_cells": 0,
+          "extra_cells": 7409,
+          "reference_cells": 146002,
+          "computed_cells": 153411
+        },
+        "inner_socp": {
+          "mr_percent": 19.89141243598811,
+          "fr_percent": 0.5295581952762353,
+          "missed_cells": 37406,
+          "extra_cells": 802,
+          "reference_cells": 188051,
+          "computed_cells": 151447
+        },
+        "outer_socp": {
+          "mr_percent": 19.36336419375595,
+          "fr_percent": 1.153141642819428,
+          "missed_cells": 36413,
+          "extra_cells": 1769,
+          "reference_cells": 188051,
+          "computed_cells": 153407
+        }
+      },
+      "validity": {
+        "valid": true,
+        "inner_exact": false,
+        "inner_socp_infeasible_cells": 802,
+        "outer_missed_ac_cells": 0,
+        "undecided_ac_cells": 0
+      },
+      "comparisons": null,
+      "source_provenance": "experiments/compare_plan2.py at commit 3e8b0a16e605383f918c8f585a8cc8f2f873cdd9 (clean tree: True); method tag method-RCUT-v1"
+    },
+    {
+      "id": "case33_18_25_30_RCUT-t2_w16_r1",
+      "recording": "results/methods/case33_18_25_30/RCUT-t2/workers_16/run_1/summary.json",
+      "metrics_file": "results/methods/case33_18_25_30/RCUT-t2/workers_16/run_1/metrics.json",
+      "scan": "results/scan/case33bw/18_25_30/ea7124157cce5bcd61e5782f37e7cfeb3ae25dcc2f396a26d1cb9809e7e770b5/region_3837a4b56856fbc1.npz",
+      "parameters": {
+        "mode": 1,
+        "network": "case33bw",
+        "load_nodes": [
+          18,
+          25,
+          30
+        ],
+        "budget": 7.0,
+        "method": "socp",
+        "region_method": "RCUT-t2",
+        "base_method": "RCUT",
+        "workers": 16,
+        "repeat": 1,
+        "time_limit": 300.0,
+        "tau": 0.005,
+        "eps": 0.015,
+        "threads": 1,
+        "seed": 0,
+        "mip_seconds": 60.0,
+        "mip_gap": 0.001,
+        "inner_cert": "near",
+        "discovery_eps": 0.15,
+        "discovery_share": 0.25,
+        "threshold": 0.02,
+        "patience": 3,
+        "cut_seconds": 30.0
+      },
+      "status": "certified",
+      "certified": true,
+      "certified_partitions": 8,
+      "partitions": 8,
+      "timing": {
+        "total_seconds": 272.86041563004255,
+        "t_cert": 272.23912464804016
+      },
+      "gap_final": 0.014506021081051035,
+      "metrics": {
+        "inner": {
+          "mr_percent": 0.0,
+          "fr_percent": 4.5420368881130315,
+          "missed_cells": 0,
+          "extra_cells": 6947,
+          "reference_cells": 146002,
+          "computed_cells": 152949
+        },
+        "outer": {
+          "mr_percent": 0.0,
+          "fr_percent": 5.545563937013987,
+          "missed_cells": 0,
+          "extra_cells": 8572,
+          "reference_cells": 146002,
+          "computed_cells": 154574
+        },
+        "inner_socp": {
+          "mr_percent": 19.41494594551478,
+          "fr_percent": 0.9186248741385848,
+          "missed_cells": 36510,
+          "extra_cells": 1405,
+          "reference_cells": 188051,
+          "computed_cells": 152946
+        },
+        "outer_socp": {
+          "mr_percent": 18.967195069422658,
+          "fr_percent": 1.4148929287701366,
+          "missed_cells": 35668,
+          "extra_cells": 2187,
+          "reference_cells": 188051,
+          "computed_cells": 154570
+        }
+      },
+      "validity": {
+        "valid": true,
+        "inner_exact": false,
+        "inner_socp_infeasible_cells": 1405,
+        "outer_missed_ac_cells": 0,
+        "undecided_ac_cells": 0
+      },
+      "comparisons": null,
+      "source_provenance": "experiments/compare_plan2.py at commit 3e8b0a16e605383f918c8f585a8cc8f2f873cdd9 (clean tree: True); method tag method-RCUT-v1"
+    },
+    {
+      "id": "case33_18_25_30_RCUT2_w16_r1",
+      "recording": "results/methods/case33_18_25_30/RCUT2/workers_16/run_1/summary.json",
+      "metrics_file": "results/methods/case33_18_25_30/RCUT2/workers_16/run_1/metrics.json",
+      "scan": "results/scan/case33bw/18_25_30/ea7124157cce5bcd61e5782f37e7cfeb3ae25dcc2f396a26d1cb9809e7e770b5/region_3837a4b56856fbc1.npz",
+      "parameters": {
+        "mode": 1,
+        "network": "case33bw",
+        "load_nodes": [
+          18,
+          25,
+          30
+        ],
+        "budget": 7.0,
+        "method": "socp",
+        "region_method": "RCUT2",
+        "base_method": "RCUT2",
+        "workers": 16,
+        "repeat": 1,
+        "time_limit": 300.0,
+        "tau": 0.005,
+        "eps": 0.015,
+        "threads": 1,
+        "seed": 0,
+        "mip_seconds": 60.0,
+        "mip_gap": 0.001,
+        "inner_cert": "near",
+        "discovery_eps": 0.15,
+        "discovery_share": 0.25,
+        "threshold": 0.01,
+        "patience": 3,
+        "cut_seconds": 30.0
+      },
+      "status": "time_limit",
+      "certified": false,
+      "certified_partitions": 3,
+      "partitions": 8,
+      "timing": {
+        "total_seconds": 300.9022978376597,
+        "t_cert": null
+      },
+      "gap_final": 0.03638406995362198,
+      "metrics": {
+        "inner": {
+          "mr_percent": 0.28629744798016465,
+          "fr_percent": 2.5503032250291175,
+          "missed_cells": 418,
+          "extra_cells": 3810,
+          "reference_cells": 146002,
+          "computed_cells": 149394
+        },
+        "outer": {
+          "mr_percent": 0.0,
+          "fr_percent": 4.748794697320608,
+          "missed_cells": 0,
+          "extra_cells": 7279,
+          "reference_cells": 146002,
+          "computed_cells": 153281
+        },
+        "inner_socp": {
+          "mr_percent": 20.557189273122717,
+          "fr_percent": 0.0,
+          "missed_cells": 38658,
+          "extra_cells": 0,
+          "reference_cells": 188051,
+          "computed_cells": 149393
+        },
+        "outer_socp": {
+          "mr_percent": 19.505878724388598,
+          "fr_percent": 1.244797035451924,
+          "missed_cells": 36681,
+          "extra_cells": 1908,
+          "reference_cells": 188051,
+          "computed_cells": 153278
+        }
+      },
+      "validity": {
+        "valid": true,
+        "inner_exact": true,
+        "inner_socp_infeasible_cells": 0,
+        "outer_missed_ac_cells": 0,
+        "undecided_ac_cells": 0
+      },
+      "comparisons": null,
+      "source_provenance": "experiments/compare_plan2.py at commit 3e8b0a16e605383f918c8f585a8cc8f2f873cdd9 (clean tree: True); method tag method-RCUT2-v1"
+    },
+    {
+      "id": "case33_18_25_30_RCUT2-t0.5_w16_r1",
+      "recording": "results/methods/case33_18_25_30/RCUT2-t0.5/workers_16/run_1/summary.json",
+      "metrics_file": "results/methods/case33_18_25_30/RCUT2-t0.5/workers_16/run_1/metrics.json",
+      "scan": "results/scan/case33bw/18_25_30/ea7124157cce5bcd61e5782f37e7cfeb3ae25dcc2f396a26d1cb9809e7e770b5/region_3837a4b56856fbc1.npz",
+      "parameters": {
+        "mode": 1,
+        "network": "case33bw",
+        "load_nodes": [
+          18,
+          25,
+          30
+        ],
+        "budget": 7.0,
+        "method": "socp",
+        "region_method": "RCUT2-t0.5",
+        "base_method": "RCUT2",
+        "workers": 16,
+        "repeat": 1,
+        "time_limit": 300.0,
+        "tau": 0.005,
+        "eps": 0.015,
+        "threads": 1,
+        "seed": 0,
+        "mip_seconds": 60.0,
+        "mip_gap": 0.001,
+        "inner_cert": "near",
+        "discovery_eps": 0.15,
+        "discovery_share": 0.25,
+        "threshold": 0.005,
+        "patience": 3,
+        "cut_seconds": 30.0
+      },
+      "status": "time_limit",
+      "certified": false,
+      "certified_partitions": 3,
+      "partitions": 8,
+      "timing": {
+        "total_seconds": 301.1110793452244,
+        "t_cert": null
+      },
+      "gap_final": 0.03216154490671763,
+      "metrics": {
+        "inner": {
+          "mr_percent": 0.2609553293790496,
+          "fr_percent": 2.5672764254840823,
+          "missed_cells": 381,
+          "extra_cells": 3837,
+          "reference_cells": 146002,
+          "computed_cells": 149458
+        },
+        "outer": {
+          "mr_percent": 0.0,
+          "fr_percent": 4.791032220620936,
+          "missed_cells": 0,
+          "extra_cells": 7347,
+          "reference_cells": 146002,
+          "computed_cells": 153349
+        },
+        "inner_socp": {
+          "mr_percent": 20.523155952374623,
+          "fr_percent": 0.0,
+          "missed_cells": 38594,
+          "extra_cells": 0,
+          "reference_cells": 188051,
+          "computed_cells": 149457
+        },
+        "outer_socp": {
+          "mr_percent": 19.366554817576084,
+          "fr_percent": 1.117733752429147,
+          "missed_cells": 36419,
+          "extra_cells": 1714,
+          "reference_cells": 188051,
+          "computed_cells": 153346
+        }
+      },
+      "validity": {
+        "valid": true,
+        "inner_exact": true,
+        "inner_socp_infeasible_cells": 0,
+        "outer_missed_ac_cells": 0,
+        "undecided_ac_cells": 0
+      },
+      "comparisons": null,
+      "source_provenance": "experiments/compare_plan2.py at commit 3e8b0a16e605383f918c8f585a8cc8f2f873cdd9 (clean tree: True); method tag method-RCUT2-v1"
+    },
+    {
+      "id": "case33_18_25_30_RCUT2-t2_w16_r1",
+      "recording": "results/methods/case33_18_25_30/RCUT2-t2/workers_16/run_1/summary.json",
+      "metrics_file": "results/methods/case33_18_25_30/RCUT2-t2/workers_16/run_1/metrics.json",
+      "scan": "results/scan/case33bw/18_25_30/ea7124157cce5bcd61e5782f37e7cfeb3ae25dcc2f396a26d1cb9809e7e770b5/region_3837a4b56856fbc1.npz",
+      "parameters": {
+        "mode": 1,
+        "network": "case33bw",
+        "load_nodes": [
+          18,
+          25,
+          30
+        ],
+        "budget": 7.0,
+        "method": "socp",
+        "region_method": "RCUT2-t2",
+        "base_method": "RCUT2",
+        "workers": 16,
+        "repeat": 1,
+        "time_limit": 300.0,
+        "tau": 0.005,
+        "eps": 0.015,
+        "threads": 1,
+        "seed": 0,
+        "mip_seconds": 60.0,
+        "mip_gap": 0.001,
+        "inner_cert": "near",
+        "discovery_eps": 0.15,
+        "discovery_share": 0.25,
+        "threshold": 0.02,
+        "patience": 3,
+        "cut_seconds": 30.0
+      },
+      "status": "time_limit",
+      "certified": false,
+      "certified_partitions": 3,
+      "partitions": 8,
+      "timing": {
+        "total_seconds": 300.88517453777604,
+        "t_cert": null
+      },
+      "gap_final": 0.0326074633462361,
+      "metrics": {
+        "inner": {
+          "mr_percent": 0.2958863577211271,
+          "fr_percent": 2.5453230859866642,
+          "missed_cells": 432,
+          "extra_cells": 3802,
+          "reference_cells": 146002,
+          "computed_cells": 149372
+        },
+        "outer": {
+          "mr_percent": 0.0,
+          "fr_percent": 4.571361342780204,
+          "missed_cells": 0,
+          "extra_cells": 6994,
+          "reference_cells": 146002,
+          "computed_cells": 152996
+        },
+        "inner_socp": {
+          "mr_percent": 20.568888227129875,
+          "fr_percent": 0.0,
+          "missed_cells": 38680,
+          "extra_cells": 0,
+          "reference_cells": 188051,
+          "computed_cells": 149371
+        },
+        "outer_socp": {
+          "mr_percent": 19.466527697273612,
+          "fr_percent": 1.0124646225644311,
+          "missed_cells": 36607,
+          "extra_cells": 1549,
+          "reference_cells": 188051,
+          "computed_cells": 152993
+        }
+      },
+      "validity": {
+        "valid": true,
+        "inner_exact": true,
+        "inner_socp_infeasible_cells": 0,
+        "outer_missed_ac_cells": 0,
+        "undecided_ac_cells": 0
+      },
+      "comparisons": null,
+      "source_provenance": "experiments/compare_plan2.py at commit 3e8b0a16e605383f918c8f585a8cc8f2f873cdd9 (clean tree: True); method tag method-RCUT2-v1"
     }
   ],
   "scans": {
@@ -261,6 +2529,29 @@
       "unresolved_cells": 0,
       "socp_feasible_cells": 18793,
       "socp_unresolved_cells": 0
+    },
+    "results/scan/case33bw/18_25_30/ea7124157cce5bcd61e5782f37e7cfeb3ae25dcc2f396a26d1cb9809e7e770b5/region_3837a4b56856fbc1.npz": {
+      "kind": "AC+SOCP",
+      "shape": [
+        80,
+        80,
+        80
+      ],
+      "axis_lower": [
+        -6506.0,
+        -4687.0,
+        -8685.0
+      ],
+      "bounds": [
+        3266.0,
+        3335.0,
+        4690.0
+      ],
+      "method": "ac_socp_grid_v4",
+      "feasible_cells": 146002,
+      "unresolved_cells": 0,
+      "socp_feasible_cells": 188051,
+      "socp_unresolved_cells": 5
     }
   },
   "files": {
@@ -427,6 +2718,873 @@
       "sha256": "31a4f07ffcd410310d370e93d34dd96716c6225d6fd304edcf066016497763bd",
       "original_path": "results/support_face_test/fourbus_3d_physical_verified/support_1/result.json",
       "original_sha256": "31a4f07ffcd410310d370e93d34dd96716c6225d6fd304edcf066016497763bd"
+    },
+    "results/methods/case33_18_25/comparison.md": {
+      "bytes": 15607,
+      "sha256": "6acf25c82763a447afc0a0a9d228a59c954cb811671c9bec9c092f9c269274e2",
+      "original_path": "results/compare_plan2/case33_18_25/comparison.md"
+    },
+    "results/methods/case33_18_25/comparison.csv": {
+      "bytes": 12221,
+      "sha256": "429924a1509697d7b7a4bddd91f3d5a1517210db9153cd3e12eb376687dc80d9",
+      "original_path": "results/compare_plan2/case33_18_25/comparison.csv"
+    },
+    "results/methods/case33_18_25/gap_time.png": {
+      "bytes": 90922,
+      "sha256": "2a2061400e0f37ea7f346650db00df251264f4dea11b59d09f4b898c2ff70e9f",
+      "original_path": "results/compare_plan2/case33_18_25/gap_time.png"
+    },
+    "results/methods/case33_18_25/mr_fr_time.png": {
+      "bytes": 217618,
+      "sha256": "d27c89ca96f17ce6183c57655547a35ff95d1f5b985ad45b4c2bba116e43385c",
+      "original_path": "results/compare_plan2/case33_18_25/mr_fr_time.png"
+    },
+    "results/methods/case33_18_25/time_breakdown.png": {
+      "bytes": 110487,
+      "sha256": "90cd577030be1697e19be8c2ada9cdb3eaa7b9f39edc73a44af8ecf2ba44f21d",
+      "original_path": "results/compare_plan2/case33_18_25/time_breakdown.png"
+    },
+    "results/methods/case33_18_25/threshold_sensitivity.png": {
+      "bytes": 122355,
+      "sha256": "c38ea07df1673804ee0035af587882c7add43de9ba54201fc526d4061a89e7b3",
+      "original_path": "results/compare_plan2/case33_18_25/threshold_sensitivity.png"
+    },
+    "results/methods/case33_18_25/regions.png": {
+      "bytes": 674433,
+      "sha256": "8168d010be4b097a846a0858d3412adeca60d915ea987406529832661eb687de",
+      "original_path": "results/compare_plan2/case33_18_25/regions.png"
+    },
+    "results/methods/case33_18_25/outer_explained.png": {
+      "bytes": 268706,
+      "sha256": "6cb178c078105ba0d1102a646b33fef3f22c92dea34889c58164b07052053322",
+      "original_path": "results/compare_plan2/case33_18_25/outer_explained.png"
+    },
+    "results/methods/case33_18_25/H/workers_1/run_1/summary.json": {
+      "bytes": 21487,
+      "sha256": "1a562e37c7e60b7cb40d8293d7d288e7d9e6ff182e7a7ff633466c7c2670b5de",
+      "original_path": "results/compare_plan2/case33_18_25/H/workers_1/run_1/summary.json"
+    },
+    "results/methods/case33_18_25/H/workers_1/run_1/metrics.json": {
+      "bytes": 46372,
+      "sha256": "f9269ba6e1c17322cf3e81811fe0f37d6ede144812e9da807956c2ce4c2f2358",
+      "original_path": "results/compare_plan2/case33_18_25/H/workers_1/run_1/metrics.json"
+    },
+    "results/methods/case33_18_25/H/workers_1/run_1/timeline.csv": {
+      "bytes": 20958,
+      "sha256": "922d797e20c8ec95efff63812f380b76d9450f7e802d2c9abd22a0fb5e365eb4",
+      "original_path": "results/compare_plan2/case33_18_25/H/workers_1/run_1/timeline.csv"
+    },
+    "results/methods/case33_18_25/H/workers_1/run_1/solves.csv.gz": {
+      "bytes": 13991,
+      "sha256": "7bac1f5abf95581df2c40b4c5d19820cb2e21eced7d5d9dba0ab1b628fd2d8c4",
+      "original_path": "results/compare_plan2/case33_18_25/H/workers_1/run_1/solves.csv",
+      "original_sha256": "92654ce5af8c86a3919b80b980da19c0a1745d563f3d1b2a87019cc28555466e",
+      "compression": "gzip"
+    },
+    "results/methods/case33_18_25/H/workers_1/run_1/snapshots/final.json.gz": {
+      "bytes": 9499,
+      "sha256": "55c81fa35fa8ba9143366f800de9b3068890d7825f5516d0012cb96955462d3c",
+      "original_path": "results/compare_plan2/case33_18_25/H/workers_1/run_1/snapshots/final.json",
+      "original_sha256": "8771848857520f14cdcd4dee59f61de116fa3602ea657664bbd15f50c911b56b",
+      "compression": "gzip"
+    },
+    "results/methods/case33_18_25/H/workers_1/run_2/summary.json": {
+      "bytes": 21492,
+      "sha256": "c01798e3e2974cd7dca0bee96bb95a0d5eebcb90fb2cb0aee266602adef88486",
+      "original_path": "results/compare_plan2/case33_18_25/H/workers_1/run_2/summary.json"
+    },
+    "results/methods/case33_18_25/H/workers_1/run_2/metrics.json": {
+      "bytes": 46372,
+      "sha256": "f9269ba6e1c17322cf3e81811fe0f37d6ede144812e9da807956c2ce4c2f2358",
+      "original_path": "results/compare_plan2/case33_18_25/H/workers_1/run_2/metrics.json"
+    },
+    "results/methods/case33_18_25/H/workers_1/run_2/timeline.csv": {
+      "bytes": 20980,
+      "sha256": "4fbb8cd758f19fb668f25f44eec83ab2e98dab275046b2b6407a9ea7eae1d457",
+      "original_path": "results/compare_plan2/case33_18_25/H/workers_1/run_2/timeline.csv"
+    },
+    "results/methods/case33_18_25/H/workers_1/run_2/solves.csv.gz": {
+      "bytes": 13930,
+      "sha256": "cf475eba0376e8cc87d241c81188bd909d4c1d3d4bd937d65188905da1a0ceeb",
+      "original_path": "results/compare_plan2/case33_18_25/H/workers_1/run_2/solves.csv",
+      "original_sha256": "345a1059c90a594b0c374d618ad29f7515dc87a7d582d9147c74bba1b6aafcc4",
+      "compression": "gzip"
+    },
+    "results/methods/case33_18_25/H/workers_1/run_2/snapshots/final.json.gz": {
+      "bytes": 9499,
+      "sha256": "55c81fa35fa8ba9143366f800de9b3068890d7825f5516d0012cb96955462d3c",
+      "original_path": "results/compare_plan2/case33_18_25/H/workers_1/run_2/snapshots/final.json",
+      "original_sha256": "8771848857520f14cdcd4dee59f61de116fa3602ea657664bbd15f50c911b56b",
+      "compression": "gzip"
+    },
+    "results/methods/case33_18_25/H/workers_1/run_3/summary.json": {
+      "bytes": 21490,
+      "sha256": "1ab061ced3fc68f61a1622a6ed243eda8274a7e538f9471896b47c1772729349",
+      "original_path": "results/compare_plan2/case33_18_25/H/workers_1/run_3/summary.json"
+    },
+    "results/methods/case33_18_25/H/workers_1/run_3/metrics.json": {
+      "bytes": 46372,
+      "sha256": "f9269ba6e1c17322cf3e81811fe0f37d6ede144812e9da807956c2ce4c2f2358",
+      "original_path": "results/compare_plan2/case33_18_25/H/workers_1/run_3/metrics.json"
+    },
+    "results/methods/case33_18_25/H/workers_1/run_3/timeline.csv": {
+      "bytes": 20972,
+      "sha256": "b3a0e9884de572206bee075261b18aaaa4e410ad88fc2137cee39b77b861ec78",
+      "original_path": "results/compare_plan2/case33_18_25/H/workers_1/run_3/timeline.csv"
+    },
+    "results/methods/case33_18_25/H/workers_1/run_3/solves.csv.gz": {
+      "bytes": 13963,
+      "sha256": "59e5504ef8ea45be87e0743d0107fa8e627d95b1e4aa8264244353e4141b823c",
+      "original_path": "results/compare_plan2/case33_18_25/H/workers_1/run_3/solves.csv",
+      "original_sha256": "b537e4c84c93d8c45731afcd4f6eac152fc466d164177297bfef087424306a26",
+      "compression": "gzip"
+    },
+    "results/methods/case33_18_25/H/workers_1/run_3/snapshots/final.json.gz": {
+      "bytes": 9499,
+      "sha256": "55c81fa35fa8ba9143366f800de9b3068890d7825f5516d0012cb96955462d3c",
+      "original_path": "results/compare_plan2/case33_18_25/H/workers_1/run_3/snapshots/final.json",
+      "original_sha256": "8771848857520f14cdcd4dee59f61de116fa3602ea657664bbd15f50c911b56b",
+      "compression": "gzip"
+    },
+    "results/methods/case33_18_25/H/workers_16/run_1/summary.json": {
+      "bytes": 21941,
+      "sha256": "cd910832f3e68d79a6508feab32b94f95122ad8a425285d8463db9abc7312b87",
+      "original_path": "results/compare_plan2/case33_18_25/H/workers_16/run_1/summary.json"
+    },
+    "results/methods/case33_18_25/H/workers_16/run_1/metrics.json": {
+      "bytes": 46624,
+      "sha256": "4f8a14abf952bfc5c5df1e8923d1e9b06b859ac1983e39ecc279a850af0178fe",
+      "original_path": "results/compare_plan2/case33_18_25/H/workers_16/run_1/metrics.json"
+    },
+    "results/methods/case33_18_25/H/workers_16/run_1/timeline.csv": {
+      "bytes": 21029,
+      "sha256": "38d7eb85419af8d2cea21e6eb3d3ca18f9f887eea8d398da1402ac16b81e967f",
+      "original_path": "results/compare_plan2/case33_18_25/H/workers_16/run_1/timeline.csv"
+    },
+    "results/methods/case33_18_25/H/workers_16/run_1/solves.csv.gz": {
+      "bytes": 16495,
+      "sha256": "c609d2dd35e58fce2532824c68eae13d572b99df33cb1d45b25633390f44fc52",
+      "original_path": "results/compare_plan2/case33_18_25/H/workers_16/run_1/solves.csv",
+      "original_sha256": "d0cc0c8935160524bb062d04addf53f805493ad4ce3506ae9c346104db93009e",
+      "compression": "gzip"
+    },
+    "results/methods/case33_18_25/H/workers_16/run_1/snapshots/final.json.gz": {
+      "bytes": 10058,
+      "sha256": "1c1509e15f3f1b087884e527a504f4fe76eddb05609cb9825a1e59f5342a2c57",
+      "original_path": "results/compare_plan2/case33_18_25/H/workers_16/run_1/snapshots/final.json",
+      "original_sha256": "68a7ee8cf6486e5bdfd810f63c5564fbb5e1da481cc0d21d3f023b904320ab86",
+      "compression": "gzip"
+    },
+    "results/methods/case33_18_25/H/workers_16/run_2/summary.json": {
+      "bytes": 22779,
+      "sha256": "c3aa3aaaa4c9241046ccc6d805c431999a7f2198725165f6509e822396e67d1d",
+      "original_path": "results/compare_plan2/case33_18_25/H/workers_16/run_2/summary.json"
+    },
+    "results/methods/case33_18_25/H/workers_16/run_2/metrics.json": {
+      "bytes": 46625,
+      "sha256": "c38fdc201f328ff070a107a71fcb320e0e8fccceafddedd7c0221be802b5b606",
+      "original_path": "results/compare_plan2/case33_18_25/H/workers_16/run_2/metrics.json"
+    },
+    "results/methods/case33_18_25/H/workers_16/run_2/timeline.csv": {
+      "bytes": 24840,
+      "sha256": "3639db5b801800477cba678534a327ec321a3d3822b35f78be67b635c61f0def",
+      "original_path": "results/compare_plan2/case33_18_25/H/workers_16/run_2/timeline.csv"
+    },
+    "results/methods/case33_18_25/H/workers_16/run_2/solves.csv.gz": {
+      "bytes": 17785,
+      "sha256": "c4ffe7d4e1e6723b9abd26780e74238d92e816432d5a2c02012f6fb3de7445c3",
+      "original_path": "results/compare_plan2/case33_18_25/H/workers_16/run_2/solves.csv",
+      "original_sha256": "fa678519a2c104002478cd5a3d3e3cbed89e22c2581af38e6f5fe097ad315562",
+      "compression": "gzip"
+    },
+    "results/methods/case33_18_25/H/workers_16/run_2/snapshots/final.json.gz": {
+      "bytes": 10944,
+      "sha256": "1e12588d0daa6bdb17960c7e585c9ba2f0b4261839d7304c7c694f58d3bd6732",
+      "original_path": "results/compare_plan2/case33_18_25/H/workers_16/run_2/snapshots/final.json",
+      "original_sha256": "b5992ed979465eb63f199851021cf070a2ac7d31f0d18803f14d10904833d2f6",
+      "compression": "gzip"
+    },
+    "results/methods/case33_18_25/H/workers_16/run_3/summary.json": {
+      "bytes": 22357,
+      "sha256": "d84f6f50e89ea3eb4c116a002f17440b301f0f71b1de383cd0b5eb92b7eb4db6",
+      "original_path": "results/compare_plan2/case33_18_25/H/workers_16/run_3/summary.json"
+    },
+    "results/methods/case33_18_25/H/workers_16/run_3/metrics.json": {
+      "bytes": 46614,
+      "sha256": "14fb1ed5d5b04e31cc352e60415cdb5b01cd941c1950324a2ced96c1a79775d8",
+      "original_path": "results/compare_plan2/case33_18_25/H/workers_16/run_3/metrics.json"
+    },
+    "results/methods/case33_18_25/H/workers_16/run_3/timeline.csv": {
+      "bytes": 24400,
+      "sha256": "5d1ef1f26b30ebde195a19ff68ce73f87cb23a224ac8ae6c06c888db678cb3a4",
+      "original_path": "results/compare_plan2/case33_18_25/H/workers_16/run_3/timeline.csv"
+    },
+    "results/methods/case33_18_25/H/workers_16/run_3/solves.csv.gz": {
+      "bytes": 17839,
+      "sha256": "337099619802828c00177993ce0846656efb3e8ed41e70516d0c81e3416debb4",
+      "original_path": "results/compare_plan2/case33_18_25/H/workers_16/run_3/solves.csv",
+      "original_sha256": "4969bd29fe5cad2f95d24f20dc6680639f5890fce11d95255db7cb9c9e4f8577",
+      "compression": "gzip"
+    },
+    "results/methods/case33_18_25/H/workers_16/run_3/snapshots/final.json.gz": {
+      "bytes": 11113,
+      "sha256": "2b53a56d428dbda152245842005dfe8f864c244ad2f556a6eb62c393a24e402e",
+      "original_path": "results/compare_plan2/case33_18_25/H/workers_16/run_3/snapshots/final.json",
+      "original_sha256": "ad1751742b0abdfbdcbe18a3b116ffcfe7ae0f04cfb2e213088075c61bc45bc1",
+      "compression": "gzip"
+    },
+    "results/methods/case33_18_25/R/workers_1/run_1/summary.json": {
+      "bytes": 6454,
+      "sha256": "ab70acfea9dc20623b1193d87a241018f4754a23ce8badd8935f9d133cde64c5",
+      "original_path": "results/compare_plan2/case33_18_25/R/workers_1/run_1/summary.json"
+    },
+    "results/methods/case33_18_25/R/workers_1/run_1/metrics.json": {
+      "bytes": 46415,
+      "sha256": "0e95797f6a081724feef230c4c9bacb86f4570d7aa27fd458424692928b0365f",
+      "original_path": "results/compare_plan2/case33_18_25/R/workers_1/run_1/metrics.json"
+    },
+    "results/methods/case33_18_25/R/workers_1/run_1/timeline.csv": {
+      "bytes": 9927,
+      "sha256": "bde12c92f071dcc06244e6abe442d8dd93b91d48e8c71aeedf7e32bfc59e791f",
+      "original_path": "results/compare_plan2/case33_18_25/R/workers_1/run_1/timeline.csv"
+    },
+    "results/methods/case33_18_25/R/workers_1/run_1/solves.csv.gz": {
+      "bytes": 6938,
+      "sha256": "5985acffd4389318ad091764865cb80d2130946fe4e26fef7cc53fe306f9f43d",
+      "original_path": "results/compare_plan2/case33_18_25/R/workers_1/run_1/solves.csv",
+      "original_sha256": "d8fd7443254301e16f95d038d5258e683c3f3d9da4f0453b27b894e47df7d896",
+      "compression": "gzip"
+    },
+    "results/methods/case33_18_25/R/workers_1/run_1/snapshots/final.json.gz": {
+      "bytes": 2268,
+      "sha256": "fdf2a7f2ec9bc53f7b9ab646bcd047c973c264f6a147c7c6cf3b2325006e82be",
+      "original_path": "results/compare_plan2/case33_18_25/R/workers_1/run_1/snapshots/final.json",
+      "original_sha256": "7b10db0143294cfaa55e82a6034523ffc0e7839107374d3c39f82177def93cc2",
+      "compression": "gzip"
+    },
+    "results/methods/case33_18_25/R/workers_1/run_2/summary.json": {
+      "bytes": 6455,
+      "sha256": "7c8f3ba064995e677ba50b75a159dc49a56c95c4e4af63cfb8dd126be1fbb54d",
+      "original_path": "results/compare_plan2/case33_18_25/R/workers_1/run_2/summary.json"
+    },
+    "results/methods/case33_18_25/R/workers_1/run_2/metrics.json": {
+      "bytes": 46412,
+      "sha256": "78034d290f732c9dfbc22169552643a680fc3bfc68f74b219993dc6930484157",
+      "original_path": "results/compare_plan2/case33_18_25/R/workers_1/run_2/metrics.json"
+    },
+    "results/methods/case33_18_25/R/workers_1/run_2/timeline.csv": {
+      "bytes": 9925,
+      "sha256": "ff8432116b11ea8cfe49cf815654b40b0d71d042b54f263f0af4aa002612bf05",
+      "original_path": "results/compare_plan2/case33_18_25/R/workers_1/run_2/timeline.csv"
+    },
+    "results/methods/case33_18_25/R/workers_1/run_2/solves.csv.gz": {
+      "bytes": 6998,
+      "sha256": "3582c4e3b99b7f4b14a719af131c24b178067e58841464316fea40eb0f247247",
+      "original_path": "results/compare_plan2/case33_18_25/R/workers_1/run_2/solves.csv",
+      "original_sha256": "0ac01a3f96a95e5d7576b8de67685752264d5c7d3fa4ff734e588bb2a4fe246f",
+      "compression": "gzip"
+    },
+    "results/methods/case33_18_25/R/workers_1/run_2/snapshots/final.json.gz": {
+      "bytes": 2268,
+      "sha256": "fdf2a7f2ec9bc53f7b9ab646bcd047c973c264f6a147c7c6cf3b2325006e82be",
+      "original_path": "results/compare_plan2/case33_18_25/R/workers_1/run_2/snapshots/final.json",
+      "original_sha256": "7b10db0143294cfaa55e82a6034523ffc0e7839107374d3c39f82177def93cc2",
+      "compression": "gzip"
+    },
+    "results/methods/case33_18_25/R/workers_1/run_3/summary.json": {
+      "bytes": 6452,
+      "sha256": "1bb2b87c0bd24e544d81ce137003884a73dd6ac8b02142e4d6f1f843463c1d24",
+      "original_path": "results/compare_plan2/case33_18_25/R/workers_1/run_3/summary.json"
+    },
+    "results/methods/case33_18_25/R/workers_1/run_3/metrics.json": {
+      "bytes": 46412,
+      "sha256": "98ac88ac39081294872245d2c1331793ecfa15a1e851423abe79812071eb592c",
+      "original_path": "results/compare_plan2/case33_18_25/R/workers_1/run_3/metrics.json"
+    },
+    "results/methods/case33_18_25/R/workers_1/run_3/timeline.csv": {
+      "bytes": 9915,
+      "sha256": "58c1273848aedac96b7a2d6bd42b2d65b4974ea24491566c91083be5441f41f6",
+      "original_path": "results/compare_plan2/case33_18_25/R/workers_1/run_3/timeline.csv"
+    },
+    "results/methods/case33_18_25/R/workers_1/run_3/solves.csv.gz": {
+      "bytes": 6997,
+      "sha256": "c5872e654ddfc84a810e2d1b0b3355a32a5202f6c29f9c127f2cf95c29e1a449",
+      "original_path": "results/compare_plan2/case33_18_25/R/workers_1/run_3/solves.csv",
+      "original_sha256": "5f9a2acf727ba61306942b50c3e1ecfb16b36b295785cf0f37aba2ac998693b2",
+      "compression": "gzip"
+    },
+    "results/methods/case33_18_25/R/workers_1/run_3/snapshots/final.json.gz": {
+      "bytes": 2268,
+      "sha256": "fdf2a7f2ec9bc53f7b9ab646bcd047c973c264f6a147c7c6cf3b2325006e82be",
+      "original_path": "results/compare_plan2/case33_18_25/R/workers_1/run_3/snapshots/final.json",
+      "original_sha256": "7b10db0143294cfaa55e82a6034523ffc0e7839107374d3c39f82177def93cc2",
+      "compression": "gzip"
+    },
+    "results/methods/case33_18_25/R/workers_16/run_1/summary.json": {
+      "bytes": 6465,
+      "sha256": "2d4753158dcc2107e1f45ffa2c6757363ed99147bc101bc306765e43406a80de",
+      "original_path": "results/compare_plan2/case33_18_25/R/workers_16/run_1/summary.json"
+    },
+    "results/methods/case33_18_25/R/workers_16/run_1/metrics.json": {
+      "bytes": 46649,
+      "sha256": "8eddb0804a5e6c19208e19fd9353f8981d472d603107ce14aed8eae2ae2e6035",
+      "original_path": "results/compare_plan2/case33_18_25/R/workers_16/run_1/metrics.json"
+    },
+    "results/methods/case33_18_25/R/workers_16/run_1/timeline.csv": {
+      "bytes": 9951,
+      "sha256": "05e080d185bd888b0f2a0de8161b1df2f01420a3eb8abfcf31c20fa3227c4539",
+      "original_path": "results/compare_plan2/case33_18_25/R/workers_16/run_1/timeline.csv"
+    },
+    "results/methods/case33_18_25/R/workers_16/run_1/solves.csv.gz": {
+      "bytes": 7052,
+      "sha256": "007d33bf9f66f8223d11d4f5d707b58c7f7113f79a599fec58b8782158486db5",
+      "original_path": "results/compare_plan2/case33_18_25/R/workers_16/run_1/solves.csv",
+      "original_sha256": "d237e11d464480f8cf76a7db8345cb42be7d773dfcbcd2a3a1b507ac400f9a5d",
+      "compression": "gzip"
+    },
+    "results/methods/case33_18_25/R/workers_16/run_1/snapshots/final.json.gz": {
+      "bytes": 2268,
+      "sha256": "fdf2a7f2ec9bc53f7b9ab646bcd047c973c264f6a147c7c6cf3b2325006e82be",
+      "original_path": "results/compare_plan2/case33_18_25/R/workers_16/run_1/snapshots/final.json",
+      "original_sha256": "7b10db0143294cfaa55e82a6034523ffc0e7839107374d3c39f82177def93cc2",
+      "compression": "gzip"
+    },
+    "results/methods/case33_18_25/R/workers_16/run_2/summary.json": {
+      "bytes": 6464,
+      "sha256": "0bf2d4d55c20cc9531f8c12fad4657f9ca3bfcb6a2aea225db9a03205e74aaef",
+      "original_path": "results/compare_plan2/case33_18_25/R/workers_16/run_2/summary.json"
+    },
+    "results/methods/case33_18_25/R/workers_16/run_2/metrics.json": {
+      "bytes": 46648,
+      "sha256": "6debb5ea13ac6a8bf261399d15f54b1dbcd349520bc42603c36256df8b6ef4b0",
+      "original_path": "results/compare_plan2/case33_18_25/R/workers_16/run_2/metrics.json"
+    },
+    "results/methods/case33_18_25/R/workers_16/run_2/timeline.csv": {
+      "bytes": 9961,
+      "sha256": "302b370feb0fc0b00260b4fe277571a59e8541a6a06245c28f11d807e4bce5e5",
+      "original_path": "results/compare_plan2/case33_18_25/R/workers_16/run_2/timeline.csv"
+    },
+    "results/methods/case33_18_25/R/workers_16/run_2/solves.csv.gz": {
+      "bytes": 7109,
+      "sha256": "b2089321499b6dc5dbabc8fe5c9abea6e2f3761badeabbbf060c00c734e0b1dc",
+      "original_path": "results/compare_plan2/case33_18_25/R/workers_16/run_2/solves.csv",
+      "original_sha256": "0c7a53b5138a01efa30ec84da6060f8fb060f3c9acae940f1b0c071da522c91e",
+      "compression": "gzip"
+    },
+    "results/methods/case33_18_25/R/workers_16/run_2/snapshots/final.json.gz": {
+      "bytes": 2268,
+      "sha256": "fdf2a7f2ec9bc53f7b9ab646bcd047c973c264f6a147c7c6cf3b2325006e82be",
+      "original_path": "results/compare_plan2/case33_18_25/R/workers_16/run_2/snapshots/final.json",
+      "original_sha256": "7b10db0143294cfaa55e82a6034523ffc0e7839107374d3c39f82177def93cc2",
+      "compression": "gzip"
+    },
+    "results/methods/case33_18_25/R/workers_16/run_3/summary.json": {
+      "bytes": 6461,
+      "sha256": "73923b60e406aace6f4eedc966353217260a0dcc6e7c0e3dd55ae7606fe9caeb",
+      "original_path": "results/compare_plan2/case33_18_25/R/workers_16/run_3/summary.json"
+    },
+    "results/methods/case33_18_25/R/workers_16/run_3/metrics.json": {
+      "bytes": 46648,
+      "sha256": "6debb5ea13ac6a8bf261399d15f54b1dbcd349520bc42603c36256df8b6ef4b0",
+      "original_path": "results/compare_plan2/case33_18_25/R/workers_16/run_3/metrics.json"
+    },
+    "results/methods/case33_18_25/R/workers_16/run_3/timeline.csv": {
+      "bytes": 9953,
+      "sha256": "913b41cbbcc895da06af79826a93ae1b2fe90dea0159aa5e4d0ad7aeee74f4bc",
+      "original_path": "results/compare_plan2/case33_18_25/R/workers_16/run_3/timeline.csv"
+    },
+    "results/methods/case33_18_25/R/workers_16/run_3/solves.csv.gz": {
+      "bytes": 7092,
+      "sha256": "9850a85375901697c30d28ca0d67c349424fb152dda65887d11a9fa0caf7a39a",
+      "original_path": "results/compare_plan2/case33_18_25/R/workers_16/run_3/solves.csv",
+      "original_sha256": "edb94e67d9326546a09ffd9f77dcf4aae6b121e2ab5a055cd854789c877bee88",
+      "compression": "gzip"
+    },
+    "results/methods/case33_18_25/R/workers_16/run_3/snapshots/final.json.gz": {
+      "bytes": 2268,
+      "sha256": "fdf2a7f2ec9bc53f7b9ab646bcd047c973c264f6a147c7c6cf3b2325006e82be",
+      "original_path": "results/compare_plan2/case33_18_25/R/workers_16/run_3/snapshots/final.json",
+      "original_sha256": "7b10db0143294cfaa55e82a6034523ffc0e7839107374d3c39f82177def93cc2",
+      "compression": "gzip"
+    },
+    "results/methods/case33_18_25/RB/workers_16/run_1/summary.json": {
+      "bytes": 20142,
+      "sha256": "645fc755370a3728cbf79f98ab6bbca71c0758004331842e41f67fcfd330da46",
+      "original_path": "results/compare_plan2/case33_18_25/RB/workers_16/run_1/summary.json"
+    },
+    "results/methods/case33_18_25/RB/workers_16/run_1/metrics.json": {
+      "bytes": 46598,
+      "sha256": "47480b01e3d943283804cd08c8b17efcabf69561141e36874db990194ece36ba",
+      "original_path": "results/compare_plan2/case33_18_25/RB/workers_16/run_1/metrics.json"
+    },
+    "results/methods/case33_18_25/RB/workers_16/run_1/timeline.csv": {
+      "bytes": 22398,
+      "sha256": "84f28b00301c0281591609d4901b9bcbbd66bd15f2c50b344836595de3e8dcc7",
+      "original_path": "results/compare_plan2/case33_18_25/RB/workers_16/run_1/timeline.csv"
+    },
+    "results/methods/case33_18_25/RB/workers_16/run_1/solves.csv.gz": {
+      "bytes": 15890,
+      "sha256": "2a07d9d66f39c93a61128e13510a23244f44998a87cf96d57b1dc435e5df2208",
+      "original_path": "results/compare_plan2/case33_18_25/RB/workers_16/run_1/solves.csv",
+      "original_sha256": "d6feb1b9d31b83626404e852c52b132b3c2deb0283495b976dba2de0e38aba3c",
+      "compression": "gzip"
+    },
+    "results/methods/case33_18_25/RB/workers_16/run_1/snapshots/final.json.gz": {
+      "bytes": 5281,
+      "sha256": "17ee29e558e0f4c44cf100c5f677240bb560bb629c26c89685ca035a1fe908f1",
+      "original_path": "results/compare_plan2/case33_18_25/RB/workers_16/run_1/snapshots/final.json",
+      "original_sha256": "6940432b0c00b97da6b15d0c46ccbed53ed81515a08b42131df0bcc8181b52e5",
+      "compression": "gzip"
+    },
+    "results/methods/case33_18_25/RCUT/workers_16/run_1/summary.json": {
+      "bytes": 22228,
+      "sha256": "b95eca9a636cba6ac64c3e319ec1a78ea9a12ffc1c27e45e5211f5f712dce4b1",
+      "original_path": "results/compare_plan2/case33_18_25/RCUT/workers_16/run_1/summary.json"
+    },
+    "results/methods/case33_18_25/RCUT/workers_16/run_1/metrics.json": {
+      "bytes": 47982,
+      "sha256": "ed8bf966308e5afd044f1d868c1c3d1b6f8036d9151b3f2ece6233a39c785b62",
+      "original_path": "results/compare_plan2/case33_18_25/RCUT/workers_16/run_1/metrics.json"
+    },
+    "results/methods/case33_18_25/RCUT/workers_16/run_1/timeline.csv": {
+      "bytes": 10171,
+      "sha256": "6d386bcde51f57101a748265217038b6a0333927e34bc95e29db555626ae244d",
+      "original_path": "results/compare_plan2/case33_18_25/RCUT/workers_16/run_1/timeline.csv"
+    },
+    "results/methods/case33_18_25/RCUT/workers_16/run_1/solves.csv.gz": {
+      "bytes": 22612,
+      "sha256": "116beb21fb9ed3776bba0d25ed7ee75e66dba2d70b3a8ecd35c4ba38553a15aa",
+      "original_path": "results/compare_plan2/case33_18_25/RCUT/workers_16/run_1/solves.csv",
+      "original_sha256": "0b0a3c640167abcafb3377b42b83aef65a684809f7d1e6033870051b98838938",
+      "compression": "gzip"
+    },
+    "results/methods/case33_18_25/RCUT/workers_16/run_1/snapshots/final.json.gz": {
+      "bytes": 3933,
+      "sha256": "b485eb9939594b045122058b7fcae0793cd8520aa5a2609b3964dad161e97a0f",
+      "original_path": "results/compare_plan2/case33_18_25/RCUT/workers_16/run_1/snapshots/final.json",
+      "original_sha256": "55e9ebfa9fe536164a405bbcba1e63cfd138d184f79651429164aed1e90f8ae5",
+      "compression": "gzip"
+    },
+    "results/methods/case33_18_25/RCUT-t0.5/workers_16/run_1/summary.json": {
+      "bytes": 22549,
+      "sha256": "5e628efbd71ef0220dbbd1eb7faf7958847b2338c8b4ee4f84972c2db38599f0",
+      "original_path": "results/compare_plan2/case33_18_25/RCUT-t0.5/workers_16/run_1/summary.json"
+    },
+    "results/methods/case33_18_25/RCUT-t0.5/workers_16/run_1/metrics.json": {
+      "bytes": 47435,
+      "sha256": "f62de0d1e48dab5a0c6a554281ca8d785824b719432e10073371dedb7aeb9596",
+      "original_path": "results/compare_plan2/case33_18_25/RCUT-t0.5/workers_16/run_1/metrics.json"
+    },
+    "results/methods/case33_18_25/RCUT-t0.5/workers_16/run_1/timeline.csv": {
+      "bytes": 10902,
+      "sha256": "4972b138a53891f4774b9a10f296a49df59325cebee6e9e66bce9d27210bd30e",
+      "original_path": "results/compare_plan2/case33_18_25/RCUT-t0.5/workers_16/run_1/timeline.csv"
+    },
+    "results/methods/case33_18_25/RCUT-t0.5/workers_16/run_1/solves.csv.gz": {
+      "bytes": 24400,
+      "sha256": "f7939279dbc77d561f3b18fceabe783b6cc6a3055f116f613e1e2c8b7288f0cf",
+      "original_path": "results/compare_plan2/case33_18_25/RCUT-t0.5/workers_16/run_1/solves.csv",
+      "original_sha256": "80afc7cfb859f1110678f13425c14b27c9e11c78899be1c366dae02f66d59740",
+      "compression": "gzip"
+    },
+    "results/methods/case33_18_25/RCUT-t0.5/workers_16/run_1/snapshots/final.json.gz": {
+      "bytes": 4303,
+      "sha256": "dd59f1340169a9d00739d3816108a00b0c6aaa86eba8380b486d5773a849577c",
+      "original_path": "results/compare_plan2/case33_18_25/RCUT-t0.5/workers_16/run_1/snapshots/final.json",
+      "original_sha256": "a407d92e00275ff239fd054dd974493802035df6020043d80297245c311e2613",
+      "compression": "gzip"
+    },
+    "results/methods/case33_18_25/RCUT-t2/workers_16/run_1/summary.json": {
+      "bytes": 21742,
+      "sha256": "cdf9b52442e46f37d656537cfd17ca0a3f7f9dd9b31c25178865ea7c37fada9e",
+      "original_path": "results/compare_plan2/case33_18_25/RCUT-t2/workers_16/run_1/summary.json"
+    },
+    "results/methods/case33_18_25/RCUT-t2/workers_16/run_1/metrics.json": {
+      "bytes": 49097,
+      "sha256": "79bc734ca07f576286a73e38ca8fbc5c649ca30e022d1af35461fc6e40dbb580",
+      "original_path": "results/compare_plan2/case33_18_25/RCUT-t2/workers_16/run_1/metrics.json"
+    },
+    "results/methods/case33_18_25/RCUT-t2/workers_16/run_1/timeline.csv": {
+      "bytes": 10242,
+      "sha256": "3d0ab49da477a4434a67eb6c2ec8d77280435023801c0164076a636d4fb40668",
+      "original_path": "results/compare_plan2/case33_18_25/RCUT-t2/workers_16/run_1/timeline.csv"
+    },
+    "results/methods/case33_18_25/RCUT-t2/workers_16/run_1/solves.csv.gz": {
+      "bytes": 20257,
+      "sha256": "121edfd4ee678316913c50bbc3af256a82ac0306e76df94493c466225a943d6f",
+      "original_path": "results/compare_plan2/case33_18_25/RCUT-t2/workers_16/run_1/solves.csv",
+      "original_sha256": "aa8c29e9a17f36914909de910b9a794269a33b5b4823301d1efc70b47ce03b69",
+      "compression": "gzip"
+    },
+    "results/methods/case33_18_25/RCUT-t2/workers_16/run_1/snapshots/final.json.gz": {
+      "bytes": 3580,
+      "sha256": "3c7e9010e645ba8fd539d251dd6a9008c4da5b4bd1a23033c20c0572f6321652",
+      "original_path": "results/compare_plan2/case33_18_25/RCUT-t2/workers_16/run_1/snapshots/final.json",
+      "original_sha256": "7f7f400ebe44f9b98bf5bc685b8c3ed227ba229bdf7196afe79fa0c53454fcf6",
+      "compression": "gzip"
+    },
+    "results/methods/case33_18_25/RCUT2/workers_16/run_1/summary.json": {
+      "bytes": 22663,
+      "sha256": "0807469694c0c947dc5ca784dc71b702b38e6661ed78b12732c953950064f726",
+      "original_path": "results/compare_plan2/case33_18_25/RCUT2/workers_16/run_1/summary.json"
+    },
+    "results/methods/case33_18_25/RCUT2/workers_16/run_1/metrics.json": {
+      "bytes": 46596,
+      "sha256": "01b1d56398c3776ac34858944ff1d1437a7da7e6e16297ad3f2a0d0788548948",
+      "original_path": "results/compare_plan2/case33_18_25/RCUT2/workers_16/run_1/metrics.json"
+    },
+    "results/methods/case33_18_25/RCUT2/workers_16/run_1/timeline.csv": {
+      "bytes": 11153,
+      "sha256": "a39eea56cfb7cfc523ef8bcd118f57fc869348a1c80bfbf082e3ecff2d1001d1",
+      "original_path": "results/compare_plan2/case33_18_25/RCUT2/workers_16/run_1/timeline.csv"
+    },
+    "results/methods/case33_18_25/RCUT2/workers_16/run_1/solves.csv.gz": {
+      "bytes": 32505,
+      "sha256": "b2dcb8231eab9abb3d5f36a15d6e354833235687e0adcd0f9368c898038b98bc",
+      "original_path": "results/compare_plan2/case33_18_25/RCUT2/workers_16/run_1/solves.csv",
+      "original_sha256": "e20e5f2e042b8249e119497c3a2fc8467cd7c8e22a613e8afa2cac5cdc1e2f2c",
+      "compression": "gzip"
+    },
+    "results/methods/case33_18_25/RCUT2/workers_16/run_1/snapshots/final.json.gz": {
+      "bytes": 8318,
+      "sha256": "ccb4aa0d450f63b641489991afb5ea99c999b8fc2b67793d4e2fc1c4e84f9c0a",
+      "original_path": "results/compare_plan2/case33_18_25/RCUT2/workers_16/run_1/snapshots/final.json",
+      "original_sha256": "f291fa394c5a31440e9be6af23516f8636b1038fa7f94c31161a1017e81d7280",
+      "compression": "gzip"
+    },
+    "results/methods/case33_18_25/RCUT2-t0.5/workers_16/run_1/summary.json": {
+      "bytes": 22987,
+      "sha256": "fd0239ff59d398b2f261d0738c097eb9098e8afdae5aea3bd4856be30291607f",
+      "original_path": "results/compare_plan2/case33_18_25/RCUT2-t0.5/workers_16/run_1/summary.json"
+    },
+    "results/methods/case33_18_25/RCUT2-t0.5/workers_16/run_1/metrics.json": {
+      "bytes": 46595,
+      "sha256": "4960f0caf61913582fbe9cb438bd65ab933e4482b6aa53aff338b39ac157176e",
+      "original_path": "results/compare_plan2/case33_18_25/RCUT2-t0.5/workers_16/run_1/metrics.json"
+    },
+    "results/methods/case33_18_25/RCUT2-t0.5/workers_16/run_1/timeline.csv": {
+      "bytes": 11220,
+      "sha256": "6317669dafa55c2d8abdb39b16153c138f9cc0cf473cbeda8f6e1efc14ecef29",
+      "original_path": "results/compare_plan2/case33_18_25/RCUT2-t0.5/workers_16/run_1/timeline.csv"
+    },
+    "results/methods/case33_18_25/RCUT2-t0.5/workers_16/run_1/solves.csv.gz": {
+      "bytes": 34857,
+      "sha256": "7f4290316c94693f58c49a835fdcb179288066f6a34f4e8008670af115041038",
+      "original_path": "results/compare_plan2/case33_18_25/RCUT2-t0.5/workers_16/run_1/solves.csv",
+      "original_sha256": "24180d5a956c91f31ca63d458e9e4d90e95f9dad2ddb42a22a6d162f7ac2046f",
+      "compression": "gzip"
+    },
+    "results/methods/case33_18_25/RCUT2-t0.5/workers_16/run_1/snapshots/final.json.gz": {
+      "bytes": 8850,
+      "sha256": "8597aae839acf4d028ddb2c5a35c3cefed9955735d2cf5fdb2173e76edebace5",
+      "original_path": "results/compare_plan2/case33_18_25/RCUT2-t0.5/workers_16/run_1/snapshots/final.json",
+      "original_sha256": "56b6c5f431ebe74e763fd29e34a842a4f93ef0d26dc61047def20cad55e748d4",
+      "compression": "gzip"
+    },
+    "results/methods/case33_18_25/RCUT2-t2/workers_16/run_1/summary.json": {
+      "bytes": 22168,
+      "sha256": "9319467c7118a165aeb3dda3bd4fa4f2024bb7fc25f9fcfd572b0cf4fdcd7408",
+      "original_path": "results/compare_plan2/case33_18_25/RCUT2-t2/workers_16/run_1/summary.json"
+    },
+    "results/methods/case33_18_25/RCUT2-t2/workers_16/run_1/metrics.json": {
+      "bytes": 46618,
+      "sha256": "3067017bc82d5b36dfb9ba00421526cb1b5098e591af8c79a060c1281af85425",
+      "original_path": "results/compare_plan2/case33_18_25/RCUT2-t2/workers_16/run_1/metrics.json"
+    },
+    "results/methods/case33_18_25/RCUT2-t2/workers_16/run_1/timeline.csv": {
+      "bytes": 11010,
+      "sha256": "ab569eeeca26cb8b0805c295d53aef52d37bff32e284e048fa503f536d5b38d1",
+      "original_path": "results/compare_plan2/case33_18_25/RCUT2-t2/workers_16/run_1/timeline.csv"
+    },
+    "results/methods/case33_18_25/RCUT2-t2/workers_16/run_1/solves.csv.gz": {
+      "bytes": 29335,
+      "sha256": "685c08faa8599b728d7f0826bea4130228d952903430814414683b7f94612910",
+      "original_path": "results/compare_plan2/case33_18_25/RCUT2-t2/workers_16/run_1/solves.csv",
+      "original_sha256": "ab5a96755f9c1c4d1989e11b4db29123703708cc5d1261ab34816ab2c99a4f81",
+      "compression": "gzip"
+    },
+    "results/methods/case33_18_25/RCUT2-t2/workers_16/run_1/snapshots/final.json.gz": {
+      "bytes": 7732,
+      "sha256": "41af05fd44e12da6ad52ed199a564ac5a6f39b06065a45aefc3334a7d2ba5dc1",
+      "original_path": "results/compare_plan2/case33_18_25/RCUT2-t2/workers_16/run_1/snapshots/final.json",
+      "original_sha256": "049fc808d16b70c21fb6133a511dda1f48500d6d11b174581a2821f30d45578a",
+      "compression": "gzip"
+    },
+    "results/methods/case33_18_25_30/comparison.md": {
+      "bytes": 11533,
+      "sha256": "ac9a7d4038fbe78c2afc2edc11869c980a5243dc24f8c8e4261780d61c6e4c38",
+      "original_path": "results/compare_plan2/case33_18_25_30/comparison.md"
+    },
+    "results/methods/case33_18_25_30/comparison.csv": {
+      "bytes": 5767,
+      "sha256": "ca1ea3bd4b7bad0ac14088cbe2103f4f4808029a6d186e71b2f5af0ef0d60a26",
+      "original_path": "results/compare_plan2/case33_18_25_30/comparison.csv"
+    },
+    "results/methods/case33_18_25_30/gap_time.png": {
+      "bytes": 68682,
+      "sha256": "22f3b49780667126fa3d62070332f43cc4287fe4f16fc6aec7034af6e3fa547a",
+      "original_path": "results/compare_plan2/case33_18_25_30/gap_time.png"
+    },
+    "results/methods/case33_18_25_30/mr_fr_time.png": {
+      "bytes": 185481,
+      "sha256": "a4ddad7446daf1a0ad078a07baed89548c7d4088ebfb27de2c6086739db76d27",
+      "original_path": "results/compare_plan2/case33_18_25_30/mr_fr_time.png"
+    },
+    "results/methods/case33_18_25_30/time_breakdown.png": {
+      "bytes": 111833,
+      "sha256": "4916a345879d16c5f77770e93d64a25d4c47efbc3647eb9263dce37b00430f09",
+      "original_path": "results/compare_plan2/case33_18_25_30/time_breakdown.png"
+    },
+    "results/methods/case33_18_25_30/threshold_sensitivity.png": {
+      "bytes": 109343,
+      "sha256": "ff99ee69135dc58040f24bbe14f56859dcb0582a205d8871937a1bdf585c84e4",
+      "original_path": "results/compare_plan2/case33_18_25_30/threshold_sensitivity.png"
+    },
+    "results/methods/case33_18_25_30/R/workers_16/run_1/summary.json": {
+      "bytes": 16330,
+      "sha256": "fad6086625acb962b5c27ad0b9ba445906b4b20992631c36102769d704e420ef",
+      "original_path": "results/compare_plan2/case33_18_25_30/R/workers_16/run_1/summary.json"
+    },
+    "results/methods/case33_18_25_30/R/workers_16/run_1/metrics.json": {
+      "bytes": 85333,
+      "sha256": "1e7b3c8314a5ea6ea2118f7d6bcde038d5ca1ff389b6734fc5f7bbd753c9c77f",
+      "original_path": "results/compare_plan2/case33_18_25_30/R/workers_16/run_1/metrics.json"
+    },
+    "results/methods/case33_18_25_30/R/workers_16/run_1/timeline.csv": {
+      "bytes": 436403,
+      "sha256": "b35f14b285d03d851d6d52fb3d907ac6661ce82b47f4554f9d3b8174068e56eb",
+      "original_path": "results/compare_plan2/case33_18_25_30/R/workers_16/run_1/timeline.csv"
+    },
+    "results/methods/case33_18_25_30/R/workers_16/run_1/solves.csv.gz": {
+      "bytes": 160425,
+      "sha256": "53c70410ef69579c83b1ff03409c7a958dc8a1ad3358bc69503d5c707996b2e3",
+      "original_path": "results/compare_plan2/case33_18_25_30/R/workers_16/run_1/solves.csv",
+      "original_sha256": "be790480e41b346be8d0a3038e890b5fa4f9e99e9a57ef570e4d6f5a91f0184e",
+      "compression": "gzip"
+    },
+    "results/methods/case33_18_25_30/R/workers_16/run_1/snapshots/final.json.gz": {
+      "bytes": 145096,
+      "sha256": "b4e339aa2a7527289625696d3c25e4e3ef33cfa9be278dbc641df39f146efdab",
+      "original_path": "results/compare_plan2/case33_18_25_30/R/workers_16/run_1/snapshots/final.json",
+      "original_sha256": "2a4a3c73c5060bbd6cde122ecb3b2c3f29cec30e2b069248e7c1dae0a372a613",
+      "compression": "gzip"
+    },
+    "results/methods/case33_18_25_30/RB/workers_16/run_1/summary.json": {
+      "bytes": 61426,
+      "sha256": "660db7513e26d8178441c744157e2992af18a999095cd2ebe06c26bbff563dcd",
+      "original_path": "results/compare_plan2/case33_18_25_30/RB/workers_16/run_1/summary.json"
+    },
+    "results/methods/case33_18_25_30/RB/workers_16/run_1/metrics.json": {
+      "bytes": 85208,
+      "sha256": "86c7d5d605fcc329b82ddafd3e9663c60d2a3ba37e219bc5882f8242fff52433",
+      "original_path": "results/compare_plan2/case33_18_25_30/RB/workers_16/run_1/metrics.json"
+    },
+    "results/methods/case33_18_25_30/RB/workers_16/run_1/timeline.csv": {
+      "bytes": 36868,
+      "sha256": "5acccfa6ba87d51771878d897d2d549417eaf64da398bbf500c2665f46f35893",
+      "original_path": "results/compare_plan2/case33_18_25_30/RB/workers_16/run_1/timeline.csv"
+    },
+    "results/methods/case33_18_25_30/RB/workers_16/run_1/solves.csv.gz": {
+      "bytes": 236818,
+      "sha256": "958e335a6af195f2b172bbce7eee3f7d966753ee764030f6df0eff68b907a1ba",
+      "original_path": "results/compare_plan2/case33_18_25_30/RB/workers_16/run_1/solves.csv",
+      "original_sha256": "624eadccc7912e12fccefbbfecc341e88f6bda9a17152e331476be4c31d61cf3",
+      "compression": "gzip"
+    },
+    "results/methods/case33_18_25_30/RB/workers_16/run_1/snapshots/final.json.gz": {
+      "bytes": 184260,
+      "sha256": "91e7589a560ce86c3cccea6467770d5ea667c562d222e74723865e391541e408",
+      "original_path": "results/compare_plan2/case33_18_25_30/RB/workers_16/run_1/snapshots/final.json",
+      "original_sha256": "bd82636176c96b3d13d89d2afc0f6697a4dffb2e6545b62cfc35a2dd77ecdb9d",
+      "compression": "gzip"
+    },
+    "results/methods/case33_18_25_30/RCUT/workers_16/run_1/summary.json": {
+      "bytes": 71451,
+      "sha256": "5d7c06063a8608565cb1a78e03d5a33a4fb44198e7ca44e5f8d5a1bbe4a495f0",
+      "original_path": "results/compare_plan2/case33_18_25_30/RCUT/workers_16/run_1/summary.json"
+    },
+    "results/methods/case33_18_25_30/RCUT/workers_16/run_1/metrics.json": {
+      "bytes": 90180,
+      "sha256": "2068cf58c6dc6912eb3da67e2d6370c302611cdfdcd2ce7aee777b24d9631821",
+      "original_path": "results/compare_plan2/case33_18_25_30/RCUT/workers_16/run_1/metrics.json"
+    },
+    "results/methods/case33_18_25_30/RCUT/workers_16/run_1/timeline.csv": {
+      "bytes": 24949,
+      "sha256": "80d46f05db7ea2f9497148440e6c850b3c25f347eba3abd9c6f6778bf4ca0b40",
+      "original_path": "results/compare_plan2/case33_18_25_30/RCUT/workers_16/run_1/timeline.csv"
+    },
+    "results/methods/case33_18_25_30/RCUT/workers_16/run_1/solves.csv.gz": {
+      "bytes": 220084,
+      "sha256": "847bf621489706695fcbfdc5873b69c2f4f0fb5b1d24db48fb64ab5931705ca0",
+      "original_path": "results/compare_plan2/case33_18_25_30/RCUT/workers_16/run_1/solves.csv",
+      "original_sha256": "7508940148ffe78c95d28fdb1912d7b59d1e46b75dcd0a26055ebd8c889a2955",
+      "compression": "gzip"
+    },
+    "results/methods/case33_18_25_30/RCUT/workers_16/run_1/snapshots/final.json.gz": {
+      "bytes": 105796,
+      "sha256": "7f79a478cca3ec8b4c90ab1a43478b01c1ab7ddbe70166378ed87289fead9d2a",
+      "original_path": "results/compare_plan2/case33_18_25_30/RCUT/workers_16/run_1/snapshots/final.json",
+      "original_sha256": "52882af9fa631062fb90f5facd7b3bce5aa2ab7bd26f6783c7e44f71f35c942c",
+      "compression": "gzip"
+    },
+    "results/methods/case33_18_25_30/RCUT-t0.5/workers_16/run_1/summary.json": {
+      "bytes": 74501,
+      "sha256": "653610b2824859140d39672410545b5f745d3c18eec42e2251ba3e1a5e4e5cfc",
+      "original_path": "results/compare_plan2/case33_18_25_30/RCUT-t0.5/workers_16/run_1/summary.json"
+    },
+    "results/methods/case33_18_25_30/RCUT-t0.5/workers_16/run_1/metrics.json": {
+      "bytes": 90144,
+      "sha256": "94b1e451e60d655124e12dc3469de21cf031062216c69b69739d79c30f517dd2",
+      "original_path": "results/compare_plan2/case33_18_25_30/RCUT-t0.5/workers_16/run_1/metrics.json"
+    },
+    "results/methods/case33_18_25_30/RCUT-t0.5/workers_16/run_1/timeline.csv": {
+      "bytes": 29981,
+      "sha256": "83bf9325ef82ce8d3aeadf7b94bd8d6fafecb78aec4e8d8558f7dcf0638d7442",
+      "original_path": "results/compare_plan2/case33_18_25_30/RCUT-t0.5/workers_16/run_1/timeline.csv"
+    },
+    "results/methods/case33_18_25_30/RCUT-t0.5/workers_16/run_1/solves.csv.gz": {
+      "bytes": 269248,
+      "sha256": "abbf29106562bfea5bfe4f5c6126c2ae697fde25737848b91a1ce25e99623e23",
+      "original_path": "results/compare_plan2/case33_18_25_30/RCUT-t0.5/workers_16/run_1/solves.csv",
+      "original_sha256": "065f982cbd220446325210b9c42f8249f0e9b53ad3657c5a66a368f7762d971b",
+      "compression": "gzip"
+    },
+    "results/methods/case33_18_25_30/RCUT-t0.5/workers_16/run_1/snapshots/final.json.gz": {
+      "bytes": 125208,
+      "sha256": "1c6a31385b89554a598bda4d2ce6ca88c20a1b0fc9c5371b7e94d491a9991767",
+      "original_path": "results/compare_plan2/case33_18_25_30/RCUT-t0.5/workers_16/run_1/snapshots/final.json",
+      "original_sha256": "bcd5f42c5f7c9236182c645141425f2224e64d49fd57cac9cacfcf72ec43113d",
+      "compression": "gzip"
+    },
+    "results/methods/case33_18_25_30/RCUT-t2/workers_16/run_1/summary.json": {
+      "bytes": 69343,
+      "sha256": "24b44a0378c4fca3371cc6ef73d11647345bebcd80a2833bbaf8920c5d9bc92f",
+      "original_path": "results/compare_plan2/case33_18_25_30/RCUT-t2/workers_16/run_1/summary.json"
+    },
+    "results/methods/case33_18_25_30/RCUT-t2/workers_16/run_1/metrics.json": {
+      "bytes": 90159,
+      "sha256": "7f88753bdb3b060adc4e1e9abbe7c2350d7c9a825f6506af0cdbac6f2f52173e",
+      "original_path": "results/compare_plan2/case33_18_25_30/RCUT-t2/workers_16/run_1/metrics.json"
+    },
+    "results/methods/case33_18_25_30/RCUT-t2/workers_16/run_1/timeline.csv": {
+      "bytes": 24073,
+      "sha256": "e4316d566e7202e99ccc89d78bcae7ed9cae0a5fd2b8e3704c3c55ae47eea64d",
+      "original_path": "results/compare_plan2/case33_18_25_30/RCUT-t2/workers_16/run_1/timeline.csv"
+    },
+    "results/methods/case33_18_25_30/RCUT-t2/workers_16/run_1/solves.csv.gz": {
+      "bytes": 197830,
+      "sha256": "4760029a2b982378029f58e4d281d7e267b744df0ba82f949667f59b566c3e76",
+      "original_path": "results/compare_plan2/case33_18_25_30/RCUT-t2/workers_16/run_1/solves.csv",
+      "original_sha256": "2aa03f982e4aff8e803e075fd673d4403e5c80b09c329f935b63fdb707348ae1",
+      "compression": "gzip"
+    },
+    "results/methods/case33_18_25_30/RCUT-t2/workers_16/run_1/snapshots/final.json.gz": {
+      "bytes": 98937,
+      "sha256": "2055f302ae53dfa26babd5c3a945db0b7fd28abb32592c43655db5cf5eb84cd6",
+      "original_path": "results/compare_plan2/case33_18_25_30/RCUT-t2/workers_16/run_1/snapshots/final.json",
+      "original_sha256": "ef8776d0986ed786901bc3d54d56deafd1841de8e4776487cae46fa61e22662f",
+      "compression": "gzip"
+    },
+    "results/methods/case33_18_25_30/RCUT2/workers_16/run_1/summary.json": {
+      "bytes": 73419,
+      "sha256": "dec82ffcc1189110823acb29db27e9d86e97994fb2132f5d7e67f6fc6db2f164",
+      "original_path": "results/compare_plan2/case33_18_25_30/RCUT2/workers_16/run_1/summary.json"
+    },
+    "results/methods/case33_18_25_30/RCUT2/workers_16/run_1/metrics.json": {
+      "bytes": 85351,
+      "sha256": "ba0e03d572996143727fb98308ac37dc6629c254a9fb94155589d87d06208b7c",
+      "original_path": "results/compare_plan2/case33_18_25_30/RCUT2/workers_16/run_1/metrics.json"
+    },
+    "results/methods/case33_18_25_30/RCUT2/workers_16/run_1/timeline.csv": {
+      "bytes": 38056,
+      "sha256": "4fc71dfb428b8cd2d0c3b4615c7db47094c61f53a0b80919cbc7e74f05350581",
+      "original_path": "results/compare_plan2/case33_18_25_30/RCUT2/workers_16/run_1/timeline.csv"
+    },
+    "results/methods/case33_18_25_30/RCUT2/workers_16/run_1/solves.csv.gz": {
+      "bytes": 340233,
+      "sha256": "ae21d9c032f4c0a0749a47d41500d1d628d333745ce4618b87ae3ebc93779ef8",
+      "original_path": "results/compare_plan2/case33_18_25_30/RCUT2/workers_16/run_1/solves.csv",
+      "original_sha256": "989db85cc3b9c335cb86cab948788b00be129602f0cf60e2e950deeb9cc8cd26",
+      "compression": "gzip"
+    },
+    "results/methods/case33_18_25_30/RCUT2/workers_16/run_1/snapshots/final.json.gz": {
+      "bytes": 214149,
+      "sha256": "090049b93d28482281c17c4b4926364d3abb1ab5eede0e7f77b4796ef99a7ec7",
+      "original_path": "results/compare_plan2/case33_18_25_30/RCUT2/workers_16/run_1/snapshots/final.json",
+      "original_sha256": "b3b14cb57d75b7b2dbe618d6ff95da13f76a5b5d67011370670dd7c5e593509c",
+      "compression": "gzip"
+    },
+    "results/methods/case33_18_25_30/RCUT2-t0.5/workers_16/run_1/summary.json": {
+      "bytes": 76844,
+      "sha256": "e56bf311f7de9c03c196ab60ae4df843e6b14714c72c3210590836619fc8fad8",
+      "original_path": "results/compare_plan2/case33_18_25_30/RCUT2-t0.5/workers_16/run_1/summary.json"
+    },
+    "results/methods/case33_18_25_30/RCUT2-t0.5/workers_16/run_1/metrics.json": {
+      "bytes": 85334,
+      "sha256": "6b4db6df363699e5f730b2e5f2acd36c9669d4e2ed47863d26d5bedff97aa164",
+      "original_path": "results/compare_plan2/case33_18_25_30/RCUT2-t0.5/workers_16/run_1/metrics.json"
+    },
+    "results/methods/case33_18_25_30/RCUT2-t0.5/workers_16/run_1/timeline.csv": {
+      "bytes": 39564,
+      "sha256": "bd849736b49b9e530898f8b110e202608fc8baf5412e55a71b66c0dd1a1aaff6",
+      "original_path": "results/compare_plan2/case33_18_25_30/RCUT2-t0.5/workers_16/run_1/timeline.csv"
+    },
+    "results/methods/case33_18_25_30/RCUT2-t0.5/workers_16/run_1/solves.csv.gz": {
+      "bytes": 381093,
+      "sha256": "c65c41c451ae81e8e5361602816fdb05ffeccd10e5ed083146cd7a27699c9fc9",
+      "original_path": "results/compare_plan2/case33_18_25_30/RCUT2-t0.5/workers_16/run_1/solves.csv",
+      "original_sha256": "40230119a89cf0064291e739b7777297917b0a1095e59d89cf355dede7a97cf7",
+      "compression": "gzip"
+    },
+    "results/methods/case33_18_25_30/RCUT2-t0.5/workers_16/run_1/snapshots/final.json.gz": {
+      "bytes": 221642,
+      "sha256": "956ab0f3f83838acbb5a2358a1083d0dc81e3d58c3af951ca193771d31c9928a",
+      "original_path": "results/compare_plan2/case33_18_25_30/RCUT2-t0.5/workers_16/run_1/snapshots/final.json",
+      "original_sha256": "3d9d88e954daf77833cd8fb2df616965afe802e18747352712d59721c8bf7208",
+      "compression": "gzip"
+    },
+    "results/methods/case33_18_25_30/RCUT2-t2/workers_16/run_1/summary.json": {
+      "bytes": 71175,
+      "sha256": "b0122a10c619ef2f3024714729aa2fc2072e73c75db0b310a379140e561e82d3",
+      "original_path": "results/compare_plan2/case33_18_25_30/RCUT2-t2/workers_16/run_1/summary.json"
+    },
+    "results/methods/case33_18_25_30/RCUT2-t2/workers_16/run_1/metrics.json": {
+      "bytes": 85329,
+      "sha256": "7e3ac0885aa07c84a1c9cb5658f4af06848c1d7ad90313328aebdb096a66d4d4",
+      "original_path": "results/compare_plan2/case33_18_25_30/RCUT2-t2/workers_16/run_1/metrics.json"
+    },
+    "results/methods/case33_18_25_30/RCUT2-t2/workers_16/run_1/timeline.csv": {
+      "bytes": 39399,
+      "sha256": "da42e8a3e8ef8319ea64e9a230248018eaebf1acb2e238f7a06d23a4aeb8ccb7",
+      "original_path": "results/compare_plan2/case33_18_25_30/RCUT2-t2/workers_16/run_1/timeline.csv"
+    },
+    "results/methods/case33_18_25_30/RCUT2-t2/workers_16/run_1/solves.csv.gz": {
+      "bytes": 318046,
+      "sha256": "8174156bafd67a1c814c4431aa9666008e18f547e69e76de949156ea3250c827",
+      "original_path": "results/compare_plan2/case33_18_25_30/RCUT2-t2/workers_16/run_1/solves.csv",
+      "original_sha256": "e5d62d05c14f20bb470a66cebe89ada4459fe78b7ae3bad5f7cdf09d4f77fc9b",
+      "compression": "gzip"
+    },
+    "results/methods/case33_18_25_30/RCUT2-t2/workers_16/run_1/snapshots/final.json.gz": {
+      "bytes": 211415,
+      "sha256": "92fb13d6153edff0fd6aedf868e151ce9f074401e04fbcbe755bd797e8b8f865",
+      "original_path": "results/compare_plan2/case33_18_25_30/RCUT2-t2/workers_16/run_1/snapshots/final.json",
+      "original_sha256": "a4ff56302e3acbbaabd3a564c8397c9aedf841f72a6816b1c4641ed98611aef0",
+      "compression": "gzip"
     }
+  },
+  "method_archive": {
+    "date": "2026-10-01",
+    "root": "results/methods",
+    "branch": "claude/plan2-support-compare",
+    "tags": {
+      "R": "method-R-v1",
+      "H": "method-H-v1",
+      "RB": "method-RB-v1",
+      "RCUT": "method-RCUT-v1",
+      "RCUT2": "method-RCUT2-v1",
+      "archive": "results-methods-v1"
+    },
+    "note": "Curated compare_plan2 runs of R, H, RB, RCUT and RCUT2 on Case33 (18,25) and (18,25,30), 300 s wall clock. Per run: summary.json, metrics.json (all checkpoints, AC primary / SOCP diagnostic), timeline.csv, gzip solves.csv and final snapshot. Intermediate checkpoint snapshots and partition logs stay in the local results/compare_plan2; metrics.json is authoritative and is not recomputed from this archive. RCUT inner sets are not certified (inner_exact false): its validity checks the outer bound only."
   }
 }

@@ -1,0 +1,260 @@
+{
+ "case": "case33_18_25",
+ "case_name": "case33",
+ "network": "case33bw",
+ "load_nodes": [
+  18,
+  25
+ ],
+ "mode": 1,
+ "budget": 7.0,
+ "bounds_kw": [
+  9648.215818481674,
+  9648.215818481674
+ ],
+ "method": "R",
+ "workers": 1,
+ "per_partition_workers": 1,
+ "repeat": 2,
+ "partitions": [
+  "pp",
+  "pn",
+  "np",
+  "nn"
+ ],
+ "settings": {
+  "seconds": 300.0,
+  "tau": 0.005,
+  "eps": 0.01,
+  "discovery_eps": 0.15,
+  "discovery_share": 0.25,
+  "network_eps": 0.005,
+  "criterion": "auto",
+  "coverage": "global",
+  "threads": 1,
+  "seed": 0,
+  "mip_seconds": 60.0,
+  "mip_gap": 0.001,
+  "inner_cert": "near",
+  "support_seconds": 30.0,
+  "support_pass_share": 0.75,
+  "checkpoints": [
+   15.0,
+   30.0,
+   60.0,
+   120.0,
+   180.0,
+   240.0,
+   300.0
+  ],
+  "geometry_tol": 1e-08,
+  "planning_tol": 1e-08,
+  "cover_conv_tol": 1e-06,
+  "gurobi": [
+   13,
+   0,
+   2
+  ]
+ },
+ "commit": "b619864cfa81d54d9a1c637535565583e0a540b8",
+ "dirty": false,
+ "status": "certified",
+ "certified": true,
+ "certified_partitions": 4,
+ "t_cert": 75.53151290724054,
+ "wall_seconds": 75.53327880729921,
+ "gap_final": 0.00749539392821319,
+ "t_gap": {
+  "0.1": 66.79565140744671,
+  "0.05": 67.6458023074083,
+  "0.02": 68.85102510731667
+ },
+ "totals": {
+  "by_type": {
+   "MISOCP": {
+    "count": 75,
+    "seconds": 37.565700000850484
+   },
+   "SOCP": {
+    "count": 122,
+    "seconds": 37.770577599527314
+   }
+  },
+  "by_purpose": {
+   "discovery": {
+    "count": 31,
+    "seconds": 12.469374499982223
+   },
+   "obbt": {
+    "count": 21,
+    "seconds": 33.66732059977949
+   },
+   "zero_sp": {
+    "count": 15,
+    "seconds": 0.3222201999742538
+   },
+   "ray": {
+    "count": 86,
+    "seconds": 3.781036799773574
+   },
+   "cone_outer": {
+    "count": 44,
+    "seconds": 25.09632550086826
+   }
+  },
+  "partition_wall_seconds": 75.52589929942042,
+  "main_solve_seconds": 75.3362776003778,
+  "other_seconds": 0.18962169904261827,
+  "pool_solve_seconds": 0,
+  "phase_seconds": {
+   "R": 75.52589929942042
+  },
+  "x_star": 0,
+  "cones": 23,
+  "faces": 0,
+  "unresolved_faces": 0
+ },
+ "partition_results": {
+  "pp": {
+   "partition": "pp",
+   "method": "R",
+   "status": "certified",
+   "certified": true,
+   "t_cert": 2.6926075073424727,
+   "start": 4.550744779407978e-05,
+   "end": 2.6926075073424727,
+   "seconds": 2.6925619998946786,
+   "inner_measure": 74593.95181821958,
+   "outer_measure": 75085.87847866907,
+   "gap": 0.006594725825068037,
+   "volume_ratio": 0.006594725825067897,
+   "cones": 2,
+   "schemes": 1,
+   "counts": {
+    "misocp": 5,
+    "interval_solves": 3,
+    "rays": 3,
+    "ray_cache_hits": 3,
+    "ray_failures": 0,
+    "near_rays": 0,
+    "near_failures": 0,
+    "obbt": 1,
+    "lazy_obbt": 1,
+    "origin_sp": 1
+   },
+   "errors": [],
+   "phase_seconds": {
+    "R": 2.6925619998946786
+   }
+  },
+  "pn": {
+   "partition": "pn",
+   "method": "R",
+   "status": "certified",
+   "certified": true,
+   "t_cert": 7.6284272072371095,
+   "start": 2.6937008074019104,
+   "end": 7.6284272072371095,
+   "seconds": 4.934726399835199,
+   "inner_measure": 3036062.0304026823,
+   "outer_measure": 3045497.1024895124,
+   "gap": 0.003107667759205457,
+   "volume_ratio": 0.003107667759205365,
+   "cones": 3,
+   "schemes": 1,
+   "counts": {
+    "misocp": 8,
+    "interval_solves": 5,
+    "rays": 4,
+    "ray_cache_hits": 6,
+    "ray_failures": 0,
+    "near_rays": 0,
+    "near_failures": 0,
+    "obbt": 2,
+    "lazy_obbt": 2,
+    "origin_sp": 1
+   },
+   "errors": [],
+   "phase_seconds": {
+    "R": 4.934726399835199
+   }
+  },
+  "np": {
+   "partition": "np",
+   "method": "R",
+   "status": "certified",
+   "certified": true,
+   "t_cert": 34.09190770727582,
+   "start": 7.629242207389325,
+   "end": 34.09190770727582,
+   "seconds": 26.462665499886498,
+   "inner_measure": 12125608.377947891,
+   "outer_measure": 12214582.06519353,
+   "gap": 0.0073376678903345205,
+   "volume_ratio": 0.007337667890334783,
+   "cones": 11,
+   "schemes": 3,
+   "counts": {
+    "misocp": 32,
+    "interval_solves": 21,
+    "rays": 31,
+    "ray_cache_hits": 115,
+    "ray_failures": 2,
+    "near_rays": 13,
+    "near_failures": 0,
+    "obbt": 6,
+    "lazy_obbt": 6,
+    "origin_sp": 6
+   },
+   "errors": [
+    {
+     "kind": "ray",
+     "scheme": "0010010",
+     "theta": 1.5707963267948966,
+     "error": "Continuous SOCP: PrimalInfeasible, x=[np.int64(1), np.int64(1), np.int64(1), np.int64(1), np.int64(1), np.int64(1), np.int64(0), np.int64(1), np.int64(1), np.int64(1), np.int64(0), np.int64(1), np.int64(1), np.int64(1), np.int64(1), np.int64(1), np.int64(1), np.int64(1), np.int64(1), np.int64(1), np.int64(1), np.int64(1), np.int64(1), np.int64(1), np.int64(1), np.int64(1), np.int64(1), np.int64(1), np.int64(1), np.int64(1), np.int64(1), np.int64(1), np.int64(1), np.int64(0), np.int64(0), np.int64(1), np.int64(0)]"
+    },
+    {
+     "kind": "ray",
+     "scheme": "0001010",
+     "theta": 1.5707963267948966,
+     "error": "Continuous SOCP: PrimalInfeasible, x=[np.int64(1), np.int64(1), np.int64(1), np.int64(1), np.int64(1), np.int64(1), np.int64(0), np.int64(1), np.int64(1), np.int64(1), np.int64(0), np.int64(1), np.int64(1), np.int64(1), np.int64(1), np.int64(1), np.int64(1), np.int64(1), np.int64(1), np.int64(1), np.int64(1), np.int64(1), np.int64(1), np.int64(1), np.int64(1), np.int64(1), np.int64(1), np.int64(1), np.int64(1), np.int64(1), np.int64(1), np.int64(1), np.int64(0), np.int64(1), np.int64(0), np.int64(1), np.int64(0)]"
+    }
+   ],
+   "phase_seconds": {
+    "R": 26.462665499886498
+   }
+  },
+  "nn": {
+   "partition": "nn",
+   "method": "R",
+   "status": "certified",
+   "certified": true,
+   "t_cert": 75.53151290724054,
+   "start": 34.0955675074365,
+   "end": 75.53151290724054,
+   "seconds": 41.43594539980404,
+   "inner_measure": 20660713.04080744,
+   "outer_measure": 20830874.341267005,
+   "gap": 0.008235983923859491,
+   "volume_ratio": 0.00823598392385957,
+   "cones": 7,
+   "schemes": 4,
+   "counts": {
+    "misocp": 30,
+    "interval_solves": 13,
+    "rays": 26,
+    "ray_cache_hits": 82,
+    "ray_failures": 0,
+    "near_rays": 9,
+    "near_failures": 0,
+    "obbt": 12,
+    "lazy_obbt": 12,
+    "origin_sp": 7
+   },
+   "errors": [],
+   "phase_seconds": {
+    "R": 41.43594539980404
+   }
+  }
+ }
+}

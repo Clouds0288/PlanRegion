@@ -1,0 +1,464 @@
+{
+ "case": "case33_18_25_30",
+ "case_name": "case33",
+ "network": "case33bw",
+ "load_nodes": [
+  18,
+  25,
+  30
+ ],
+ "mode": 1,
+ "budget": 7.0,
+ "bounds_kw": [
+  9648.215818481674,
+  9648.215818481674,
+  9648.215818481674
+ ],
+ "method": "R",
+ "workers": 16,
+ "per_partition_workers": 2,
+ "repeat": 1,
+ "partitions": [
+  "ppp",
+  "ppn",
+  "pnp",
+  "pnn",
+  "npp",
+  "npn",
+  "nnp",
+  "nnn"
+ ],
+ "settings": {
+  "seconds": 300.0,
+  "tau": 0.005,
+  "eps": 0.015,
+  "discovery_eps": 0.15,
+  "discovery_share": 0.25,
+  "network_eps": 0.0075,
+  "criterion": "auto",
+  "coverage": "global",
+  "threads": 1,
+  "seed": 0,
+  "mip_seconds": 60.0,
+  "mip_gap": 0.001,
+  "inner_cert": "near",
+  "support_seconds": 30.0,
+  "support_pass_share": 0.75,
+  "checkpoints": [
+   15.0,
+   30.0,
+   60.0,
+   120.0,
+   180.0,
+   240.0,
+   300.0
+  ],
+  "geometry_tol": 1e-08,
+  "planning_tol": 1e-08,
+  "cover_conv_tol": 1e-06,
+  "gurobi": [
+   13,
+   0,
+   2
+  ]
+ },
+ "commit": "4c5b2a407f4b708d3c5adc1460b206e702b75c4c",
+ "dirty": false,
+ "status": "time_limit",
+ "certified": false,
+ "certified_partitions": 3,
+ "t_cert": null,
+ "wall_seconds": 300.48228862998076,
+ "gap_final": 0.03689358048132707,
+ "t_gap": {
+  "0.1": 116.08436397789046,
+  "0.05": 190.50479806866497,
+  "0.02": null
+ },
+ "totals": {
+  "by_type": {
+   "MISOCP": {
+    "count": 2236,
+    "seconds": 1591.5236064950004
+   },
+   "SOCP": {
+    "count": 2757,
+    "seconds": 184.57564260344952
+   }
+  },
+  "by_purpose": {
+   "discovery": {
+    "count": 39,
+    "seconds": 15.273143099620938
+   },
+   "obbt": {
+    "count": 65,
+    "seconds": 62.14294870104641
+   },
+   "zero_sp": {
+    "count": 50,
+    "seconds": 1.2323607001453638
+   },
+   "ray": {
+    "count": 2642,
+    "seconds": 121.20033320225775
+   },
+   "cone_outer": {
+    "count": 2197,
+    "seconds": 1576.2504633953795
+   }
+  },
+  "partition_wall_seconds": 1788.0680161002092,
+  "main_solve_seconds": 1776.09924909845,
+  "other_seconds": 11.968767001759261,
+  "pool_solve_seconds": 0,
+  "phase_seconds": {
+   "R": 1788.0680161002092
+  },
+  "x_star": 0,
+  "cones": 1124,
+  "faces": 0,
+  "unresolved_faces": 0
+ },
+ "partition_results": {
+  "ppp": {
+   "partition": "ppp",
+   "method": "R",
+   "status": "certified",
+   "certified": true,
+   "t_cert": 14.423795445589349,
+   "start": 0.6289412456098944,
+   "end": 14.423795445589349,
+   "seconds": 13.794854199979454,
+   "inner_measure": 96014121.20429248,
+   "outer_measure": 97377919.82118912,
+   "gap": 0.014204146221312941,
+   "volume_ratio": 0.014204146221312868,
+   "cones": 19,
+   "schemes": 2,
+   "counts": {
+    "misocp": 38,
+    "interval_solves": 35,
+    "rays": 30,
+    "ray_cache_hits": 108,
+    "ray_failures": 0,
+    "near_rays": 0,
+    "near_failures": 0,
+    "obbt": 2,
+    "lazy_obbt": 2,
+    "origin_sp": 2
+   },
+   "errors": [],
+   "phase_seconds": {
+    "R": 13.794854199979454
+   }
+  },
+  "ppn": {
+   "partition": "ppn",
+   "method": "R",
+   "status": "time_limit",
+   "certified": false,
+   "t_cert": null,
+   "start": 0.6350961413700134,
+   "end": 300.05466244136915,
+   "seconds": 299.41956629999913,
+   "inner_measure": 38123561306.56964,
+   "outer_measure": 39055471837.65005,
+   "gap": 0.024444477355787253,
+   "volume_ratio": 0.024444477355786812,
+   "cones": 249,
+   "schemes": 6,
+   "counts": {
+    "misocp": 487,
+    "interval_solves": 480,
+    "rays": 456,
+    "ray_cache_hits": 3337,
+    "ray_failures": 1,
+    "near_rays": 167,
+    "near_failures": 0,
+    "obbt": 6,
+    "lazy_obbt": 6,
+    "origin_sp": 6
+   },
+   "errors": [
+    {
+     "kind": "ray",
+     "scheme": "0100010",
+     "theta": 1.0,
+     "error": "Continuous SOCP: PrimalInfeasible, x=[np.int64(1), np.int64(1), np.int64(1), np.int64(1), np.int64(1), np.int64(1), np.int64(0), np.int64(1), np.int64(1), np.int64(1), np.int64(1), np.int64(1), np.int64(1), np.int64(1), np.int64(1), np.int64(1), np.int64(1), np.int64(1), np.int64(1), np.int64(1), np.int64(1), np.int64(1), np.int64(1), np.int64(1), np.int64(1), np.int64(1), np.int64(1), np.int64(1), np.int64(1), np.int64(1), np.int64(1), np.int64(1), np.int64(0), np.int64(0), np.int64(0), np.int64(1), np.int64(0)]"
+    }
+   ],
+   "phase_seconds": {
+    "R": 299.41956629999913
+   }
+  },
+  "pnp": {
+   "partition": "pnp",
+   "method": "R",
+   "status": "certified",
+   "certified": true,
+   "t_cert": 147.57087190519087,
+   "start": 0.6725450051017106,
+   "end": 147.57087190519087,
+   "seconds": 146.89832690008916,
+   "inner_measure": 4175871630.37098,
+   "outer_measure": 4237078211.7873225,
+   "gap": 0.014657198983605957,
+   "volume_ratio": 0.014657198983605938,
+   "cones": 132,
+   "schemes": 2,
+   "counts": {
+    "misocp": 260,
+    "interval_solves": 253,
+    "rays": 210,
+    "ray_cache_hits": 1089,
+    "ray_failures": 0,
+    "near_rays": 0,
+    "near_failures": 0,
+    "obbt": 6,
+    "lazy_obbt": 6,
+    "origin_sp": 4
+   },
+   "errors": [],
+   "phase_seconds": {
+    "R": 146.89832690008916
+   }
+  },
+  "pnn": {
+   "partition": "pnn",
+   "method": "R",
+   "status": "time_limit",
+   "certified": false,
+   "t_cert": null,
+   "start": 0.674224165501073,
+   "end": 300.08881506556645,
+   "seconds": 299.4145909000654,
+   "inner_measure": 53254620999.00771,
+   "outer_measure": 57299798543.06084,
+   "gap": 0.07595918378854849,
+   "volume_ratio": 0.1541877109704437,
+   "cones": 196,
+   "schemes": 7,
+   "counts": {
+    "misocp": 389,
+    "interval_solves": 379,
+    "rays": 355,
+    "ray_cache_hits": 2276,
+    "ray_failures": 0,
+    "near_rays": 75,
+    "near_failures": 0,
+    "obbt": 9,
+    "lazy_obbt": 9,
+    "origin_sp": 8
+   },
+   "errors": [],
+   "phase_seconds": {
+    "R": 299.4145909000654
+   }
+  },
+  "npp": {
+   "partition": "npp",
+   "method": "R",
+   "status": "certified",
+   "certified": true,
+   "t_cert": 130.93301406595856,
+   "start": 0.6723409658297896,
+   "end": 130.93301406595856,
+   "seconds": 130.26067310012877,
+   "inner_measure": 24143788853.146706,
+   "outer_measure": 24504901787.143837,
+   "gap": 0.014956763256735783,
+   "volume_ratio": 0.01495676325673544,
+   "cones": 108,
+   "schemes": 5,
+   "counts": {
+    "misocp": 205,
+    "interval_solves": 198,
+    "rays": 176,
+    "ray_cache_hits": 1242,
+    "ray_failures": 3,
+    "near_rays": 58,
+    "near_failures": 0,
+    "obbt": 6,
+    "lazy_obbt": 6,
+    "origin_sp": 5
+   },
+   "errors": [
+    {
+     "kind": "ray",
+     "scheme": "0100010",
+     "theta": 1.0,
+     "error": "Continuous SOCP: PrimalInfeasible, x=[np.int64(1), np.int64(1), np.int64(1), np.int64(1), np.int64(1), np.int64(1), np.int64(0), np.int64(1), np.int64(1), np.int64(1), np.int64(1), np.int64(1), np.int64(1), np.int64(1), np.int64(1), np.int64(1), np.int64(1), np.int64(1), np.int64(1), np.int64(1), np.int64(1), np.int64(1), np.int64(1), np.int64(1), np.int64(1), np.int64(1), np.int64(1), np.int64(1), np.int64(1), np.int64(1), np.int64(1), np.int64(1), np.int64(0), np.int64(0), np.int64(0), np.int64(1), np.int64(0)]"
+    },
+    {
+     "kind": "ray",
+     "scheme": "0100010",
+     "theta": 2.0,
+     "error": "Continuous SOCP: PrimalInfeasible, x=[np.int64(1), np.int64(1), np.int64(1), np.int64(1), np.int64(1), np.int64(1), np.int64(0), np.int64(1), np.int64(1), np.int64(1), np.int64(1), np.int64(1), np.int64(1), np.int64(1), np.int64(1), np.int64(1), np.int64(1), np.int64(1), np.int64(1), np.int64(1), np.int64(1), np.int64(1), np.int64(1), np.int64(1), np.int64(1), np.int64(1), np.int64(1), np.int64(1), np.int64(1), np.int64(1), np.int64(1), np.int64(1), np.int64(0), np.int64(0), np.int64(0), np.int64(1), np.int64(0)]"
+    },
+    {
+     "kind": "ray",
+     "scheme": "0001010",
+     "theta": 1.0,
+     "error": "Continuous SOCP: PrimalInfeasible, x=[np.int64(1), np.int64(1), np.int64(1), np.int64(1), np.int64(1), np.int64(1), np.int64(0), np.int64(1), np.int64(1), np.int64(1), np.int64(0), np.int64(1), np.int64(1), np.int64(1), np.int64(1), np.int64(1), np.int64(1), np.int64(1), np.int64(1), np.int64(1), np.int64(1), np.int64(1), np.int64(1), np.int64(1), np.int64(1), np.int64(1), np.int64(1), np.int64(1), np.int64(1), np.int64(1), np.int64(1), np.int64(1), np.int64(0), np.int64(1), np.int64(0), np.int64(1), np.int64(0)]"
+    }
+   ],
+   "phase_seconds": {
+    "R": 130.26067310012877
+   }
+  },
+  "npn": {
+   "partition": "npn",
+   "method": "R",
+   "status": "time_limit",
+   "certified": false,
+   "t_cert": null,
+   "start": 0.6733232387341559,
+   "end": 300.1155026387423,
+   "seconds": 299.4421794000082,
+   "inner_measure": 57896141366.91069,
+   "outer_measure": 59160100367.38561,
+   "gap": 0.021831489467747378,
+   "volume_ratio": 0.02183148946774724,
+   "cones": 125,
+   "schemes": 7,
+   "counts": {
+    "misocp": 261,
+    "interval_solves": 246,
+    "rays": 283,
+    "ray_cache_hits": 1912,
+    "ray_failures": 3,
+    "near_rays": 91,
+    "near_failures": 0,
+    "obbt": 12,
+    "lazy_obbt": 12,
+    "origin_sp": 9
+   },
+   "errors": [
+    {
+     "kind": "ray",
+     "scheme": "0100010",
+     "theta": 1.0,
+     "error": "Continuous SOCP: PrimalInfeasible, x=[np.int64(1), np.int64(1), np.int64(1), np.int64(1), np.int64(1), np.int64(1), np.int64(0), np.int64(1), np.int64(1), np.int64(1), np.int64(1), np.int64(1), np.int64(1), np.int64(1), np.int64(1), np.int64(1), np.int64(1), np.int64(1), np.int64(1), np.int64(1), np.int64(1), np.int64(1), np.int64(1), np.int64(1), np.int64(1), np.int64(1), np.int64(1), np.int64(1), np.int64(1), np.int64(1), np.int64(1), np.int64(1), np.int64(0), np.int64(0), np.int64(0), np.int64(1), np.int64(0)]"
+    },
+    {
+     "kind": "ray",
+     "scheme": "0001010",
+     "theta": 1.0,
+     "error": "Continuous SOCP: PrimalInfeasible, x=[np.int64(1), np.int64(1), np.int64(1), np.int64(1), np.int64(1), np.int64(1), np.int64(0), np.int64(1), np.int64(1), np.int64(1), np.int64(0), np.int64(1), np.int64(1), np.int64(1), np.int64(1), np.int64(1), np.int64(1), np.int64(1), np.int64(1), np.int64(1), np.int64(1), np.int64(1), np.int64(1), np.int64(1), np.int64(1), np.int64(1), np.int64(1), np.int64(1), np.int64(1), np.int64(1), np.int64(1), np.int64(1), np.int64(0), np.int64(1), np.int64(0), np.int64(1), np.int64(0)]"
+    },
+    {
+     "kind": "ray",
+     "scheme": "0001010",
+     "theta": 35.0,
+     "error": "Continuous SOCP: PrimalInfeasible, x=[np.int64(1), np.int64(1), np.int64(1), np.int64(1), np.int64(1), np.int64(1), np.int64(0), np.int64(1), np.int64(1), np.int64(1), np.int64(0), np.int64(1), np.int64(1), np.int64(1), np.int64(1), np.int64(1), np.int64(1), np.int64(1), np.int64(1), np.int64(1), np.int64(1), np.int64(1), np.int64(1), np.int64(1), np.int64(1), np.int64(1), np.int64(1), np.int64(1), np.int64(1), np.int64(1), np.int64(1), np.int64(1), np.int64(0), np.int64(1), np.int64(0), np.int64(1), np.int64(0)]"
+    }
+   ],
+   "phase_seconds": {
+    "R": 299.4421794000082
+   }
+  },
+  "nnp": {
+   "partition": "nnp",
+   "method": "R",
+   "status": "time_limit",
+   "certified": false,
+   "t_cert": null,
+   "start": 0.6677160686813295,
+   "end": 300.0936089686584,
+   "seconds": 299.42589289997704,
+   "inner_measure": 69636401793.1971,
+   "outer_measure": 72991789078.04318,
+   "gap": 0.04818438630431765,
+   "volume_ratio": 0.0481862702219701,
+   "cones": 146,
+   "schemes": 9,
+   "counts": {
+    "misocp": 290,
+    "interval_solves": 278,
+    "rays": 279,
+    "ray_cache_hits": 1590,
+    "ray_failures": 16,
+    "near_rays": 60,
+    "near_failures": 0,
+    "obbt": 12,
+    "lazy_obbt": 12,
+    "origin_sp": 9
+   },
+   "errors": [
+    {
+     "kind": "ray",
+     "scheme": "0100010",
+     "theta": 41.0,
+     "error": "Continuous SOCP: PrimalInfeasible, x=[np.int64(1), np.int64(1), np.int64(1), np.int64(1), np.int64(1), np.int64(1), np.int64(0), np.int64(1), np.int64(1), np.int64(1), np.int64(1), np.int64(1), np.int64(1), np.int64(1), np.int64(1), np.int64(1), np.int64(1), np.int64(1), np.int64(1), np.int64(1), np.int64(1), np.int64(1), np.int64(1), np.int64(1), np.int64(1), np.int64(1), np.int64(1), np.int64(1), np.int64(1), np.int64(1), np.int64(1), np.int64(1), np.int64(0), np.int64(0), np.int64(0), np.int64(1), np.int64(0)]"
+    },
+    {
+     "kind": "ray",
+     "scheme": "0100010",
+     "theta": 24.0,
+     "error": "Continuous SOCP: PrimalInfeasible, x=[np.int64(1), np.int64(1), np.int64(1), np.int64(1), np.int64(1), np.int64(1), np.int64(0), np.int64(1), np.int64(1), np.int64(1), np.int64(1), np.int64(1), np.int64(1), np.int64(1), np.int64(1), np.int64(1), np.int64(1), np.int64(1), np.int64(1), np.int64(1), np.int64(1), np.int64(1), np.int64(1), np.int64(1), np.int64(1), np.int64(1), np.int64(1), np.int64(1), np.int64(1), np.int64(1), np.int64(1), np.int64(1), np.int64(0), np.int64(0), np.int64(0), np.int64(1), np.int64(0)]"
+    },
+    {
+     "kind": "ray",
+     "scheme": "0100010",
+     "theta": 82.0,
+     "error": "Continuous SOCP: PrimalInfeasible, x=[np.int64(1), np.int64(1), np.int64(1), np.int64(1), np.int64(1), np.int64(1), np.int64(0), np.int64(1), np.int64(1), np.int64(1), np.int64(1), np.int64(1), np.int64(1), np.int64(1), np.int64(1), np.int64(1), np.int64(1), np.int64(1), np.int64(1), np.int64(1), np.int64(1), np.int64(1), np.int64(1), np.int64(1), np.int64(1), np.int64(1), np.int64(1), np.int64(1), np.int64(1), np.int64(1), np.int64(1), np.int64(1), np.int64(0), np.int64(0), np.int64(0), np.int64(1), np.int64(0)]"
+    },
+    {
+     "kind": "ray",
+     "scheme": "0100010",
+     "theta": 106.0,
+     "error": "Continuous SOCP: PrimalInfeasible, x=[np.int64(1), np.int64(1), np.int64(1), np.int64(1), np.int64(1), np.int64(1), np.int64(0), np.int64(1), np.int64(1), np.int64(1), np.int64(1), np.int64(1), np.int64(1), np.int64(1), np.int64(1), np.int64(1), np.int64(1), np.int64(1), np.int64(1), np.int64(1), np.int64(1), np.int64(1), np.int64(1), np.int64(1), np.int64(1), np.int64(1), np.int64(1), np.int64(1), np.int64(1), np.int64(1), np.int64(1), np.int64(1), np.int64(0), np.int64(0), np.int64(0), np.int64(1), np.int64(0)]"
+    },
+    {
+     "kind": "ray",
+     "scheme": "0100010",
+     "theta": 114.0,
+     "error": "Continuous SOCP: PrimalInfeasible, x=[np.int64(1), np.int64(1), np.int64(1), np.int64(1), np.int64(1), np.int64(1), np.int64(0), np.int64(1), np.int64(1), np.int64(1), np.int64(1), np.int64(1), np.int64(1), np.int64(1), np.int64(1), np.int64(1), np.int64(1), np.int64(1), np.int64(1), np.int64(1), np.int64(1), np.int64(1), np.int64(1), np.int64(1), np.int64(1), np.int64(1), np.int64(1), np.int64(1), np.int64(1), np.int64(1), np.int64(1), np.int64(1), np.int64(0), np.int64(0), np.int64(0), np.int64(1), np.int64(0)]"
+    }
+   ],
+   "phase_seconds": {
+    "R": 299.42589289997704
+   }
+  },
+  "nnn": {
+   "partition": "nnn",
+   "method": "R",
+   "status": "time_limit",
+   "certified": false,
+   "t_cert": null,
+   "start": 0.6766935780178756,
+   "end": 300.08862597798,
+   "seconds": 299.4119323999621,
+   "inner_measure": 55975019587.70732,
+   "outer_measure": 57144777249.479805,
+   "gap": 0.020897851762956332,
+   "volume_ratio": 0.02089785417382081,
+   "cones": 149,
+   "schemes": 7,
+   "counts": {
+    "misocp": 306,
+    "interval_solves": 294,
+    "rays": 308,
+    "ray_cache_hits": 2208,
+    "ray_failures": 1,
+    "near_rays": 94,
+    "near_failures": 0,
+    "obbt": 12,
+    "lazy_obbt": 12,
+    "origin_sp": 7
+   },
+   "errors": [
+    {
+     "kind": "ray",
+     "scheme": "0001010",
+     "theta": 1.0,
+     "error": "Continuous SOCP: PrimalInfeasible, x=[np.int64(1), np.int64(1), np.int64(1), np.int64(1), np.int64(1), np.int64(1), np.int64(0), np.int64(1), np.int64(1), np.int64(1), np.int64(0), np.int64(1), np.int64(1), np.int64(1), np.int64(1), np.int64(1), np.int64(1), np.int64(1), np.int64(1), np.int64(1), np.int64(1), np.int64(1), np.int64(1), np.int64(1), np.int64(1), np.int64(1), np.int64(1), np.int64(1), np.int64(1), np.int64(1), np.int64(1), np.int64(1), np.int64(0), np.int64(1), np.int64(0), np.int64(1), np.int64(0)]"
+    }
+   ],
+   "phase_seconds": {
+    "R": 299.4119323999621
+   }
+  }
+ }
+}
