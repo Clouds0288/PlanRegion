@@ -41,3 +41,15 @@ results/**
 !results/scan/fourbus_socp/**/*.npz
 !results/scan/case33bw/18_25/d0121a1ad0ba8cc1e009da6cc204ad9cf53881d3e5f4c488a439cb11d5f6fb69/bounds.npz
 !results/scan/case33bw/18_25/d0121a1ad0ba8cc1e009da6cc204ad9cf53881d3e5f4c488a439cb11d5f6fb69/region_17ceb84375dc2cc1.npz
+!results/scan/case33bw/18_25_30/ea7124157cce5bcd61e5782f37e7cfeb3ae25dcc2f396a26d1cb9809e7e770b5/bounds.npz
+!results/scan/case33bw/18_25_30/ea7124157cce5bcd61e5782f37e7cfeb3ae25dcc2f396a26d1cb9809e7e770b5/region_3837a4b56856fbc1.npz
+# Radial sandwich experiments (stage baseline, alongside the mainline): top-level run files only.
+!results/radial/
+!results/radial/case33_18_25/
+!results/radial/case33_18_25/*
+!results/radial/case33_18_25_near/
+!results/radial/case33_18_25_near/*
+!results/radial/case33_18_25_30_near/
+!results/radial/case33_18_25_30_near/*
+!results/radial/case33_18_25_30_volume/
+!results/radial/case33_18_25_30_volume/*
