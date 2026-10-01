@@ -1,0 +1,114 @@
+{
+  "comparison_method": "paired_scan_v2",
+  "network": "case33bw",
+  "load_nodes": [
+    18,
+    25
+  ],
+  "budget": 7,
+  "shape": [
+    161,
+    167
+  ],
+  "cells": 26887,
+  "axis_lower_kw": [
+    -6351.0,
+    -4723.9
+  ],
+  "bounds_kw": [
+    724.9500000000007,
+    3609.3999999999996
+  ],
+  "power_unit": "kW",
+  "ac_identity": "d0121a1ad0ba8cc1e009da6cc204ad9cf53881d3e5f4c488a439cb11d5f6fb69",
+  "ac_cache": "results/scan/case33bw/18_25/d0121a1ad0ba8cc1e009da6cc204ad9cf53881d3e5f4c488a439cb11d5f6fb69/region_737610b09f58fa3c.npz",
+  "current_limit_a": [
+    199.99999999999997,
+    199.99999999999997,
+    199.99999999999997,
+    199.99999999999997,
+    199.99999999999997,
+    199.99999999999997,
+    199.99999999999997,
+    199.99999999999997,
+    199.99999999999997,
+    199.99999999999997,
+    199.99999999999997,
+    199.99999999999997,
+    199.99999999999997,
+    199.99999999999997,
+    199.99999999999997,
+    199.99999999999997,
+    199.99999999999997,
+    199.99999999999997,
+    199.99999999999997,
+    199.99999999999997,
+    199.99999999999997,
+    199.99999999999997,
+    199.99999999999997,
+    199.99999999999997,
+    199.99999999999997,
+    199.99999999999997,
+    199.99999999999997,
+    199.99999999999997,
+    199.99999999999997,
+    199.99999999999997,
+    199.99999999999997,
+    199.99999999999997,
+    199.99999999999997,
+    199.99999999999997,
+    199.99999999999997,
+    199.99999999999997,
+    199.99999999999997
+  ],
+  "socp_feasible": 18793,
+  "ac_feasible": 16324,
+  "result_status": "certified",
+  "result_certified": true,
+  "reused_points": 26887,
+  "computed_points": 0,
+  "metrics": {
+    "inner": {
+      "mr_percent": 0.02450379808870375,
+      "fr_percent": 0.9588542298822673,
+      "missed_cells": 4,
+      "extra_cells": 158,
+      "reference_cells": 16324,
+      "computed_cells": 16478
+    },
+    "outer": {
+      "mr_percent": 0.0,
+      "fr_percent": 1.5440289505428226,
+      "missed_cells": 0,
+      "extra_cells": 256,
+      "reference_cells": 16324,
+      "computed_cells": 16580
+    }
+  },
+  "comparisons": {
+    "result_ac": {
+      "mr_percent": 0.02450379808870375,
+      "fr_percent": 0.9588542298822673,
+      "missed_cells": 4,
+      "extra_cells": 158,
+      "reference_cells": 16324,
+      "computed_cells": 16478
+    },
+    "result_socp": {
+      "mr_percent": 12.414196775395094,
+      "fr_percent": 0.10923655783468868,
+      "missed_cells": 2333,
+      "extra_cells": 18,
+      "reference_cells": 18793,
+      "computed_cells": 16478
+    },
+    "socp_ac": {
+      "mr_percent": 0.0,
+      "fr_percent": 13.137870483690737,
+      "missed_cells": 0,
+      "extra_cells": 2469,
+      "reference_cells": 16324,
+      "computed_cells": 18793
+    }
+  }
+}
