@@ -476,13 +476,20 @@ class RadialSandwich3D(RadialSandwich):
 
     def run_volume(self):
         """体积缺口准则：每次细分 Δ_k 最大的锥，子锥立即求外界；ΣΔ_k <= ε·Σvol(T_k) 时停止。
-        叶锥状态为 bounded（已有外界）/ pending（时限到时尚未求解，沿用父锥外界）/ unresolved（不能再分）。"""
+        叶锥状态为 bounded（已有外界）/ pending（时限到时尚未求解，沿用父锥外界）/ unresolved（不能再分）。
+        已有锥时续跑（compare_plan2 的方法 H）：先求 pending 锥，再从全部 bounded 锥重建堆；新对象行为不变。"""
         try:
-            root = self.make_root()
-            self.solve_cone(root)
-            root.status = 'bounded'
-            self.snapshot(root, 'bounded')
-            heap = [(-root.delta, root.id, root)]
+            if not self.cones:
+                root = self.make_root()
+                self.solve_cone(root)
+                root.status = 'bounded'
+                self.snapshot(root, 'bounded')
+            for cone in [c for c in self.cones if c.status == 'pending']:
+                self.solve_cone(cone)
+                cone.status = 'bounded'
+                self.snapshot(cone, 'bounded')
+            heap = [(-c.delta, c.id, c) for c in self.cones if c.status == 'bounded']
+            heapq.heapify(heap)
             while True:
                 if self.volume_ratio() <= self.epsilon:
                     self.status = 'certified'

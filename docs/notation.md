@@ -89,6 +89,28 @@ inner/outer/point 支持 d=2/3；faces 为 `(F,d+1)`，offset 始终最后一列
 
 schema 为 `support-face-fourbus-physical-v3`，coverage.mode=physical。`global_physical_calls` 统计完整查询；原 `enumeration_mip_calls/enumeration_seconds/global_milp_calls/discovery_sp_calls/discovery_cut_lp_calls/discovery_sp_seconds` 名称保留，现均为零。`conditional_support_cuts/support_calls` 保持原义。`SupportReplay` 使用同一个 RunMonitor 格式，`bounds/monitor` 可由分区入口传入；2D 的 `record` 只决定录制，不影响判据。
 
+## 径向夹逼的体积准则与方案二对照实验
+
+径向夹逼实验（experiments/test_radial_sandwich.py、test_radial_sandwich_3d.py）的 θ、rho、va/vb、mu、g、Q、c、α 仍是脚本内局部量。本节登记 2026-10-01 加入的接口；默认行为不变（二维 `criterion='radial'`）。`RadialSandwich.criterion='volume'` 时与三维相同：体积缺口 Δ_k=(μ̄_k^d-1)·vol(T_k)（`interval_delta`，xi^d），每次细分 Δ_k 最大者，ΣΔ_k<=`epsilon`·Σvol(T_k)（`volume_ratio`）即认证，`epsilon` 默认 d·tau，区间 MISOCP 解到 `mip_gap`。`run_volume` 可续跑：已有叶锥时不重建根锥，先求 pending 锥，再从全部 bounded 锥重建堆。`on_solution(problem, record)` 是每轮 MISOCP 求解后、释放模型前的空钩子；`Interval.final` 为区间最后一轮 MISOCP 记录。
+
+方案二对照实验（experiments/compare_plan2.py，纯几何在 experiments/plan2_geometry.py）比较方法 R（径向锥 + 体积准则 + 近端覆盖，即 B 型两网架证书 T ⊆ R_x̂ ∪ R_y）与方法 H（R 的 A 阶段 + 逐网架支撑查询 B + 覆盖证书 C）。坐标为 xi=u/bounds，分区盒 [0,1]^d；面方程沿用 `[n, b]`，|n|=1，beta=-b。
+
+| 数学量 | 代码 | 单位与含义 |
+|---|---|---|
+| X*、V_x | `SupportPhase.networks`（方案元组 → `NetworkState`）、`NetworkState.points` | A 阶段出现过的全部网架；该网架已认证点（射线远/近端、零接入点、审计过的已紧化现任解、支撑与覆盖见证），xi |
+| P_x、O_x | `NetworkState.vertices`、`NetworkState.outer` | conv(V_x) 的顶点；分区盒逐次被可靠支撑上界裁剪的外界，xi |
+| c_x | `NetworkState.center`，`interior_point` | P_x 的 Chebyshev 中心（LP），失败时取顶点形心 |
+| 面判据 | `NetworkState.criterion`，`choose_criterion` | origin：(1-tau)·UB+b<=epsilon_geom；center：UB-beta<=tau·(beta-n@c_x)+epsilon_geom；auto：原点在 P_x 内且到每个非分区边界面的距离>=`ORIGIN_CLEARANCE` 时取 origin |
+| E_x | `expanded_faces`、`SupportPhase.cover` | origin 为 P_x/(1-tau)，center 为 c_x+(1+tau)(P_x-c_x)；覆盖证书完成时冻结所用各 E_x 的面方程 |
+| ε、ε_A、share_A、ε_B | `settings:eps / discovery_eps / discovery_share / network_eps` | 体积目标（默认 d·tau）、A 阶段放宽目标与时限占比、网架停止 vol(O_x)/vol(P_x)-1 |
+| I_H、O_H | `h_measures` | I_R ∪ (∪P_x)；覆盖前 O_R∩盒，覆盖后 O_R∩盒∩(∪E_x)；返回 xi^d，乘 prod(bounds) 得 kW^d |
+
+`PartitionOracle` 是 `SupportOracle` 加分区盒 0<=u<=bounds 与种子，只接受 OPTIMAL；非 OPTIMAL 不重求，该面记 UNRESOLVED（代码库没有重试流程）。`boundary_faces` 识别分区边界面（xi_j>=0 或 xi_j<=1，容差 `BOUNDARY_TOL`），它们由分区盒本身认证。覆盖证书用 `RemainingRegionModel` 直接接收 E_x 面并令 tau=0（即 s=1），再加全部已紧化方案的提升行，见证方案未紧化时懒惰 OBBT 后重解；上界<=GEOMETRY_TOL 或已证不可行即覆盖完成。H 的分区认证为：覆盖完成、无 UNRESOLVED 面且 vol(O_H)-vol(I_H)<=ε·vol(I_H)；或径向部分自身满足体积准则（继承 R 的证书，`SupportPhase.certified_now`）。
+
+计时与记录：`--seconds` 为一次运行的墙钟总时限（含 OBBT、求解、几何与记录，不含事后逐格评价），t=0 为运行开始。串行时第 j 个分区得到剩余时间的 1/(余下分区数)，并行时各分区同时开始。`Recorder.log/record` 每次求解写一行（`Recorder._row:type` 为 MISOCP/SOCP/LP，`purpose` 为 discovery/cone_outer/support/coverage/obbt/ray/zero_sp）；`Recorder.changed` 在内外测度变化时写时间线（`inner_measure/outer_measure` 为 kW^d，`gap`=outer/inner-1）；`CHECKPOINTS` 各时刻保存变化前的确切几何快照。运行汇总 `write_run:t_cert` 为全部分区认证时刻（未认证为 None），`write_run:t_gap` 为总间隙首次降到 10%/5%/2% 的时刻。
+
+逐格评价 `grid_metrics` 以 AC 为主参考、SOCP 为诊断（未决标签不计入该参考）。`validity` 的必要条件：内域不含 SOCP 已证不可行格（`validity:inner_socp_infeasible_cells`=0，紧化模型 ⊆ SOCP）；AC 可行格都在外界内（`validity:outer_missed_ac_cells`=0）；AC 未决格单列（`validity:undecided_ac_cells`）。`validity:outer_missed_socp_cells` 是 OBBT 去掉的 SOCP-only 区域，只作诊断，不参与 `validity:valid`。
+
 ## 独立扫描、结果与回放
 
 `vertify.py` 是独立 AC/SOCP 扫描入口。`ac_network` 复制完整配置，不删除限流。`budget_schemes` 仅供小算例独立 AC 参考的拓扑审计，构域不调用它。AC 单树只提供可行见证；全拓扑必要条件排除或完整 AC 不可行证书才给负标签。迭代失败、超时和未知均不可当作不可行。
@@ -264,3 +286,28 @@ schema 为 `support-face-fourbus-physical-v3`，coverage.mode=physical。`global
 ### tests/planning_checks.py
 
 - [margin](../tests/planning_checks.py)
+
+### experiments/test_radial_sandwich.py
+
+- [RadialSandwich.criterion](../experiments/test_radial_sandwich.py)、[RadialSandwich.epsilon](../experiments/test_radial_sandwich.py)、[RadialSandwich.run_volume](../experiments/test_radial_sandwich.py)、[RadialSandwich.on_solution](../experiments/test_radial_sandwich.py)
+- [RadialSandwich.make_root](../experiments/test_radial_sandwich.py)、[RadialSandwich.solve_interval](../experiments/test_radial_sandwich.py)、[RadialSandwich.interval_delta](../experiments/test_radial_sandwich.py)、[RadialSandwich.volume_ratio](../experiments/test_radial_sandwich.py)
+- [Interval.final](../experiments/test_radial_sandwich.py)
+
+### experiments/plan2_geometry.py
+
+- [ORIGIN_CLEARANCE](../experiments/plan2_geometry.py)、[BOUNDARY_TOL](../experiments/plan2_geometry.py)、[boundary_faces](../experiments/plan2_geometry.py)、[chebyshev_center](../experiments/plan2_geometry.py)
+- [interior_point](../experiments/plan2_geometry.py)、[choose_criterion](../experiments/plan2_geometry.py)、[allowed_offsets](../experiments/plan2_geometry.py)、[expanded_faces](../experiments/plan2_geometry.py)
+- [face_margins](../experiments/plan2_geometry.py)、[classify_center](../experiments/plan2_geometry.py)、[h_measures](../experiments/plan2_geometry.py)、[grid_metrics](../experiments/plan2_geometry.py)
+- [validity](../experiments/plan2_geometry.py)、[validity:valid](../experiments/plan2_geometry.py)、[validity:inner_socp_infeasible_cells](../experiments/plan2_geometry.py)、[validity:outer_missed_ac_cells](../experiments/plan2_geometry.py)
+- [validity:outer_missed_socp_cells](../experiments/plan2_geometry.py)、[validity:undecided_ac_cells](../experiments/plan2_geometry.py)
+
+### experiments/compare_plan2.py
+
+- [CHECKPOINTS](../experiments/compare_plan2.py)、[SUPPORT_SECONDS](../experiments/compare_plan2.py)、[SUPPORT_PASS_SHARE](../experiments/compare_plan2.py)、[PartitionOracle](../experiments/compare_plan2.py)
+- [NetworkState](../experiments/compare_plan2.py)、[NetworkState.points](../experiments/compare_plan2.py)、[NetworkState.vertices](../experiments/compare_plan2.py)、[NetworkState.outer](../experiments/compare_plan2.py)
+- [NetworkState.center](../experiments/compare_plan2.py)、[NetworkState.criterion](../experiments/compare_plan2.py)、[SupportPhase](../experiments/compare_plan2.py)、[SupportPhase.networks](../experiments/compare_plan2.py)
+- [SupportPhase.cover](../experiments/compare_plan2.py)、[SupportPhase.certified_now](../experiments/compare_plan2.py)、[SupportPhase.coverage](../experiments/compare_plan2.py)、[Recorder](../experiments/compare_plan2.py)
+- [Recorder.log](../experiments/compare_plan2.py)、[Recorder.record](../experiments/compare_plan2.py)、[Recorder.changed](../experiments/compare_plan2.py)、[Recorder._row:type](../experiments/compare_plan2.py)
+- [Recorder._row:purpose](../experiments/compare_plan2.py)、[Recorder.changed:inner_measure](../experiments/compare_plan2.py)、[Recorder.changed:outer_measure](../experiments/compare_plan2.py)、[Recorder.changed:gap](../experiments/compare_plan2.py)
+- [settings:eps](../experiments/compare_plan2.py)、[settings:discovery_eps](../experiments/compare_plan2.py)、[settings:discovery_share](../experiments/compare_plan2.py)、[settings:network_eps](../experiments/compare_plan2.py)
+- [write_run:t_cert](../experiments/compare_plan2.py)、[write_run:t_gap](../experiments/compare_plan2.py)、[run_once](../experiments/compare_plan2.py)、[evaluate_run](../experiments/compare_plan2.py)

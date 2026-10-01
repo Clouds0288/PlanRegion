@@ -51,6 +51,10 @@ power/p 为 kW，顺序同 load_nodes；bounds=port_bounds(network)；分区 sig
 4. θ* 不在 (θa+δ, θb-δ) 内时取中点，δ=SPLIT_MARGIN·(θb-θa)；某候选点上无可用内顶点时也改取中点。
 5. 待处理区间按继承的父区间 g 从大到小处理。分区时限到达时，未求解区间沿用父区间外界 c_p·xi<=mu_p
    （在子锥上仍有效），从未得到上界时外域取评价盒；这些区间保持 pending。
+6. --criterion volume（默认 radial 不变）：与三维版相同的体积缺口准则，Δ_k=(μ̄_k^2-1)·area(T_k)，
+   area(T_k)=|cross(va,vb)|/2；每次细分 Δ_k 最大的区间，子区间立即求外界，ΣΔ_k <= ε·Σarea(T_k) 时停止，
+   ε 默认 d·tau；区间 MISOCP 解到相对间隙 --mip-gap，不用 1+tau 提前停止。run_volume 可续跑：已有区间时
+   不重建根区间，先求解 pending 区间，再从全部 bounded 区间重建堆（compare_plan2 的方法 H 在 A 阶段后续跑）。
 
 输出（--output 下）
 ----
@@ -186,6 +190,7 @@ class Interval:
     near_b: np.ndarray | None = None
     cover_a: float | None = None      # 覆盖方案 y 在 θa、θb 的半径 rho_y
     cover_b: float | None = None
+    final: dict | None = None         # 最后一轮 MISOCP 记录（体积准则细分时用解点与方案）
 
     @property
     def width(self):
@@ -230,6 +235,9 @@ class RadialSandwich:
         self.oracle = PortSubProblem(self.equations, threads=args.threads)
         self.switches = [s for c, s in zip(self.network.corridors, self.network.type_slices) if c.switchable]
         self.near_mode = args.inner_cert == 'near'
+        self.criterion = getattr(args, 'criterion', 'radial')
+        epsilon = getattr(args, 'epsilon', None)
+        self.epsilon = epsilon if epsilon is not None else self.dim*args.tau   # 体积缺口容差，默认 d·tau
         self.rays, self.origin = {}, {}          # (方案, θ) → 内顶点或 None；方案 → 原点认证
         self.nears = {}                          # (方案, θ) → 可行段近端（xi）或 None，仅原点不可行方案
         self.counts = dict(misocp=0, interval_solves=0, rays=0, ray_cache_hits=0, ray_failures=0,
@@ -402,6 +410,7 @@ class RadialSandwich:
                 if model.SolCount:
                     record.update(objective=float(model.ObjVal), x=tuple(int(v) for v in np.rint(problem.x.X)),
                                   point=np.asarray(problem.power.X, float))
+                self.on_solution(problem, record)
             finally:
                 model.dispose()
             rounds.append(record)
@@ -418,6 +427,9 @@ class RadialSandwich:
             print(f'  [{self.code}] lazy OBBT {context}: scheme {self.label(record["x"])} '
                   f'(incumbent {record["objective"]:.6g}, bound {record["bound"]:.6g}) {seconds:.2f}s', flush=True)
         return rounds, triggers
+
+    def on_solution(self, problem, record):
+        """每轮 MISOCP 求解后、释放模型前调用；默认无操作。compare_plan2 用它审计现任解并记录求解。"""
 
     def center_ray(self, problem, xi):
         """初始方案的径向 MISOCP：二维取 θ=π/4，sin θ·xi1 − cos θ·xi2 = 0，max xi1+xi2。"""
@@ -448,8 +460,10 @@ class RadialSandwich:
             excluded.append(final['x'])
 
     def certify(self, interval):
-        """外界 MISOCP：锥约束、幅值上界 bounds、目标 max c·xi，BestBdStop=BestObjStop=1+tau。"""
+        """外界 MISOCP：锥约束、幅值上界 bounds、目标 max c·xi。径向准则 BestBdStop=BestObjStop=1+tau；
+        体积准则解到相对间隙 --mip-gap，不提前停止（同三维版）。"""
         va, vb, c = interval.va, interval.vb, interval.c
+        volume = self.criterion == 'volume'
 
         def configure(problem, xi):
             model = problem.model
@@ -457,9 +471,13 @@ class RadialSandwich:
             model.addConstr(float(vb[1])*xi[0]-float(vb[0])*xi[1] >= 0., name='cone_b')   # cross(xi, vb) >= 0
             problem.power.UB = self.bounds
             model.setObjective(float(c[0])*xi[0]+float(c[1])*xi[1], GRB.MAXIMIZE)
-            model.Params.BestBdStop = model.Params.BestObjStop = 1.+self.tau
+            if volume:
+                model.Params.MIPGap = self.args.mip_gap
+            else:
+                model.Params.BestBdStop = model.Params.BestObjStop = 1.+self.tau
         self.counts['interval_solves'] += 1
-        rounds, triggers = self.misocp(configure, stop=1.+self.tau, context=f'interval {interval.id}')
+        rounds, triggers = self.misocp(configure, stop=None if volume else 1.+self.tau,
+                                       context=f'interval {interval.id}')
         final = rounds[-1]
         interval.mu = 1. if final['status'] == 'INFEASIBLE' else final['bound']
         interval.g = interval.mu-1.
@@ -555,22 +573,100 @@ class RadialSandwich:
                        ac_out=int((ac & ~labels['outer']).sum()))
         self.history.append(row)
 
-    def run(self, scan=None):
+    def make_root(self, scan=None):
+        """径向 MISOCP 选初始方案，建根区间 [0, π/2]。"""
+        x0 = self.initial_scheme()
+        candidates = [self.selection['x0'], x0] if self.near_mode and self.selection['x0'] != x0 else [x0]
+        best = None
+        for scheme in candidates:
+            inner = self.inner_vertices(scheme, 0., np.pi/2, (x0,))
+            if inner is not None:
+                score = float(np.linalg.norm(inner['va'])*np.linalg.norm(inner['vb']))
+                if best is None or score > best[0]:
+                    best = score, inner
+        if best is None:
+            raise RuntimeError(f'{self.code}: initial scheme {self.label(x0)} has no ray vertex at 0 or pi/2')
+        root = self.new_interval(0., np.pi/2, best[1])
+        self.intervals = [root]
+        self.snapshot(None, 'initial', scan)
+        return root
+
+    def solve_interval(self, interval):
+        """求区间外界并保存最后一轮记录（体积准则细分用）。"""
+        final = self.certify(interval)
+        interval.final = final
+        info = interval.misocp
+        print(f'  [{self.code}] #{interval.id:<3d} [{interval.theta_a:.5f},{interval.theta_b:.5f}] '
+              f'xhat={self.label(interval.x)} {info["status"]:<14s} mu={interval.mu:.6g} '
+              f'lazy={info["lazy_obbt"]} {info["seconds"]:.2f}s leaves={len(self.intervals)}', flush=True)
+        return final
+
+    def interval_delta(self, interval):
+        """体积缺口 Δ=(μ̄^d-1)·area(T)（xi²）；μ̄=1+leaf_gap，尚无外界时为 inf。"""
+        gap = self.leaf_gap(interval)
+        area = .5*abs(cross(interval.va, interval.vb))
+        return max(((1.+gap)**self.dim-1.)*area, 0.) if np.isfinite(gap) else np.inf
+
+    def volume_ratio(self):
+        """体积缺口比 ΣΔ_k / Σarea(T_k)；任一叶区间尚无外界时为 inf。"""
+        total = sum(.5*abs(cross(i.va, i.vb)) for i in self.intervals)
+        return sum(self.interval_delta(i) for i in self.intervals)/total if total > 0. else np.inf
+
+    def run_volume(self, scan=None):
+        """体积缺口准则（三维版 run_volume 的二维实例）：每次细分 Δ_k 最大的区间，子区间立即求外界；
+        ΣΔ_k <= ε·Σarea(T_k) 时停止。已有区间时续跑：先求 pending 区间，再从全部 bounded 区间重建堆。"""
         try:
-            x0 = self.initial_scheme()
-            candidates = [self.selection['x0'], x0] if self.near_mode and self.selection['x0'] != x0 else [x0]
-            best = None
-            for scheme in candidates:
-                inner = self.inner_vertices(scheme, 0., np.pi/2, (x0,))
-                if inner is not None:
-                    score = float(np.linalg.norm(inner['va'])*np.linalg.norm(inner['vb']))
-                    if best is None or score > best[0]:
-                        best = score, inner
-            if best is None:
-                raise RuntimeError(f'{self.code}: initial scheme {self.label(x0)} has no ray vertex at 0 or pi/2')
-            root = self.new_interval(0., np.pi/2, best[1])
-            self.intervals = [root]
-            self.snapshot(None, 'initial', scan)
+            if not self.intervals:
+                root = self.make_root(scan)
+                self.solve_interval(root)
+                root.status = 'bounded'
+                self.snapshot(root, 'bounded', scan)
+            for interval in [i for i in self.intervals if i.status == 'pending']:
+                self.solve_interval(interval)
+                interval.status = 'bounded'
+                self.snapshot(interval, 'bounded', scan)
+            heap = [(-self.interval_delta(i), i.id, i) for i in self.intervals if i.status == 'bounded']
+            heapq.heapify(heap)
+            while True:
+                if self.volume_ratio() <= self.epsilon:
+                    self.status = 'certified'
+                    break
+                if not heap:
+                    self.status = 'unresolved'
+                    break
+                self.remaining()
+                _, _, interval = heapq.heappop(heap)
+                if interval.width < self.args.min_width:
+                    interval.status, interval.reason = 'unresolved', 'min_width'
+                    continue
+                if len(self.intervals) >= self.args.max_intervals:
+                    interval.status, interval.reason = 'unresolved', 'max_intervals'
+                    continue
+                children = self.split(interval, interval.final)
+                if children is None:
+                    interval.status, interval.reason = 'unresolved', 'no_inner_vertex'
+                    continue
+                k = next(j for j, item in enumerate(self.intervals) if item is interval)
+                self.intervals[k:k+1] = children
+                for child in children:
+                    self.solve_interval(child)
+                    child.status = 'bounded'
+                    heapq.heappush(heap, (-self.interval_delta(child), child.id, child))
+                self.snapshot(interval, 'split', scan)
+        except PartitionTimeout:
+            self.status = 'time_limit'
+        except Exception as exc:
+            self.status = 'error'
+            self.errors.append(dict(kind='fatal', error=repr(exc), traceback=traceback.format_exc()))
+            print(traceback.format_exc(), flush=True)
+        self.seconds = perf_counter()-self.started
+        return self
+
+    def run(self, scan=None):
+        if self.criterion == 'volume':
+            return self.run_volume(scan)
+        try:
+            root = self.make_root(scan)
             heap = [(-root.priority, -root.width, root.id, root)]
             while heap:
                 self.remaining()
@@ -735,10 +831,11 @@ class RadialSandwich:
             row['angle'] += interval.width
         return dict(
             partition=self.code, sign=self.sign, status=self.status, seconds=self.seconds,
-            inner_cert=self.args.inner_cert, covered_intervals=len(covered),
+            inner_cert=self.args.inner_cert, criterion=self.criterion, epsilon=self.epsilon,
+            volume_gap_ratio=self.volume_ratio() if self.intervals else None, covered_intervals=len(covered),
             covered_angle=sum(i.width for i in covered), cover_pairs=cover_pairs,
             max_g=max((i.g for i in solved), default=None),
-            intervals=len(self.intervals), certified=statuses.count('certified'),
+            intervals=len(self.intervals), certified=statuses.count('certified'), bounded=statuses.count('bounded'),
             unresolved=statuses.count('unresolved'), pending=statuses.count('pending'),
             unresolved_reasons={r: sum(i.reason == r for i in self.intervals)
                                 for r in sorted({i.reason for i in self.intervals if i.reason})},
@@ -1070,8 +1167,11 @@ def print_table(rows):
 def summary_line(result):
     counts = result['counts']
     schemes = ','.join(sorted(result['schemes_used']))
-    return (f'{result["partition"]} {result["status"]:<10s} max g={fmt(result["max_g"], 5)} '
-            f'intervals={result["intervals"]} (cert {result["certified"]}, unres {result["unresolved"]}, '
+    volume = result.get('criterion') == 'volume'
+    gap = f'volume gap={fmt(result["volume_gap_ratio"], 4)} (eps {result["epsilon"]:g}) ' if volume else ''
+    leaves = f'bounded {result["bounded"]}' if volume else f'cert {result["certified"]}'
+    return (f'{result["partition"]} {result["status"]:<10s} {gap}max g={fmt(result["max_g"], 5)} '
+            f'intervals={result["intervals"]} ({leaves}, unres {result["unresolved"]}, '
             f'pend {result["pending"]}) MISOCP={counts["misocp"]} lazy OBBT={counts["lazy_obbt"]} '
             f'rays={counts["rays"]}+{counts["near_rays"]} near OBBT={counts["obbt"]} '
             f'covered={result["covered_intervals"]} schemes={{{schemes}}} time={result["seconds"]:.1f}s')
@@ -1096,7 +1196,9 @@ def write_outputs(output, args, parts, results, overall, provenance, violations)
                    settings=dict(tau=args.tau, mip_seconds=args.mip_seconds, seconds=args.seconds,
                                  max_intervals=args.max_intervals, min_width=args.min_width, threads=args.threads,
                                  obbt_workers=args.obbt_workers, partitions=list(args.partitions),
-                                 inner_cert=args.inner_cert, split_margin=SPLIT_MARGIN,
+                                 inner_cert=args.inner_cert, criterion=args.criterion,
+                                 epsilon=args.epsilon if args.epsilon is not None else 2*args.tau,
+                                 mip_gap=args.mip_gap, split_margin=SPLIT_MARGIN,
                                  cover_conv_tol=COVER_CONV_TOL, ray_seconds=RAY_SECONDS),
                    status=('certified' if parts and all(p.status == 'certified' for p in parts) else
                            'error' if any(p.status == 'error' for p in parts) else
@@ -1176,6 +1278,11 @@ def parse_args():
                              'an origin-feasible scheme covers its near ends')
     parser.add_argument('--compare-with', type=Path,
                         help='existing output directory to compare with (writes comparison.json/.png)')
+    parser.add_argument('--criterion', choices=('radial', 'volume'), default='radial',
+                        help='radial: every interval mu_k <= 1+tau (default); volume: refine max Delta_k, '
+                             'stop at sum Delta_k <= eps*sum area(T_k), as in the 3D script')
+    parser.add_argument('--epsilon', type=float, help='volume-gap tolerance (default d*tau)')
+    parser.add_argument('--mip-gap', type=float, default=1e-3, help='relative MIPGap of interval MISOCPs (volume mode)')
     args = parser.parse_args()
     if len(set(args.partitions)) != len(args.partitions):
         parser.error('duplicate partition codes')
