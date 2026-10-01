@@ -450,6 +450,8 @@ class RadialSandwich:
             history.append(dict(excluded=[self.label(s) for s in excluded], lazy_obbt=triggers,
                                 rounds=[self.round_json(r) for r in rounds]))
             if final['x'] is None:
+                if perf_counter() >= self.deadline:   # 用到分区时限仍无现任解：是超时，不是求解失败
+                    raise PartitionTimeout(f'{self.code}: partition time limit in the radial MISOCP')
                 raise RuntimeError(f'{self.code}: radial MISOCP returned no scheme ({final["status"]})')
             self.selection.setdefault('x0', final['x'])
             if self.origin_feasible(final['x']):
