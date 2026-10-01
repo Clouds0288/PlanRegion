@@ -2306,8 +2306,9 @@ def plot_report(output, rows):
     methods = [m for m in METHOD_COLORS if any(r['summary']['method'] == m for r in rows)]
     handles = [Line2D([], [], color=METHOD_COLORS[m], lw=2, label=f'{m} (each repeat)') for m in methods]
     handles.append(Line2D([], [], color=INK_2, marker='o', ls='none', ms=7, label='certified (all partitions)'))
-    figure.legend(handles=handles, loc='lower center', ncol=len(handles), frameon=False, fontsize=9, labelcolor=INK_2)
-    figure.tight_layout(rect=(0, .07, 1, 1))
+    ncol = min(len(handles), max(2, int(6.6*len(workers)//2.4)))   # 图例按图宽换行，不越出画布
+    figure.legend(handles=handles, loc='lower center', ncol=ncol, frameon=False, fontsize=9, labelcolor=INK_2)
+    figure.tight_layout(rect=(0, .07*-(-len(handles)//ncol), 1, 1))
     figure.savefig(output/'gap_time.png', dpi=160, facecolor=SURFACE)
     plt.close(figure)
     # MR/FR at checkpoints
@@ -2459,7 +2460,7 @@ def plot_regions(output, rows):
                  else [])]
     columns = 4
     figure.legend(handles=handles, loc='lower center', ncol=columns, frameon=False, fontsize=8, labelcolor=INK_2)
-    figure.tight_layout(rect=(0, .03+.035*(-(-len(handles)//columns)), 1, 1))
+    figure.tight_layout(rect=(0, (.03+.035*(-(-len(handles)//columns)))/nrows, 1, 1))   # 图例高度按单行面板折算
     figure.savefig(output/'regions.png', dpi=160, facecolor=SURFACE)
     plt.close(figure)
 
