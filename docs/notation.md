@@ -49,13 +49,15 @@ Case33 保留原 MATPOWER 线路与背景负荷，仅七条开关可变；相对
 
 ## 主线、SP 与联合割
 
-主线按符号分区执行：支撑初始化、首轮射线、SP 违反量选点切割、边界补充、完整物理查漏。`build_region` 在所有分区间分配同一总时限。固定网架和符号内可取认证点凸包，跨网架和分区只取并集。`cache/powers/applied/initialized/counts/small_cuts/area_ratio` 是逐网架流程状态；缓存只复用对应方案与点的证据。
+主线按符号分区执行：支撑初始化、首轮射线、SP 违反量选点切割、边界补充、完整物理查漏。`build_region` 在所有分区间分配同一总时限，每区不超过 `partition_seconds`。固定网架和符号内可取认证点凸包，跨网架和分区只取并集。`cache/powers/applied/initialized/counts/small_cuts/area_ratio` 是逐网架流程状态；缓存只复用对应方案与点的证据。
 
 MP2 最大化 `direction @ p`，`objective/bound` 是 kW 的可行值/全局上界；MP1 最小化费用，`objective/bound` 是费用值/全局下界。成功答案包含 `x/p/state`；明确不可行返回 None。`radial_gap_kw=1e-3` 只检查目标间隙，不改写功率。原始求解质量不合格或无可靠答案时停止，不修补或重求。
 
 SP 固定 x,p 后最小化非负 `eta`（求解器名 violation），只允许功率平衡与压降等式 ±eta，其余约束保持严格。`max(eta,0)+MaxVio<=PLANNING_TOL` 才接受原始 `state`。正 eta 通过锥的必要支撑平面 LP 生成有效联合割；`score_only=True` 保存 `cone_normals` 并延迟至 `generate_cut` 取割。超时、数值失败或无法分离均不能作为不可行证书。
 
 唯一联合割方向是 `alpha + beta @ p + delta @ x >= 0`，数组布局 `[alpha, *beta, *delta]`，长度 `1+d+t`；beta 作用于 kW。`_separating_cut.dual` 按求解器线性行排列，`coefficients` 按变量索引，`h` 提取全部 state 列。采用 Gurobi 行乘子方向，固定 x/p 的等式乘子先置零：`alpha=-dual@rhs + max(h,0)@y_ub_global + min(h,0)@y_lb_global`。正比例归一化后截距加 `1e-10` 保守补偿。`calls/cut_calls` 分别计 SP 与取割 LP 次数。
+
+方案紧化：方案首次登记时 `GridPhysics.obbt` 在独立功率 `[0,bounds]` 内对选中型号的 P/Q/ell 与节点 v 做 `OBBT_ROUNDS` 轮 OBBT，盒存于 `GridPhysics.boxes[tuple(x)]`，键 `(量名, 型号键或节点)`、标幺；端点外扩 `OBBT_PAD`，未证得最优的端点保留原界（首轮为全局界）。`add_operation(..., scheme=x)` 对已紧化方案追加盒约束与反向锥包络割 `u_L*ell+ell_L*u-u_L*ell_L <= (P_L+P_U)P-P_L*P_U+(Q_L+Q_U)Q-Q_L*Q_U+ENVELOPE_MARGIN`（另一条取 u_U、ell_U，u 为参考送端电压平方），每行右端加 `M*H(x)`：H 为 x 与该方案的汉明距离，M 为该行在全局界上的最大违反量，故联合割对全部 x 仍有效。SP、射线、OBBT 与固定方案查漏传入 scheme；含紧化行的模型和 OBBT 用 `OBBT_CONV_TOL`。`obbt_extremes` 以 `OBBT_WORKERS` 份模型副本并行求解，结果与串行逐位相同。
 
 有限逐线路电流的 Port SP 固定使用既有 Gurobi 连续 SOCP；其他 Port SP 和射线使用 Clarabel。`solve_conic.basis/offset` 表示消元坐标，`cone_scale` 只是等价锥缩放。射线内域见证使用既有 `1e-6` 锥裕量，有限电流界同时扣除相同裕量；原物理残差仍按 `1e-8` 验收。`numeric_focus` 是求解设置，不改变数学可行性。
 
@@ -67,7 +69,9 @@ SP 固定 x,p 后最小化非负 `eta`（求解器名 violation），只允许�
 
 `RegionState.records[tuple(x)]` 中 inner/outer 和 `add_point/covering_schemes/witness_support` 用归一化坐标；`finish` 导出的 `inner/outer[*].vertices` 已变回 kW。`halfspaces/contains/clip_polytope` 不自动换算。面方程为 `F@xi+g<=0`；裁剪接口为 `constant+coefficient@xi>=0`。固定 x 的联合割转换为 `alpha+delta@x+(beta*bounds)@xi>=0`。
 
-`tau=0.005` 是径向精度，s=1-tau；允许外扩对应归一化点缩至 s*xi。完整 `RemainingRegionModel` 搜索扩张内域并集以外的物理点，覆盖目标为 `max_(x,p) min_known_scheme max_face (F*s*xi+g)`。局部变量 delta 是未覆盖距离，内部乘 `distance_scale`、返回时还原；与联合割的 delta 向量不同。只有可靠全局上界<=GEOMETRY_TOL 或已证不可行才 complete。
+`tau=0.005` 是径向精度，s=1-tau；允许外扩对应归一化点缩至 s*xi。完整 `RemainingRegionModel` 搜索扩张内域并集以外的物理点，覆盖目标为 `max_(x,p) min_known_scheme max_face (F*s*xi+g)`。局部变量 delta 是未覆盖距离，内部乘 `distance_scale`、返回时还原；与联合割的 delta 向量不同。只有可靠全局上界<=COVERAGE_TOL 或已证不可行才 complete。
+
+查漏由 `remaining_search` 按方案分解：已登记方案以 `RemainingRegionModel(..., scheme=x)` 固定 x（含紧化行）；其余方案以 `exclude` 排除已登记及 `covered` 后联合求解（纯 SOCP），所得新方案先 OBBT 再固定 x 复核，无见证则记入 covered。查漏模型给出边界上的候选点与覆盖上界；`register` 从内点锚（原点已认证时取原点，否则取内域重心，新方案无内点时取 `GridPhysics.center`）沿射线取朝候选点的最远紧化可行点登记，并写回答案 p。
 
 该模型始终包含二元建设变量、完整运行状态和 SOCP 约束，无 light/cuts_only 入口。已知方案全部局部认证不能替代全局覆盖证明；超时保留认证内域和有效外包络。几何外扩用 center/radius/envelope 表示中心、内切半径及包络，不更改物理状态。
 
@@ -113,6 +117,9 @@ schema 为 `support-face-fourbus-physical-v3`，coverage.mode=physical。`global
 | 配置 | 当前值 |
 |---|---|
 | `PLANNING_TOL / GEOMETRY_TOL` | 各 1e-8；物理残差/归一化几何门槛，语义独立 |
+| `COVERAGE_TOL` | 1e-4；全局查漏覆盖门槛与认证外包络的外扩量（归一化距离） |
+| `OBBT_ROUNDS / OBBT_PAD / ENVELOPE_MARGIN / OBBT_CONV_TOL` | 2 / 1e-6 标幺 / 1e-4 标幺² / 1e-8；查漏模型的 barrier 收敛容差 1e-6 |
+| `PARTITION_TIME_LIMIT / OBBT_WORKERS` | 20 秒 / 8 |
 | `AC_TOL / FIXED_POINT_TOL / GLOBAL_AC_TOL` | 1e-9 / 1e-12 / 1e-7 |
 | `REGION_TAU` | 0.005；不是体积误差或物理容差 |
 | `NETWORK / DIMENSION / mode` | Case33 / 3 / 1 |
@@ -187,7 +194,10 @@ schema 为 `support-face-fourbus-physical-v3`，coverage.mode=physical。`global
 - [SubProblem.solve.score_only](../model.py)、[SubProblem.solve:cone_normals](../model.py)、[SubProblem.solve:cut](../model.py)、[SubProblem.solve:eta](../model.py)
 - [SubProblem.solve:feasible](../model.py)、[SubProblem.solve:state](../model.py)、[port_bounds](../model.py)、[ray_support](../model.py)
 - [ray_support.numeric_focus](../model.py)、[ray_support.ray_fraction](../model.py)、[solve_conic.basis](../model.py)、[solve_conic.cone_scale](../model.py)
-- [solve_conic.offset](../model.py)、[voltage_flow_bounds](../model.py)
+- [solve_conic.offset](../model.py)、[voltage_flow_bounds](../model.py)、[OBBT_ROUNDS](../model.py)、[OBBT_PAD](../model.py)
+- [ENVELOPE_MARGIN](../model.py)、[OBBT_CONV_TOL](../model.py)、[OBBT_PARAMS](../model.py)、[obbt_pool](../model.py)
+- [obbt_extremes](../model.py)、[GridPhysics.boxes](../model.py)、[GridPhysics.obbt](../model.py)、[GridPhysics.center](../model.py)
+- [GridPhysics.add_operation.scheme](../model.py)、[RemainingRegionModel.__init__.scheme](../model.py)、[RemainingRegionModel.__init__.exclude](../model.py)
 
 ### Network/__init__.py
 
@@ -226,7 +236,8 @@ schema 为 `support-face-fourbus-physical-v3`，coverage.mode=physical。`global
 - [SCAN_OUTPUT](../main.py)、[SCAN_WORKERS](../main.py)、[SOLVER_THREADS](../main.py)、[main](../main.py)
 - [main.case](../main.py)、[main.dimension](../main.py)、[main.load_nodes](../main.py)、[mode](../main.py)
 - [recording_path](../main.py)、[run](../main.py)、[run.budget](../main.py)、[run.force_rescan](../main.py)
-- [run.scan_output](../main.py)
+- [run.scan_output](../main.py)、[OBBT_WORKERS](../main.py)、[PARTITION_TIME_LIMIT](../main.py)、[run.obbt_workers](../main.py)
+- [run.partition_seconds](../main.py)
 
 ### region.py
 
@@ -238,7 +249,8 @@ schema 为 `support-face-fourbus-physical-v3`，coverage.mode=physical。`global
 - [build_sequential_region.point_tol](../region.py)、[build_sequential_region.powers](../region.py)、[build_sequential_region.ray_threshold](../region.py)、[build_sequential_region.sign](../region.py)
 - [build_sequential_region.small_cuts](../region.py)、[build_sequential_region.x](../region.py)、[clip_polytope.coefficient](../region.py)、[clip_polytope.constant](../region.py)
 - [coverage_halfspaces](../region.py)、[halfspaces](../region.py)、[ray_gain](../region.py)、[register_power](../region.py)
-- [stage_candidates](../region.py)、[union_measure](../region.py)
+- [stage_candidates](../region.py)、[union_measure](../region.py)、[COVERAGE_TOL](../region.py)、[remaining_search](../region.py)
+- [build_sequential_region.covered](../region.py)、[build_sequential_region.obbt_workers](../region.py)、[build_region.partition_seconds](../region.py)、[build_region.obbt_workers](../region.py)
 
 ### plot.py
 

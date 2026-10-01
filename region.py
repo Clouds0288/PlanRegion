@@ -12,6 +12,9 @@ from plot import union_volume
 
 # 连续几何在公共评价箱归一化后的坐标中计算；与采样网格无关。
 GEOMETRY_TOL = 1e-8
+# 全局查漏的覆盖容差（归一化距离）：tau 扩张在原点附近为零，登记点又由带锥裕量的射线认证，
+# 原点附近的细缝与小曲边只能逐点逼近；1e-4 约为 Case33 的 1 kW。
+COVERAGE_TOL = 1e-4
 
 
 def polytope_vertices(points):
@@ -181,8 +184,8 @@ class RegionState:
                 center = poly.mean(axis=0)
                 radius = float(np.min(-eq[:, :-1]@center-eq[:, -1]))
                 if radius > 1e-10:
-                    # 仿射外扩包含每个面外移 GEOMETRY_TOL 的集合，避免近共面裁剪交点。
-                    envelope = (center+(1+GEOMETRY_TOL/radius)*(poly-center))/(1-self.tau)
+                    # 仿射外扩包含每个面外移 COVERAGE_TOL 的集合，与查漏的覆盖证书一致。
+                    envelope = (center+(1+COVERAGE_TOL/radius)*(poly-center))/(1-self.tau)
                     for axis, limit in zip(np.eye(len(self.bounds)), self.axis_bounds/self.bounds):
                         envelope = clip_polytope(envelope, 0., axis)
                         envelope = clip_polytope(envelope, limit, -axis)
@@ -190,7 +193,7 @@ class RegionState:
                 else:
                     envelope = initial_polytope(self.bounds, self.total_bound, self.axis_bounds)
                     for face in eq:
-                        envelope = clip_polytope(envelope, (GEOMETRY_TOL-face[-1])/(1-self.tau), -face[:-1])
+                        envelope = clip_polytope(envelope, (COVERAGE_TOL-face[-1])/(1-self.tau), -face[:-1])
                 outer.append(envelope)
         else:
             outer = [initial_polytope(self.bounds, self.total_bound, self.axis_bounds)]
@@ -237,11 +240,32 @@ def coverage_halfspaces(region):
     return kept, equations
 
 
+def remaining_search(search, registered, covered, obbt):
+    """按方案分解查漏：已登记方案固定 x（含紧化行）；其余方案排除已登记与已证覆盖者后以纯 SOCP 联合求解，
+    给出的新方案经 OBBT 后固定 x 复核，无见证即记入 covered。返回首个见证，或 bound 取各子问题最大值的覆盖证书。"""
+    bounds = []
+    for scheme in registered:
+        answer = search(scheme=scheme)
+        if not answer['complete']:
+            return answer
+        bounds.append(answer['bound'])
+    while not (answer := search(exclude=[*registered, *covered]))['complete']:
+        scheme = tuple(answer['x'])
+        obbt(scheme)
+        answer = search(scheme=scheme)
+        if not answer['complete']:
+            return answer
+        covered.add(scheme)
+        bounds.append(answer['bound'])
+    bounds = [bound for bound in [*bounds, answer['bound']] if bound is not None]
+    return dict(complete=True, bound=max(bounds) if bounds else None, x=None, p=None, feasible=False)
+
+
 def build_sequential_region(network, *, budget, monitor, seconds=50., threads=4,
                             threshold=.02, patience=3, tau=.005,
                             numeric_focus=0, point_tol=.01,
-                            ray_threshold=1e-4, mode=0, sign=None):
-    """新网架先遍历 G 做射线；每阶段小割后补边界，随即由 physical 搜索查漏。"""
+                            ray_threshold=1e-4, mode=0, sign=None, obbt_workers=1):
+    """新网架先 OBBT 紧化并遍历 G 做射线；每阶段小割后补边界，随即按方案分解查漏。"""
     d = len(network.load_nodes)
     sign = np.ones(d, int) if sign is None else np.asarray(sign)
     bounds = port_bounds(network) if mode else np.full(d, network.power_limit)
@@ -251,7 +275,7 @@ def build_sequential_region(network, *, budget, monitor, seconds=50., threads=4,
     oracle = PortSubProblem(equations, threads=threads, numeric_focus=numeric_focus)
     cache = {}
     powers, applied = [], set()
-    initialized = set()
+    initialized, covered = set(), set()
     counts = dict(initial=0, sp=0, cuts=0, ray=0, global_search=0)
     status, certified, coverage = 'time_limit', False, None
     x = None
@@ -261,23 +285,31 @@ def build_sequential_region(network, *, budget, monitor, seconds=50., threads=4,
                   validation_note='独立 SOCP 扫描结果在此显示')
 
     def register(answer):
+        # 方案先 OBBT 紧化；答案点位于可行集边界，登记从内点锚沿射线朝它的最远紧化可行点，并写回 answer['p']。
         selection = answer['x']
+        equations.obbt(selection, bounds, obbt_workers)
         added = region.add_scheme(selection, network.decode_plan(selection), network.cost_offset+network.cost@selection)
+        background = np.any(network.fixed_p) or np.any(network.fixed_q)
+        if added and not background:
+            # FourBus 无固定负荷，零潮流和单位电压解析可行；原点作锚，射线沿坐标轴不偏离。
+            region.add_point(selection, np.zeros(d))
+        # 原点已认证时作锚：射线回拉沿径向，与以原点为中心的 tau 覆盖扩张一致。
+        inner = region.records[tuple(selection)]['inner']
+        anchor = (np.zeros(d) if (inner == 0.).all(axis=1).any() else
+                  inner.mean(axis=0)*bounds if len(inner) else equations.center(selection, bounds))
+        answer['p'] = ray_support(equations, budget, selection, anchor, answer['p'], threads=threads,
+                                  time_limit=monitor.remaining(seconds), numeric_focus=numeric_focus)['p']
         region.add_point(selection, answer['p']/bounds)
-        if added:
-            if np.any(network.fixed_p) or np.any(network.fixed_q):
-                # Case33 有固定背景负荷：原点也必须实际认证。
-                power = np.zeros(d)
-                monitor._emit('origin_start', phase='零接入认证',
-                              active_scheme=monitor._scheme(selection), **monitor._geometry(region))
-                monitor.sp_start(selection, power, oracle.calls+1)
-                checked = oracle.solve(selection, power, time_limit=monitor.remaining(seconds), score_only=True)
-                monitor.sp_end(checked)
-                if checked['feasible']:
-                    region.add_point(selection, power)
-            else:
-                # FourBus 无固定负荷，零潮流和单位电压解析可行。
-                region.add_point(selection, np.zeros(d))
+        if added and background:
+            # Case33 有固定背景负荷：原点也必须实际认证。
+            power = np.zeros(d)
+            monitor._emit('origin_start', phase='零接入认证',
+                          active_scheme=monitor._scheme(selection), **monitor._geometry(region))
+            monitor.sp_start(selection, power, oracle.calls+1)
+            checked = oracle.solve(selection, power, time_limit=monitor.remaining(seconds), score_only=True)
+            monitor.sp_end(checked)
+            if checked['feasible']:
+                region.add_point(selection, power)
         return selection
 
     def check(point):
@@ -429,15 +461,19 @@ def build_sequential_region(network, *, budget, monitor, seconds=50., threads=4,
             monitor._emit('boundary_end', phase='边界补充', ray=None)
             monitor._emit('scheme_end', phase='网架阶段结束', stage_reason=reason, sp_point=None)
 
-            # 5. 在 G 去掉容许扩边的 G' 后查漏；x、p、y 自由，见证带完整物理可行解。
+            # 5. 在 G 去掉容许扩边的 G' 后按方案分解查漏；见证带完整物理（含所属方案紧化）可行解。
             monitor.global_start(0)
             _, inner_halfspaces = coverage_halfspaces(region)
-            problem = RemainingRegionModel(equations, budget, bounds, region.total_bound,
-                region.cuts, inner_halfspaces, tau, axis_bounds=region.axis_bounds,
-                threads=threads)
-            with problem.model:
-                counts['global_search'] += 1
-                answer = problem.solve(GEOMETRY_TOL, time_limit=monitor.remaining(seconds))
+
+            def search(scheme=None, exclude=()):
+                problem = RemainingRegionModel(equations, budget, bounds, region.total_bound, region.cuts,
+                    inner_halfspaces, tau, axis_bounds=region.axis_bounds, threads=threads,
+                    scheme=scheme, exclude=exclude)
+                with problem.model:
+                    return problem.solve(COVERAGE_TOL, time_limit=monitor.remaining(seconds))
+            counts['global_search'] += 1
+            answer = remaining_search(search, list(region.records), covered,
+                                      lambda scheme: equations.obbt(scheme, bounds, obbt_workers))
             coverage = answer['bound']
             if not answer['complete']:
                 x = register(answer)
@@ -456,8 +492,9 @@ def build_sequential_region(network, *, budget, monitor, seconds=50., threads=4,
 
 
 def build_region(network, *, budget, monitor, mode=1, seconds=50., threads=4,
-                 tau=.005, threshold=.02, patience=3, point_tol=.01, ray_threshold=1e-4):
-    """在各符号分区独立构域；只合并有物理证书的内域与安全外包络。"""
+                 tau=.005, threshold=.02, patience=3, point_tol=.01, ray_threshold=1e-4,
+                 partition_seconds=np.inf, obbt_workers=1):
+    """在各符号分区独立构域（每区时限不超过 partition_seconds）；只合并有物理证书的内域与安全外包络。"""
     d = len(network.load_nodes)
     signs = list(product((1, -1), repeat=d)) if mode else [(1,)*d]
     bounds = port_bounds(network) if mode else np.full(d, network.power_limit)
@@ -473,10 +510,11 @@ def build_region(network, *, budget, monitor, mode=1, seconds=50., threads=4,
     with threadpool_limits(limits=1):
         for j, sign in enumerate(signs):
             local = RunMonitor(parent=monitor, sign=sign, clock=monitor.clock, algorithm=monitor.algorithm)
-            remaining = max(0., (seconds-monitor.timing()['total_seconds'])/(len(signs)-j))
+            remaining = min(partition_seconds, max(0., (seconds-monitor.timing()['total_seconds'])/(len(signs)-j)))
             answer = build_sequential_region(deepcopy(network), budget=budget, monitor=local,
                 mode=mode, sign=sign, seconds=remaining, threads=threads, tau=tau,
-                threshold=threshold, patience=patience, point_tol=point_tol, ray_threshold=ray_threshold)
+                threshold=threshold, patience=patience, point_tol=point_tol, ray_threshold=ray_threshold,
+                obbt_workers=obbt_workers)
             partitions.append((sign, answer))
             print(f'{network.name} {d}D {sign}: {answer["status"]}, '
                   f'{answer["timing"]["total_seconds"]:.2f}s, {answer["counts"]}', flush=True)

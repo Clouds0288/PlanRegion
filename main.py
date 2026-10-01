@@ -16,7 +16,9 @@ NETWORK = Case33                 # FourBus / Case33
 DIMENSION = 3                     # 2 / 3；Case33: (18,25) / (18,25,30)
 BUDGET = 20000.                   # FourBus 建设预算；Case33 用其 switch_budget
 CASE_TIME_LIMIT = 300             # 构域总时限，含初始化和记录，不含事后扫描
+PARTITION_TIME_LIMIT = 20.        # 每个符号分区的构域时限上限，到时以 time_limit 结束该分区
 SOLVER_THREADS = 20                # 构域求解器线程数；扫描每个进程用1个线程
+OBBT_WORKERS = 8                  # 方案紧化 OBBT 的并行线程数；结果与串行逐位相同
 REGION_TAU = .005                 # 全局覆盖的径向精度；不是可行性容差
 CUT_THRESHOLD = .02               # 连续小割的面积/体积比例
 CUT_PATIENCE = 3
@@ -41,14 +43,16 @@ def recording_path(case, output=OUTPUT, load_nodes=None, dimension=DIMENSION, mo
 def run(network, *, budget=BUDGET, divisions=DIVISIONS, show_ui=SHOW_UI, output=None,
         tau=REGION_TAU, time_limit=CASE_TIME_LIMIT, threads=SOLVER_THREADS,
         scan=True, reference=None, scan_workers=SCAN_WORKERS,
-        force_rescan=FORCE_RESCAN, scan_output=SCAN_OUTPUT, mode=mode):
+        force_rescan=FORCE_RESCAN, scan_output=SCAN_OUTPUT, mode=mode,
+        partition_seconds=PARTITION_TIME_LIMIT, obbt_workers=OBBT_WORKERS):
     monitor = RunMonitor(output=output, algorithm='逐网架主线')
     ac = ac_network(network)
 
     def calculate():
         result = build_region(network, budget=budget, monitor=monitor, mode=mode, seconds=time_limit,
             threads=threads, tau=tau, threshold=CUT_THRESHOLD, patience=CUT_PATIENCE,
-            point_tol=POINT_TOL, ray_threshold=RAY_THRESHOLD)
+            point_tol=POINT_TOL, ray_threshold=RAY_THRESHOLD,
+            partition_seconds=partition_seconds, obbt_workers=obbt_workers)
         monitor.save()
         if scan or reference is not None:
             path = scan_path(ac, budget, scan_output, mode)

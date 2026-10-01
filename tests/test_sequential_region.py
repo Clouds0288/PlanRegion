@@ -8,7 +8,7 @@ import pytest
 from threadpoolctl import threadpool_limits
 
 from model import ray_support
-from region import (build_sequential_region, stage_candidates,
+from region import (build_sequential_region, stage_candidates, COVERAGE_TOL,
                                           register_power, ray_gain, coverage_halfspaces)
 from Network.four_bus_five_corridor import FourBus
 from Network.case33bw import Case33
@@ -32,7 +32,7 @@ def experiment(request, tmp_path_factory):
 
 def test_only_active_scheme_gets_sp_and_stopping_needs_global_certificate(experiment):
     _, _, monitor, result = experiment
-    assert result['certified'] and result['coverage_bound'] <= 1e-8
+    assert result['certified'] and (result['coverage_bound'] or 0.) <= COVERAGE_TOL
     assert sum(row['patch']['event'] == 'scheme_start' for row in monitor.history) >= 2
     checked = set()
     for index, item in enumerate(monitor.history):
@@ -71,21 +71,28 @@ def test_area_ratio_uses_frozen_union_and_preserves_cut_away_candidates(experime
     assert not any(item['patch'].get('event') == 'handoff_candidate' for item in monitor.history)
 
 
-def test_shared_cuts_valid_for_complete_budgeted_physical_model(experiment):
+def test_shared_cuts_valid_for_tightened_registered_and_plain_remaining_schemes(experiment):
     network, budget, monitor, _ = experiment
     equations = GridPhysics(network, 'socp')
+    schemes = [np.asarray(row['x']) for row in monitor.state['schemes'].values()]
     with threadpool_limits(limits=1):
+        for x in schemes:
+            equations.obbt(x, np.asarray(monitor.state['bounds']), 1)
         for row in monitor.state['cut_history'].values():
             cut = np.asarray(row['cut'])
-            problem = MasterProblem(equations, budget=budget, threads=4)
-            with problem.model as model:
-                expression = cut[0]+gp.quicksum(float(c)*v for c, v in zip(cut[1:3], problem.loads.values()))
-                expression += gp.quicksum(float(c)*v for c, v in zip(cut[3:], problem.choices.values()))
-                model.setObjective(expression, GRB.MINIMIZE)
-                model.Params.TimeLimit = 20.
-                model.optimize()
-                assert model.Status == GRB.OPTIMAL
-                assert model.ObjBound >= -PLANNING_TOL
+            for plan, exclude in [*((x, ()) for x in schemes), (None, schemes)]:
+                problem = MasterProblem(equations, budget=budget, threads=4,
+                                        fixed_plan=None if plan is None else network.decode_plan(plan))
+                for x in exclude:
+                    problem.exclude(x)
+                with problem.model as model:
+                    expression = cut[0]+gp.quicksum(float(c)*v for c, v in zip(cut[1:3], problem.loads.values()))
+                    expression += gp.quicksum(float(c)*v for c, v in zip(cut[3:], problem.choices.values()))
+                    model.setObjective(expression, GRB.MINIMIZE)
+                    model.Params.TimeLimit = 20.
+                    model.optimize()
+                    assert model.Status in (GRB.OPTIMAL, GRB.INFEASIBLE)
+                    assert model.Status == GRB.INFEASIBLE or model.ObjBound >= -PLANNING_TOL
 
 
 def test_red_points_have_global_proof_and_replay_does_not_leak_future(experiment):
