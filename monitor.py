@@ -1,6 +1,7 @@
 """原生监视器：RunMonitor 记录事件，NativeWindow 重建帧并绘图。
 
 录制状态、显示范围和过程图层各自独立；扫描结果不进入构域时间轴。
+符号分区在子进程中计算：子进程的 RunMonitor 经队列发送增量帧，主进程加分区前缀、乘符号后并入同一时间轴。
 二维/三维共用外包络、过程标记及回放控制，只在几何绘制处区分维数。
 """
 from pathlib import Path
@@ -8,10 +9,19 @@ from threading import Condition, Event, Thread
 from time import perf_counter
 import gzip
 import json
+import multiprocessing
 
 import numpy as np
 
 COMPARISONS = {'result_ac': '实验结果 — AC', 'result_socp': '实验结果 — SOCP', 'socp_ac': 'SOCP — AC'}
+MERGED = ('schemes', 'cones', 'cut_history')   # 按键增量合并的状态；锥被细分时其键置 None
+_CHANNEL = None   # 子进程：(事件队列, 暂停, 单步, 取消)，由进程池初始化函数 _connect 设置
+
+
+def _connect(channel):
+    """进程池初始化：子进程的 RunMonitor 经此通道发送事件，并响应窗口的暂停、单步与取消。"""
+    global _CHANNEL
+    _CHANNEL = channel
 
 
 def comparison_metrics(computed, reference):
@@ -41,22 +51,24 @@ def _plain(value):
 
 
 def _merge(state, patch):
-    """每个网架独立更新，历史帧只存发生变化的网架。"""
+    """网架、锥与割按键独立更新，历史帧只存发生变化的键。"""
     for key, value in patch.items():
-        if key in ('schemes', 'cut_history'):
+        if key in MERGED:
             state[key] = {**state.get(key, {}), **value}
         else:
             state[key] = value
 
 
 def signed_values(value, sign, prefix, key=''):
-    """记录时把幅值、割系数、网架标签转成带符号坐标。"""
+    """转发时把幅值坐标、割系数、网架标签转成带符号坐标与带分区前缀的标签。"""
     if value is None:
         return None
     if key in ('scheme', 'active_scheme'):
         return prefix+value
-    if key in ('p', 'anchor', 'target', 'vertices', 'ray_target'):
+    if key == 'p':
         return (np.asarray(value)*sign).tolist()
+    if key in ('vertices', 'inner', 'outer'):
+        return (np.asarray(value, float).reshape(-1, len(sign))*sign).tolist()
     if key == 'cut':
         cut = np.asarray(value).copy()
         cut[1:1+len(sign)] *= sign
@@ -69,14 +81,15 @@ def signed_values(value, sign, prefix, key=''):
 
 
 class RunMonitor:
-    """求解线程只提交数值；Tk 与绘图仅在主线程执行。"""
+    """求解线程只提交数值；Tk 与绘图仅在主线程执行。sign 不为空时是子进程中的分区监视器。"""
 
-    def __init__(self, *, output=None, clock=perf_counter, algorithm='主线', parent=None, sign=None):
+    def __init__(self, *, output=None, clock=perf_counter, algorithm='主线', sign=None):
         self.output = None if output is None else Path(output)
         self._clock = clock
         self.algorithm = algorithm
-        self.parent, self.sign = parent, None if sign is None else np.asarray(sign)
-        self.count_offsets = {key: parent.state.get(key, 0) for key in ('sp', 'cuts', 'global_search')} if parent else {}
+        self.label = None if sign is None else ''.join('+' if s > 0 else '-' for s in sign)
+        self.channel = None if sign is None else _CHANNEL
+        self.shared = None            # 主进程：与子进程共用的 (队列, 暂停, 单步, 取消)
         self.condition = Condition()
         self.cancelled = Event()
         self.paused = False
@@ -84,9 +97,8 @@ class RunMonitor:
         self.paused_seconds = 0.
         self.started = self._clock()
         self.time_limit = np.inf
-        self.state, self.history, self.scheme_ids = {}, [], {}
+        self.state, self.history = {}, []
         self.validation_state = {}
-        self.sp_numbers = {}
         self.result = self.error = None
         self.busy = False
 
@@ -96,144 +108,68 @@ class RunMonitor:
     def remaining(self, limit):
         remaining = self.time_limit-(self.clock()-self.started)
         if remaining <= 0.:
-            raise RegionTimeout(f'构域超过 {self.time_limit:g} 秒，未取得全局覆盖证书')
+            raise RegionTimeout(f'构域超过 {self.time_limit:g} 秒')
         return min(limit, remaining)
 
     def timing(self):
         return dict(total_seconds=self.clock()-self.started)
 
     def _emit(self, event, *, checkpoint=True, **values):
+        """1. 只保留相对当前状态有变化的键；2. 主进程追加到时间轴，子进程送入队列；
+        3. 暂停时在检查点等待，单步放行一个事件，取消时中断计算。"""
         with self.condition:
             if self.cancelled.is_set():
                 raise KeyboardInterrupt()
             values = _plain(values)
             patch = {k: v for k, v in values.items() if self.state.get(k) != v}
-            for key in ('schemes', 'cut_history'):
+            for key in MERGED:
                 if key in patch:
-                    patch[key] = {k: v for k, v in patch[key].items()
-                                  if self.state.get(key, {}).get(k) != v}
+                    patch[key] = {k: v for k, v in patch[key].items() if self.state.get(key, {}).get(k) != v}
                     if not patch[key]:
                         del patch[key]
             patch['event'] = event
             _merge(self.state, patch)
-            if self.parent is None:
-                self.history.append(dict(elapsed=self.clock()-self.started, patch=patch))
-            else:
-                self.parent.partition_frame(self, patch)
             before = self._clock()
-            while checkpoint and self.paused and not self.permits and not self.cancelled.is_set():
-                self.condition.wait()
+            if self.channel is None:
+                self.history.append(dict(elapsed=self.clock()-self.started, patch=patch))
+                while checkpoint and self.paused and not self.permits and not self.cancelled.is_set():
+                    self.condition.wait()
+                if self.permits:
+                    self.permits -= 1
+            else:
+                queue, pause, step, cancel = self.channel
+                queue.put((self.label, patch))
+                while checkpoint and pause.is_set() and not cancel.is_set() and not step.acquire(timeout=.1):
+                    pass
+                if cancel.is_set():
+                    self.cancelled.set()
             self.paused_seconds += self._clock()-before
-            if self.permits:
-                self.permits -= 1
             if self.cancelled.is_set():
                 raise KeyboardInterrupt()
 
-    def partition_frame(self, local, patch):
-        """局部分区只保留当前状态；真实坐标下的增量帧统一交给现有时间轴。"""
-        from region import initial_polytope
-        sign = local.sign
-        label = ''.join('+' if s > 0 else '-' for s in sign)
-        prefix, d = label+':', len(sign)
+    def share(self):
+        """主进程：建立与分区子进程共用的事件队列及暂停、单步、取消信号。"""
+        context = multiprocessing.get_context('spawn')
+        self.shared = context.Queue(), context.Event(), context.Semaphore(0), context.Event()
+        return self.shared
+
+    def close(self):
+        """子进程：分区结束标记。"""
+        self.channel[0].put((self.label, None))
+
+    def forward(self, label, patch):
+        """主进程：子进程分区的增量帧加分区前缀、坐标乘符号后并入总时间轴；网架行与割行附分区符号 sign。"""
+        sign = np.array([1 if s == '+' else -1 for s in label])
+        prefix = label+':'
         mapped = signed_values(patch, sign, prefix)
-        for key in ('bounds', 'axis_bounds', 'total_bound', 'result', 'time_limit'):
-            mapped.pop(key, None)
-        if patch['event'] == 'phase_start':
-            mapped.update(active_scheme=None, ray=None, seed_point=None, coverage_complete=False)
-        for key in local.count_offsets:
+        for key in MERGED:
             if key in mapped:
-                mapped[key] += local.count_offsets[key]
-        if 'schemes' in patch:
-            mapped['schemes'] = {prefix+key: {**row, 'sign': sign,
-                'inner': np.asarray(row['inner']).reshape(-1, d)*sign,
-                'outer': np.asarray(row['outer']).reshape(-1, d)*sign} for key, row in patch['schemes'].items()}
-        if 'cut_history' in mapped:
-            mapped['cut_history'] = {str(int(key)+local.count_offsets['cuts']): {**row, 'sign': sign}
-                                     for key, row in mapped['cut_history'].items()}
-        state = local.state
-        if 'result' in patch:
-            self.envelopes[label] = [np.asarray(row['vertices'])*sign for row in patch['result']['outer']]
-        else:
-            self.envelopes[label] = [initial_polytope(state['bounds'], state['total_bound'], state['axis_bounds'])*state['bounds']*sign]
-        outer = [p for polys in self.envelopes.values() for p in polys]
-        vertices = np.vstack(outer)
-        mapped.update(partition=label, global_outer=outer,
-                      axis_lower=vertices.min(axis=0) if self.state['mode'] else np.zeros(d),
-                      axis_bounds=vertices.max(axis=0))
+                mapped[key] = {prefix+k: v if v is None or key == 'cones' else {**v, 'sign': sign}
+                               for k, v in mapped[key].items()}
         event = mapped.pop('event')
-        self._emit('partition_end' if event == 'region_end' else event, **mapped)
+        self._emit(event, partition=label, **mapped)
 
-    def _scheme(self, x):
-        key = tuple(x)
-        if key not in self.scheme_ids:
-            index = len(self.scheme_ids)
-            self.scheme_ids[key] = chr(65+index%26)+(str(index//26+1) if index >= 26 else '')
-        return self.scheme_ids[key]
-
-    def _geometry(self, region):
-        return dict(axis_bounds=region.axis_bounds, total_bound=region.total_bound,
-                    cuts=len(region.cuts), schemes={self._scheme(row['x']): dict(
-                        x=row['x'], choice=row['choice'], cost=row['cost'], inner=row['inner']*region.bounds,
-                        outer=row['outer']*region.bounds) for row in region.records.values()})
-
-    # 1. 初始化：每个完整 MP2 的可行点立即入帧。
-    def begin(self, network, method, budget, region, time_limit):
-        self.started = self.clock()
-        self.time_limit = time_limit
-        self._emit('phase_start', phase='初始化', network=network.name, load_nodes=network.load_nodes,
-                   bounds=region.bounds, budget=budget, method=method, time_limit=time_limit, status='running',
-                   cost_unit=network.cost_unit, initial_plan=network.initial_plan, algorithm=self.algorithm,
-                   cut_history={str(i+1): dict(cut=cut, scheme=None) for i, cut in enumerate(region.cuts)},
-                   sp=0, global_search=0, global_point=None, sp_point=None,
-                   **self._geometry(region))
-
-    def initializing(self, index):
-        self._emit('mp_start', phase='初始化', direction=index)
-
-    def seed(self, answer, region):
-        scheme = self._scheme(answer['x'])
-        self._emit('feasible', phase='初始化', seed_point=dict(scheme=scheme, p=answer['p']),
-                   **self._geometry(region))
-
-    # 2. 选点；3. 全局搜索：全局见证与后续 SP 支撑点分别存储。
-    def selecting(self, count, supporting):
-        self._emit('selection', phase='选点', candidate_count=count, supporting=supporting)
-
-    def global_start(self, sp_since_global):
-        self._emit('residual_start', phase='全局搜索', global_search=self.state['global_search']+1,
-                   sp_since_global=sp_since_global, global_point=None)
-
-    def global_end(self, answer, region):
-        point = None if answer['x'] is None else dict(scheme=self._scheme(answer['x']), p=answer['p'])
-        self._emit('residual_end', phase='全局搜索', global_point=point,
-                   coverage_bound=answer['bound'], coverage_complete=answer['complete'],
-                   **self._geometry(region))
-
-    # 4. SP：橙色点表示固定的 (x,p)；只记录原始 eta 和认证状态，不保存运行向量 y。
-    def sp_start(self, x, power, number):
-        self.sp_numbers[(tuple(x), tuple(power))] = number
-        self._emit('point', phase='SP', sp=number, eta=None, feasible=None,
-                   sp_point=dict(scheme=self._scheme(x), p=power, number=number))
-
-    def sp_end(self, answer):
-        self._emit('sp_end', phase='SP', eta=answer['eta'], feasible=answer['feasible'])
-
-    def updated(self, region, event, *, x, power, checked=None):
-        values = self._geometry(region)
-        values.update(sp_point=dict(scheme=self._scheme(x), p=power,
-                                   number=self.sp_numbers.get((tuple(x), tuple(power)))), phase='SP')
-        if checked is not None:
-            values.update(eta=checked['eta'], feasible=checked['feasible'])
-        if event == 'cut':
-            values.update(cut_history={str(len(region.cuts)): dict(cut=checked['cut'], scheme=self._scheme(x))})
-        self._emit(event, **values)
-
-    # 5. 构域完成后独立扫描；最终指标、几何、回放只写同一个压缩文件。
-    def finish(self, result, region):
-        complete = result['certified']
-        self._emit('region_end', phase='构域完成' if complete else '构域停止', result=result, coverage_complete=complete,
-                   coverage_bound=result['coverage_bound'], **self._geometry(region))
-
+    # 构域完成后独立扫描；最终指标、几何、回放只写同一个压缩文件。
     def scanning(self, completed, total):
         self._validation_update(phase='AC / SOCP 扫描', scan_progress=[completed, total])
 
@@ -247,7 +183,7 @@ class RunMonitor:
             self.state.update(values)
 
     def validation(self, reference, result, *, region_key='inner'):
-        from region import contains, halfspaces
+        from region import covered
         states = np.asarray(reference['states'])
         if not np.isin(states, [-1, 1]).all():
             raise ValueError('Cannot publish metrics for an incomplete AC reference')
@@ -257,9 +193,7 @@ class RunMonitor:
         truth = states.ravel() == 1
         metrics, masks = {}, {}
         for key in (key for key in ('inner', 'outer') if key in result):
-            inside = np.zeros(len(points), dtype=bool)
-            for row in result[key]:
-                inside |= contains(points, halfspaces(row['vertices']))
+            inside = covered(points, result[key])
             metrics[key] = comparison_metrics(inside, truth)
             masks[key] = inside.reshape(states.shape)
         validation = dict(axis_lower=lower, bounds=reference['bounds'], states=states, region_key=region_key,
@@ -287,6 +221,7 @@ class RunMonitor:
             return state
 
     def control(self, action):
+        """窗口按钮：暂停 / 继续 / 单步 / 取消；分区子进程经共用信号同步响应。"""
         with self.condition:
             if action == 'pause':
                 self.paused = True
@@ -297,6 +232,16 @@ class RunMonitor:
             elif action == 'cancel':
                 self.cancelled.set()
             self.condition.notify_all()
+        if self.shared is not None:
+            _, pause, step, cancel = self.shared
+            if action in ('pause', 'next'):
+                pause.set()
+            if action == 'next':
+                step.release()
+            if action == 'continue':
+                pause.clear()
+            if action == 'cancel':
+                cancel.set()
 
     def save(self):
         if self.output is None:
@@ -466,6 +411,15 @@ def _voxel_faces(states, bounds):
     return np.concatenate(faces)
 
 
+def _cap(points):
+    """锥体远端的面片：去掉原点，其余顶点按绕形心的角度排序（三维一次性绘制）。"""
+    points = np.asarray(points)
+    points = points[np.linalg.norm(points, axis=1) > 1e-9]
+    center = points.mean(axis=0)
+    basis = np.linalg.svd(np.eye(3)-np.outer(center, center)/(center@center))[0][:, :2]
+    return points[np.argsort(np.arctan2(*((points-center)@basis).T[::-1]))]
+
+
 def _union(polygons):
     from shapely.geometry import MultiPoint
     from shapely.ops import unary_union
@@ -520,11 +474,10 @@ class NativeWindow:
         self.last_validation = None
         self.setting_slider = False
         self.scheme_views = {}
-        self.envelope_views, self.failed_candidates = {}, []
         self.overview = None
         self.scheme_page, self.focus_scheme = 0, None
         self.status = tk.StringVar(value='初始化')
-        self.global_text, self.sp_text = tk.StringVar(value='全局点：—'), tk.StringVar(value='SP 点：—')
+        self.global_text, self.sp_text = tk.StringVar(value='MISOCP 解点：—'), tk.StringVar(value='SP 点：—')
         ttk.Label(self.root, textvariable=self.status, font=('Microsoft YaHei', 11)).pack(anchor='w', padx=12, pady=(8, 2))
         point_bar = ttk.Frame(self.root)
         point_bar.pack(fill='x', padx=12)
@@ -533,10 +486,10 @@ class NativeWindow:
         self.full_extent = tk.BooleanVar(value=False)
         ttk.Checkbutton(point_bar, text='主图展开全局', variable=self.full_extent,
                         command=self.refresh_extent).pack(side='right')
-        ttk.Label(point_bar, text='坐标固定于分区初始外包络').pack(side='right', padx=8)
+        ttk.Label(point_bar, text='坐标固定于分区盒').pack(side='right', padx=8)
         body = ttk.Panedwindow(self.root, orient='horizontal')
         body.pack(fill='both', expand=True, padx=8, pady=6)
-        left, right = ttk.Frame(body), ttk.LabelFrame(body, text="B  网架 · N'_x 绿色认证 / N_x 灰色外包络 / 紫色割")
+        left, right = ttk.Frame(body), ttk.LabelFrame(body, text="B  网架 · N_x 灰色（停滞后计入内域，绿色）/ 紫色割")
         body.add(left, weight=1)
         body.add(right, weight=1)
         self.axes, self.canvases = {}, {}
@@ -673,15 +626,26 @@ class NativeWindow:
         self.last_drawn, self.last_validation = -1, None
         self.show()
 
+    @staticmethod
+    def _boxes(state, partition=None):
+        """分区盒（带符号 kW）：坐标范围固定于此；未指定分区时为全部分区。"""
+        from itertools import product
+        corners = np.array(list(product((0., 1.), repeat=len(state['bounds']))))*np.asarray(state['bounds'])
+        labels = [partition] if partition else state.get('partitions', [])
+        return [corners*np.array([1 if s == '+' else -1 for s in label]) for label in labels]
+
     def _outer_polygons(self, state):
-        """真实全局外包络；不能用已知网架外域并集替代未知网架的范围。"""
-        from region import initial_polytope
-        result = state.get('result')
-        if result:
-            return [row['vertices'] for row in result['outer']]
-        if 'global_outer' in state:
-            return state['global_outer']
-        return [initial_polytope(state['bounds'], state['total_bound'], state['axis_bounds'])*state['bounds']]
+        """外包络 O_R∩盒：各锥外域；尚无锥的分区取分区盒。"""
+        cones = {key: row for key, row in state.get('cones', {}).items() if row}
+        started = {key.split(':')[0] for key in cones}
+        return ([row['outer'] for row in cones.values()]
+                +[box for label, box in zip(state.get('partitions', []), self._boxes(state)) if label not in started])
+
+    @staticmethod
+    def _inner_polygons(state):
+        """内域：各锥的内三角形 T 与各网架的内域集合。"""
+        return ([row['inner'] for row in state.get('cones', {}).values() if row]
+                +[row['inner'] for row in state.get('schemes', {}).values() if len(row['inner'])])
 
     @staticmethod
     def _in_partition(polygons, partition):
@@ -691,33 +655,20 @@ class NativeWindow:
         return [p for p in polygons if len(p) and np.all(np.asarray(p)*sign >= -1e-8)]
 
     def _frame_view(self):
-        """只读当前帧及之前的事件：重建状态、固定包络和失败候选记录。"""
-        state, envelopes, failed = {}, {}, {}
+        """只读当前帧及之前的事件，重建该帧状态。"""
+        state = {}
         with self.monitor.condition:
             history = self.monitor.history[:self.index+1]
         for item in history:
-            patch = item['patch']
-            _merge(state, patch)
-            if 'bounds' not in state:
-                continue
-            partition = state.get('partition', '')
-            if partition not in envelopes or patch.get('event') == 'initial_bounds':
-                envelopes[partition] = self._in_partition(self._outer_polygons(state), partition)
-            point, candidate = state.get('sp_point'), state.get('global_point')
-            if (patch.get('feasible') is False and point and candidate
-                    and point['scheme'] == candidate['scheme'] and point['p'] == candidate['p']):
-                key = (partition, point['scheme'], tuple(point['p']))
-                failed[key] = dict(point, partition=partition)
-        self.envelope_views, self.failed_candidates = envelopes, list(failed.values())
+            _merge(state, item['patch'])
         return state
 
     def _view_limits(self, state, *, scheme=None, validation=False):
-        """分区初始化完成后固定范围；过程点、割和射线不触发坐标缩放。"""
+        """范围固定于分区盒（校验图取扫描与结果的范围）；过程点、割和锥不触发坐标缩放。"""
         d = len(state['bounds'])
-        groups = []
         if validation:
-            groups = [row['vertices'] for key in ('inner', 'outer')
-                      for row in state.get('result', {}).get(key, [])]
+            groups = ([row['vertices'] for key in ('inner', 'outer') for row in state.get('result', {}).get(key, [])]
+                      or self._boxes(state))   # 尚无结果时取全部分区盒
             reference = state.get('validation')
             if reference:
                 truth = np.asarray(reference['states']) == 1
@@ -728,26 +679,13 @@ class NativeWindow:
                     lower = np.asarray(reference.get('axis_lower', np.zeros(d)))
                     widths = (np.asarray(reference['bounds'])-lower)/np.shape(reference['states'])
                     groups.append(lower+np.array([cells.min(axis=0), cells.max(axis=0)+1])*widths)
-        elif self.full_extent.get() and scheme is None:
-            groups = self._outer_polygons(state)
         else:
-            partition = state.get('partition', '')
+            partition = None if self.full_extent.get() and scheme is None else state.get('partition')
             if scheme is not None:
-                sign = state['schemes'][scheme].get('sign')
-                partition = '' if sign is None else ''.join('+' if s > 0 else '-' for s in sign)
-            if state.get('result') and scheme is None:
-                groups = self._outer_polygons(state)
-            else:
-                groups = self.envelope_views.get(partition)
-                if groups is None:
-                    groups = self._in_partition(self._outer_polygons(state), partition)
-        points = [np.asarray(group).reshape(-1, d) for group in groups if len(group)]
-        if points:
-            points = np.vstack(points)
-            lower, upper = points.min(axis=0), points.max(axis=0)
-        else:
-            lower = np.asarray(state.get('axis_lower', np.zeros(d)))
-            upper = np.minimum(state['bounds'], state['axis_bounds'])
+                partition = scheme.split(':')[0]
+            groups = self._boxes(state, partition)
+        points = np.vstack([np.asarray(group).reshape(-1, d) for group in groups if len(group)])
+        lower, upper = points.min(axis=0), points.max(axis=0)
         padding = .06*np.maximum(upper-lower, 1.)
         return lower-padding, upper+padding
 
@@ -780,53 +718,23 @@ class NativeWindow:
         return ax
 
     def _markers(self, ax, state, scheme=None, *, partition=None, size_scale=1.):
-        """过程图层统一供二维、三维和各网架使用，标记不参与视口计算。"""
+        """过程图层：锥 MISOCP 的解点（红菱）与 SP 评分点（橙圆，不可行为叉）；标记不参与视口计算。"""
         from matplotlib.lines import Line2D
         handles = []
         if scheme is not None:
-            sign = state['schemes'][scheme].get('sign')
-            partition = None if sign is None else ''.join('+' if s > 0 else '-' for s in sign)
-
-        def scatter(points, label, color, marker, gid, size=32, hollow=False):
-            points = np.asarray(points).reshape(-1, len(state['bounds']))
-            if partition:
-                sign = np.array([1 if s == '+' else -1 for s in partition])
-                points = points[np.all(points*sign >= -1e-8, axis=1)]
-            if not len(points):
-                return
-            style = dict(facecolors='none', edgecolors=color) if hollow else dict(c=color)
-            ax.scatter(*points.T, marker=marker, s=size*size_scale, zorder=10, gid=gid, **style)
-            handles.append(Line2D([], [], color=color, marker=marker, ls='none',
-                                  markerfacecolor='none' if hollow else color, label=label))
-
-        scatter([row['p'] for row in state.get('rejected_points', [])],
-                '全网架不可行', GLOBAL, 'o', 'global-rejected')
-        failed = [row['p'] for row in self.failed_candidates
-                  if scheme is None or row['scheme'] == scheme]
-        scatter(failed, '全局候选：该网架不可行', GLOBAL, 'x', 'candidate-rejected', 42)
-        scatter(state.get('unknown_points', []), '未决点', '#777777', 'x', 'unknown-points')
-        if state.get('phase') == '全网架认证' and state.get('query_point') is not None:
-            scatter([state['query_point']], '全网架待认证点', GLOBAL, 'o', 'query-point', 65, True)
-        for key, color, marker, label in (('seed_point', INNER, '^', '初始可行点'),
-                                         ('global_point', GLOBAL, 'D', '全局搜索点'),
-                                         ('sp_point', SP, 'o', 'SP / 支撑点')):
+            partition = scheme.split(':')[0]
+        for key, color, marker, label in (('global_point', GLOBAL, 'D', '锥 MISOCP 解点'),
+                                         ('sp_point', SP, 'o', 'SP 评分点')):
             point = state.get(key)
-            if point and (scheme is None or point['scheme'] == scheme):
-                if key == 'sp_point' and state.get('feasible') is False:
-                    marker, label = 'x', 'SP 不可行点'
-                scatter([point['p']], label, color, marker, key, 40)
-        ray = state.get('ray')
-        if (ray and (state.get('event') in ('ray_start', 'ray_end')
-                     or state.get('phase') in ('首轮射线认证', '射线补点', '边界补充'))
-                and (scheme is None or ray['scheme'] == scheme)):
-            ray_partition = self._in_partition([[ray['anchor'], ray['target']]], partition)
-            if ray_partition:
-                ax.plot(*np.asarray(ray_partition[0]).T, color=INNER, ls=':', lw=1.2, gid='ray-path')
-                scatter([ray['anchor']], '射线锚点', INNER, 'o', 'ray-anchor', 24, True)
-                scatter([ray['target']], '射线目标', INNER, 'x', 'ray-target', 42)
-                if ray['p'] is not None:
-                    ax.plot(*np.asarray([ray['anchor'], ray['p']]).T, color=INNER, lw=1.5, gid='ray-certified')
-                    scatter([ray['p']], '射线认证点', INNER, 's', 'ray-point', 38)
+            if not point or (scheme is not None and point['scheme'] != scheme):
+                continue
+            if partition and np.any(np.asarray(point['p'])*np.array([1 if s == '+' else -1 for s in partition]) < -1e-8):
+                continue
+            if key == 'sp_point' and state.get('feasible') is False:
+                marker, label = 'x', 'SP 不可行点'
+            ax.scatter(*np.asarray(point['p']).reshape(-1, len(state['bounds'])).T, c=color, marker=marker,
+                       s=40*size_scale, zorder=10, gid=key)
+            handles.append(Line2D([], [], color=color, marker=marker, ls='none', label=label))
         return handles
 
     def show(self):
@@ -837,9 +745,7 @@ class NativeWindow:
             return
         self.last_drawn = self.index
         state = self._frame_view()
-        point = (state.get('global_point') if state.get('event') in ('residual_start', 'residual_end')
-                 else state.get('sp_point') or state.get('seed_point'))
-        focus = state.get('active_scheme') or (point['scheme'] if point else None)
+        focus = state.get('active_scheme')
         if focus and focus != self.focus_scheme:
             self.focus_scheme = focus
             keys = list(state.get('schemes', {}))
@@ -856,7 +762,7 @@ class NativeWindow:
             latest = dict(self.monitor.state)
         if 'bounds' not in latest:
             return
-        key = (tuple(latest['axis_bounds']), tuple(latest.get('scan_progress', [])),
+        key = (tuple(latest.get('scan_progress', [])),
                id(latest.get('result')), id(latest.get('validation')), latest.get('error'), self.comparison_mode.get())
         if key != self.last_validation:
             self.last_validation = key
@@ -864,7 +770,7 @@ class NativeWindow:
 
     def _show_header(self, state):
         d = len(state.get('load_nodes', (0, 1)))
-        measure, unit = ('面积', 'kW²') if d == 2 else ('体积', 'kW³')
+        measure = '面积' if d == 2 else '体积'
         self.root.title(f"{state.get('algorithm', '主线')} · {state.get('network', '')} · {d} 维过程回放")
         total = len(self.monitor.history)
         self.frame_text.set(f'{self.index+1} / {total}')
@@ -872,52 +778,25 @@ class NativeWindow:
         self.slider.configure(to=max(1, total-1 if self.controller is None else self.controller.total-1))
         self.slider.set(self.index if self.controller is None else self.controller.index)
         self.setting_slider = False
-        phase = state.get('phase', '初始化')
-        detail = ''
-        if phase == '初始化' and 'direction' in state:
-            index = state['direction']
-            detail = f" · MP2 {'p'+str(state['load_nodes'][index]) if index < len(state['load_nodes']) else '总负荷'}"
-        elif phase == '选点':
-            detail = f" · {state['candidate_count']} 个{'支撑点' if state['supporting'] else '顶点'}"
-        elif phase == 'SP' and state.get('eta') is not None:
-            detail = f" · η={state['eta']:.3g} · {'认证' if state['feasible'] else '不可行'}"
-            if state.get('event') == 'cut':
-                detail += ' · 采用割'
-        elif phase == '获选点生成割':
-            detail = f" · 最大评分 η={state['eta']:.3g} · 只解该点的取割 LP"
-        elif phase == '射线筛选':
-            detail = (f" · {measure}收益上界 {state['ray_gain_bound']:.4g} < "
-                      f"{state['ray_gain_threshold']:.4g} {unit}，免求解")
-        elif phase == '全局搜索':
-            detail = ' · 在尚未覆盖区域中搜索完整物理可行点'
-            if state.get('event') == 'residual_end' and state['coverage_bound'] is not None:
-                detail += f" · 全局上界 {state['coverage_bound']:.6g}"
-        elif phase == '全网架认证':
-            detail = ' · 固定 p=('+', '.join(f'{p:.3f}' for p in state['query_point'])+')，x/y 自由'
-            if state.get('certification_eta') is not None:
-                detail += f" · η={state['certification_eta']:.3g}"
-        elif phase == '网架支撑':
-            detail = f" · 固定 {state['support_scheme']}，p/y 自由 · 方向 {state['support_direction']}"
-        elif phase in ('首轮射线认证', '射线补点', '边界补充'):
-            detail = f" · 固定 {state['active_scheme']}，从认证锚点向候选点求边界"
-            if state.get('event') == 'ray_end':
-                detail += f" · λ={state['ray_fraction']:.6f}"
-        elif phase == '网架阶段结束':
-            detail = ' · '+{'covered': '当前网架外顶点已认证，进入连续查漏',
-                           'area_stagnation': '边界补充完成，进入连续查漏',
-                           'point_resolution': '近点处理完成，进入连续查漏'}[state['stage_reason']]
-        if state.get('active_scheme'):
-            detail += f" · 阶段 {state.get('stage', 0)} / 网架 {state['active_scheme']}"
-            if state.get('area_ratio') is not None:
-                detail += f" · 切割{measure} {100*state['area_ratio']:.3f}% · 连续 {state['small_cuts']}/{state['patience']}"
+        phase, detail = state.get('phase', '初始化'), ''
+        if phase.startswith('径向') and state.get('volume_ratio') is not None:
+            detail = f" · 叶锥 {state['cone_count']} · ΣΔ/ΣT = {state['volume_ratio']:.4g}"
+        elif phase == '网架切割' and state.get('active_scheme'):
+            detail = f" · 网架 {state['active_scheme']}"
+            if state.get('event') == 'point':
+                detail += f" · η={state['eta']:.3g} · {'可行' if state['feasible'] else '不可行'}"
+            elif state.get('event') == 'cut':
+                detail += (f" · 切割{measure} {100*state['area_ratio']:.3f}% · 连续小割 "
+                           f"{state['small_cuts']}/{state['patience']}")
         if state.get('error'):
             detail = ' · '+state['error']
-        self.status.set(f"{phase}{detail}    SP 累计 {state.get('sp', 0)} · 全局 #{state.get('global_search', 0)} · 割 {state.get('cuts', 0)}")
-        for key, text, label in (('global_point', self.global_text, '全局点'), ('sp_point', self.sp_text, 'SP 点')):
+        partition = state.get('partition')
+        cones = sum(row is not None for row in state.get('cones', {}).values())
+        self.status.set(f"{'分区 '+partition+' · ' if partition else ''}{phase}{detail}    "
+                        f"叶锥 {cones} · 网架 {len(state.get('schemes', {}))} · 割 {len(state.get('cut_history', {}))}")
+        for key, text, label in (('global_point', self.global_text, 'MISOCP 解点'), ('sp_point', self.sp_text, 'SP 点')):
             point = state.get(key)
-            if point and key == 'sp_point' and point.get('number') is not None:
-                label += f" #{point['number']}"
-            coordinates = ', '.join(f'{p:.3f}' for p in point['p']) if point else ''
+            coordinates = '' if not point else ', '.join(f'{p:.3f}' for p in point['p'])
             text.set(label+'：—' if not point else f"{label}：{point['scheme']}  p=({coordinates}) kW")
 
     def _draw_cuts(self, ax, state, scheme, *, history=True):
@@ -1002,30 +881,40 @@ class NativeWindow:
         else:
             _draw(ax, self._removed(state, scheme), color=CUT, fill=True, alpha=.22)
 
+    def _regions(self, ax, state, partition, *, linewidth=1.):
+        """外包络 O_R∩盒 与内域：二维为并集（内域再与外包络取交），三维为各锥远端面片与网架内域。"""
+        d = len(state['bounds'])
+        outer = self._in_partition(self._outer_polygons(state), partition)
+        inner = self._in_partition(self._inner_polygons(state), partition)
+        if d == 2:
+            hull = _union(outer)
+            _draw(ax, hull, color=OUTER, fill=True, alpha=.10)
+            _draw(ax, hull, color=OUTER, linestyle='--', linewidth=1.3*linewidth)
+            _draw(ax, _union(inner).intersection(hull), color=INNER, fill=True, alpha=.38, linewidth=.8*linewidth)
+            return
+        from mpl_toolkits.mplot3d.art3d import Poly3DCollection
+        cones = [row for key, row in state.get('cones', {}).items()
+                 if row and (not partition or key.startswith(partition+':'))]
+        for key, color, alpha in (('outer', OUTER, .12), ('inner', INNER, .30)):
+            caps = [_cap(row[key]) for row in cones]
+            if caps:
+                ax.add_collection3d(Poly3DCollection(caps, facecolors=color, edgecolors=color, linewidths=.2*linewidth,
+                                                     alpha=alpha, gid=f'cone-{key}'))
+        sets = [row['inner'] for key, row in state.get('schemes', {}).items()
+                if len(row['inner']) and (not partition or key.startswith(partition+':'))]
+        _draw_3d(ax, sets, state['bounds'], color=INNER, fill=True, alpha=.10, linewidth=.4*linewidth, gid='network-inner')
+
     def _draw_union(self, state):
         from matplotlib.lines import Line2D
         ax = self.axes['A'] = self._axes(self.axes['A'], state)
-        d = len(state['bounds'])
-        partition = None if self.full_extent.get() or state.get('result') else state.get('partition')
-        outer = self._in_partition(self._outer_polygons(state), partition)
-        rows = list(state.get('schemes', {}).values())
-        inner = self._in_partition([row['inner'] for row in rows], partition)
-        known = self._in_partition([row['outer'] for row in rows], partition)
-        if d == 2:
-            self._draw_polygons(ax, outer, state, color=OUTER, fill=True, alpha=.10, gid='global-outer-fill')
-        self._draw_polygons(ax, outer, state, color=OUTER, linestyle='--', linewidth=1.3, gid='global-outer')
-        if not state.get('result'):
-            self._draw_polygons(ax, known, state, color=OUTER, fill=d == 2, alpha=.20, gid='known-outer')
-        self._draw_polygons(ax, inner, state, color=INNER, fill=True,
-                            alpha=.15 if d == 3 else .38, linewidth=.8, gid='certified-inner')
+        partition = None if self.full_extent.get() else state.get('partition')
+        self._regions(ax, state, partition)
         self._draw_removed(ax, state)
         cuts = state.get('cut_history', {})
         if cuts:
             self._draw_cuts(ax, state, next(reversed(cuts.values()))['scheme'], history=False)
-        handles = [Line2D([], [], color=OUTER, ls='--', label=f'分区 {partition} 外包络' if partition else '全局外包络 G'),
-                   Line2D([], [], color=INNER, label='认证内域 G′')]
-        if not state.get('result'):
-            handles.append(Line2D([], [], color=OUTER, label='网架条件外域'))
+        handles = [Line2D([], [], color=OUTER, ls='--', label=f'分区 {partition} 外包络 O_R' if partition else '外包络 O_R'),
+                   Line2D([], [], color=INNER, label='内域 I')]
         handles.extend(self._markers(ax, state, partition=partition))
         ax.legend(handles=handles, loc='lower left', bbox_to_anchor=(-.08, 1.02),
                   ncol=3, frameon=False, fontsize=7, columnspacing=.8, handlelength=1.5)
@@ -1033,13 +922,12 @@ class NativeWindow:
         self.canvases['A'].draw_idle()
 
     def _draw_overview(self, state):
-        """总览始终显示真实全局外包络；主图窗口用蓝框标出。"""
+        """总览：全部分区的外包络与内域；主图窗口用蓝框标出。"""
         from itertools import product
         d = len(state['bounds'])
         detail = self.axes['A']
         if self.overview is None:
-            self.overview = detail.figure.add_axes([.75, .45, .23, .30],
-                                                   projection='3d' if d == 3 else None)
+            self.overview = detail.figure.add_axes([.75, .45, .23, .30], projection='3d' if d == 3 else None)
         ax = self.overview
         ax.clear()
         ax.set_visible(not self.full_extent.get())
@@ -1047,21 +935,14 @@ class NativeWindow:
             detail.set_position([.03, .12, .80, .65] if d == 3 else [.13, .19, .84, .59])
             return
         detail.set_position([.02, .12, .68, .65] if d == 3 else [.13, .19, .54, .59])
-        outer = self._outer_polygons(state)
-        points = [p for p in outer if len(p)]
-        points = np.vstack(points) if points else np.zeros((1, d))
-        lower, upper = points.min(axis=0), points.max(axis=0)
-        padding = .06*np.maximum(upper-lower, 1.)
-        ax.set(xlim=(lower[0]-padding[0], upper[0]+padding[0]),
-               ylim=(lower[1]-padding[1], upper[1]+padding[1]))
+        lower, upper = self._view_limits({**state, 'partition': None})
+        ax.set(xlim=(lower[0], upper[0]), ylim=(lower[1], upper[1]))
         if d == 3:
-            ax.set(zlim=(lower[2]-padding[2], upper[2]+padding[2]))
+            ax.set(zlim=(lower[2], upper[2]))
             ax.set_proj_type('ortho')
             ax.view_init(24, -55)
             ax.set_box_aspect((1., 1., .8))
-        self._draw_polygons(ax, outer, state, color=OUTER, linestyle='--', linewidth=.7, gid='overview-outer')
-        self._draw_polygons(ax, [row['inner'] for row in state.get('schemes', {}).values()], state,
-                            color=INNER, fill=True, alpha=.25, linewidth=.4, gid='overview-inner')
+        self._regions(ax, state, None, linewidth=.5)
         intervals = [detail.get_xlim(), detail.get_ylim()]
         if d == 3:
             intervals.append(detail.get_zlim())
@@ -1069,8 +950,7 @@ class NativeWindow:
         self._draw_polygons(ax, [box], state, color='#427cac', linewidth=1.1, gid='overview-viewport')
         self._markers(ax, state, size_scale=.25)
         write = ax.text2D if d == 3 else ax.text
-        write(.5, 1.10, '全局外包络 G\n蓝框：主图范围', transform=ax.transAxes,
-              ha='center', va='bottom', fontsize=7)
+        write(.5, 1.10, '全部分区\n蓝框：主图范围', transform=ax.transAxes, ha='center', va='bottom', fontsize=7)
         ax.set_xticks([])
         ax.set_yticks([])
         if d == 3:
@@ -1220,21 +1100,19 @@ class NativeWindow:
     def _draw_validation_3d(self, ax, state):
         from matplotlib.lines import Line2D
         from mpl_toolkits.mplot3d.art3d import Poly3DCollection
-        from region import contains, halfspaces
+        from region import covered
         validation, result = state['validation'], state['result']
         states, bounds = np.asarray(validation['states']), np.asarray(validation['bounds'])
         lower = np.asarray(validation.get('axis_lower', np.zeros(3)))
         ax.set_position([.03, .22, .80, .60])
         ax.add_collection3d(Poly3DCollection(lower+_voxel_faces(states, bounds-lower), facecolors='#7e9bae',
                                             edgecolors='none', alpha=.14, gid='scan-reference'))
-        _draw_3d(ax, [row['vertices'] for row in result['outer']], bounds, color=OUTER,
+        _draw_3d(ax, [row['vertices'] for row in result['outer']], bounds-lower, color=OUTER,
                  linestyle='--', alpha=.75)
-        _draw_3d(ax, [row['vertices'] for row in result['inner']], bounds, color=INNER,
+        _draw_3d(ax, [row['vertices'] for row in result['inner']], bounds-lower, color=INNER,
                  fill=True, alpha=.06, linewidth=.3)
         points = lower+(np.indices(states.shape).reshape(3, -1).T+.5)*(bounds-lower)/np.array(states.shape)
-        inside = np.zeros(len(points), dtype=bool)
-        for row in result['inner']:
-            inside |= contains(points, halfspaces(row['vertices']))
+        inside = covered(points, result['inner'])
         missed = points[(states.ravel() == 1) & ~inside]
         ax.scatter(*missed.T, color=GLOBAL, s=7, marker='.', depthshade=False, gid='missed-cells')
         fmt = lambda value: '—' if value is None else f'{value:.3f}%'

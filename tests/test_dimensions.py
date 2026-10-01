@@ -4,40 +4,37 @@ from unittest.mock import patch
 
 import numpy as np
 import pytest
-from threadpoolctl import threadpool_limits
 
 import main
 from Network.case33bw import Case33, LOAD_NODES
-from Network.four_bus_five_corridor import FourBus
 from main import recording_path, SCAN_DIVISIONS
-from region import ray_gain, union_measure
-from model import GridPhysics, MasterProblem
-from monitor import RunMonitor, NativeWindow, _cut_polygon, _voxel_faces
-from monitor import COMPARISONS
-from region import RegionState, polytope_volume
+from region import polytope_volume, union_measure
+from monitor import COMPARISONS, NativeWindow, RunMonitor, _voxel_faces
+from tests.planning_checks import recorded_monitor
 
 
 CUBE = np.array(list(product((0., 1.), repeat=3)))
 
 
+def finished(monitor, d):
+    """合成回放的终态结果：各锥的内外域行（带符号 kW）。"""
+    rows = [row for row in monitor.state['cones'].values() if row]
+    result = dict(status='time_limit', certified=False, inner=[dict(vertices=row['inner']) for row in rows],
+                  outer=[dict(vertices=row['outer']) for row in rows])
+    monitor._emit('region_end', phase='构域停止', result=result, partition=None)
+    return result
+
+
 @pytest.mark.parametrize('dimension', [2, 3])
 def test_three_comparison_modes_switch_colors_and_show_six_metrics(dimension):
-    network = FourBus(load_nodes=(1, 2, 3)[:dimension])
-    bounds = np.full(dimension, 2.)
-    region = RegionState(bounds, float(bounds.sum()), .005)
-    x = network.encode_plan(network.initial_plan).astype(int)
-    region.add_scheme(x, network.initial_plan, 0.)
-    monitor = RunMonitor()
-    monitor.begin(network, 'socp', 20000., region, 100.)
-    vertices = np.array(list(product((0., 1.), repeat=dimension)))*[1., *([2.]*(dimension-1))]
-    region.add_point(x, vertices/bounds)
-    result = dict(certified=False, coverage_bound=1., **region.finish(False))
-    monitor.finish(result, region)
+    monitor, _, _ = recorded_monitor(dimension)
+    result = finished(monitor, dimension)
     states = np.ones((2,)*dimension, np.int8)
     states.flat[0] = states.flat[-1] = -1
     socp = states.copy()
     socp.flat[0] = 1
-    monitor.validation(dict(axis_lower=np.zeros(dimension), bounds=bounds,
+    bounds = np.full(dimension, 100.)
+    monitor.validation(dict(axis_lower=-bounds, bounds=np.zeros(dimension),
         states=states, socp_states=socp, method='ac_socp_grid_v4'), result)
     window = NativeWindow(monitor)
     try:
@@ -61,8 +58,6 @@ def test_three_comparison_modes_switch_colors_and_show_six_metrics(dimension):
                     assert not np.array_equal(meshes[i], meshes[j])
     finally:
         window.close()
-
-
 
 
 def test_union_volume_nearly_collinear_overlap_preserves_small_growth():
@@ -119,11 +114,6 @@ def test_three_dimensional_measure_keeps_overlap_gaps_and_face_ownership():
     basis, _ = np.linalg.qr([[1., 2., 3.], [3., 1., 4.], [2., 5., 1.]])
     rotated = [p@basis.T+[.3, .4, .5] for p in pieces]
     assert union_measure(rotated, 3) == pytest.approx(.52, abs=1e-9)
-    # 射线收益在三维用体积；沿 z 抬高点时二维投影完全不变。
-    assert ray_gain(CUBE, [.5, .5, 2.]) == pytest.approx(1/3)
-    assert ray_gain(CUBE, [.5, .5, .5]) == pytest.approx(0.)
-
-
 
 
 def test_three_dimensional_metrics_count_cells_and_declared_denominators():
@@ -151,30 +141,15 @@ def test_voxel_surface_keeps_disconnected_regions_and_physical_scale():
     assert _voxel_faces(np.ones((2, 2, 2)), [2., 2., 2.]).shape == (24, 4, 3)
 
 
-def test_three_dimensional_replay_tracks_cuts_rays_and_preserves_view(tmp_path):
-    network = FourBus()
-    bounds = np.full(3, 100.)
-    x = network.encode_plan(network.initial_plan).astype(int)
-    region = RegionState(bounds, 300., .005)
-    region.add_scheme(x, network.initial_plan, 0.)
-    region.add_point(x, .25*CUBE)
-    monitor = RunMonitor(output=tmp_path/'three.json.gz')
-    monitor.begin(network, 'socp', 20000., region, 100.)
-    cut = np.r_[150., -1., -1., -1., np.zeros(len(x))]
-    polygon = _cut_polygon(cut, x, bounds)
+def test_three_dimensional_replay_tracks_cones_cuts_and_validation(tmp_path):
+    from monitor import _cut_polygon
+    monitor, x, cut = recorded_monitor(3, tmp_path/'three.json.gz')
+    polygon = _cut_polygon(cut, x, np.full(3, 100.))
     np.testing.assert_allclose(polygon.sum(axis=1), 150., atol=1e-9)
     assert len(polygon) == 6
-    monitor.sp_start(x, [100., 100., 100.], 1)
-    region.apply_cut(cut)
-    monitor.updated(region, 'cut', x=x, power=[100., 100., 100.], checked=dict(cut=cut, eta=1., feasible=False))
-    cut_index = len(monitor.history)-1
-    monitor._emit('ray_end', phase='射线补点', active_scheme='A', stage=1,
-                  ray=dict(scheme='A', anchor=[10., 10., 10.], target=[100., 100., 100.], p=[50., 50., 50.]),
-                  ray_fraction=4/9)
-    ray_index = len(monitor.history)-1
-    result = dict(certified=False, coverage_bound=1., **region.finish(False))
-    monitor.finish(result, region)
-    monitor.validation(dict(bounds=bounds, states=np.ones((2,)*3)), result)
+    cut_index = next(i for i, item in enumerate(monitor.history) if item['patch']['event'] == 'cut')
+    result = finished(monitor, 3)
+    monitor.validation(dict(axis_lower=-np.full(3, 100.), bounds=np.zeros(3), states=np.ones((2,)*3)), result)
     monitor.save()
     restored = RunMonitor()
     restored.load_recording(monitor.output)
@@ -182,19 +157,14 @@ def test_three_dimensional_replay_tracks_cuts_rays_and_preserves_view(tmp_path):
     try:
         window.root.withdraw()
         window.seek(cut_index)
-        assert window.axes['A'].name == window.axes['C'].name == '3d'
-        scheme_axis = window.scheme_views['A'][1]
+        scheme_axis = window.scheme_views['---:1'][1]
         assert scheme_axis.name == '3d' and 'p_{3}' in scheme_axis.get_zlabel()
-        assert any(item.get_gid() == 'cut-1-A' for item in scheme_axis.collections)
-        removed = window._removed_3d(restored.frame(cut_index), 'A')
+        removed = window._removed_3d(restored.frame(cut_index), '---:1')
         assert sum(polytope_volume(p) for p in removed) == pytest.approx(500000.)
-        window.axes['A'].view_init(31., 70.)
-        window.seek(ray_index)
-        assert window.axes['A'].elev == 31. and window.axes['A'].azim == 70.
-        assert any(np.array_equal(line.get_data_3d()[2], [10., 100.]) for line in window.axes['A'].lines)
-        assert '100.000, 100.000, 100.000' in window.sp_text.get()
+        window.seek(cut_index-1)   # 割之前的评分帧：网架已出现，尚无割
+        assert not any(item.get_gid() == 'cut----:1----:1' for item in window.scheme_views['---:1'][1].collections)
         window.seek(0)
-        assert not any(item.get_gid() == 'cut-1-A' for item in window.scheme_views['A'][1].collections)
+        assert not window.scheme_views['---:1'][0].winfo_manager()
         assert any(item.get_gid() == 'scan-reference' for item in window.axes['C'].collections)
         for canvas in window.canvases.values():
             canvas.draw()
@@ -206,18 +176,12 @@ def test_three_dimensional_replay_tracks_cuts_rays_and_preserves_view(tmp_path):
 
 @pytest.mark.parametrize('shape', [(1, 3), (2, 3, 4)])
 def test_ac_panel_renders_rectangular_grid_and_single_row(shape):
-    network = FourBus(load_nodes=(1, 2, 3)[:len(shape)])
-    bounds = 10.*np.arange(1, len(shape)+1)
-    region = RegionState(bounds, float(bounds.sum()), .005)
-    x = network.encode_plan(network.initial_plan).astype(int)
-    region.add_scheme(x, network.initial_plan, 0.)
-    monitor = RunMonitor()
-    monitor.begin(network, 'socp', 20000., region, 100.)
-    result = dict(certified=False, coverage_bound=1., **region.finish(False))
-    monitor.finish(result, region)
+    monitor, _, _ = recorded_monitor(len(shape))
+    result = finished(monitor, len(shape))
     states = np.ones(shape, dtype=np.int8)
     states.flat[0] = -1
-    monitor.validation(dict(bounds=bounds, states=states, method='ac_grid_v3'), result)
+    bounds = 10.*np.arange(1, len(shape)+1)
+    monitor.validation(dict(axis_lower=-bounds, bounds=bounds, states=states, method='ac_grid_v3'), result)
     window = NativeWindow(monitor)
     try:
         window.root.withdraw()

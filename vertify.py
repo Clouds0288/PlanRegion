@@ -266,6 +266,7 @@ def ac_interval_possible(network, x, power, *, mode=1):
 AC_CACHE_METHOD = 'ac_socp_grid_v4'
 SCAN_OUTPUT = Path(__file__).resolve().parent/'results'/'scan'
 SCAN_FIELDS = ('states', 'witness_x', 'residual', 'socp_states', 'socp_witness_x', 'socp_residual')
+SAVE_SECONDS = 30.   # 扫描中两次落盘的最短间隔：避免紧接着替换刚写入的缓存（Windows 上该文件可能仍被扫描占用）
 
 
 def ac_network(network):
@@ -575,7 +576,7 @@ def ac_scan_line(args, *, network, budget, schemes, mode=1):
 
 def scan_ac_reference(network, budget, reference, path=None, *, workers=20, mode=1,
                       progress=lambda completed, total: None, force_rescan=False):
-    """固定格架的区域缓存，同时补齐独立 AC 与 SOCP；每批完成即保存。"""
+    """固定格架的区域缓存，同时补齐独立 AC 与 SOCP；每 SAVE_SECONDS 及结束或中断时保存。"""
     network = ac_network(network)
     path = scan_path(network, budget, mode=mode) if path is None else Path(path)
     lower, upper = np.asarray(reference['axis_lower'], float), np.asarray(reference['bounds'], float)
@@ -622,7 +623,7 @@ def scan_ac_reference(network, budget, reference, path=None, *, workers=20, mode
                     cells = np.column_stack(np.unravel_index(indices, shape))
                     jobs.append((prefix, (indices, answer['axis_lower']+(cells+.5)*step)))
             completed = 2*answer['states'].size-len(ac_pending)-len(socp_pending)
-            last_print = perf_counter()
+            last_print = last_save = perf_counter()
             try:
                 with ProcessPoolExecutor(max_workers=workers) if workers > 1 else nullcontext() as pool:
                     if pool:
@@ -636,14 +637,15 @@ def scan_ac_reference(network, budget, reference, path=None, *, workers=20, mode
                             answer[prefix+key].ravel()[indices] = line[key]
                         answer[prefix+'witness_x'].reshape(-1, network.n_types)[indices] = line['witness_x']
                         completed += len(indices)
-                        save_scan(destination, answer)
+                        if perf_counter()-last_save > SAVE_SECONDS:
+                            save_scan(destination, answer)
+                            last_save = perf_counter()
                         progress(completed, 2*answer['states'].size)
                         if perf_counter()-last_print > 15:
                             print(f'AC/SOCP {completed}/{2*answer["states"].size} labels, reused paired points={reused}', flush=True)
                             last_print = perf_counter()
-            except BaseException:
+            finally:
                 save_scan(destination, answer)
-                raise
         else:
             save_scan(destination, answer)
         answer.update(scan_seconds=perf_counter()-started, reused_points=reused, computed_points=len(pending),

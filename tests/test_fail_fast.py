@@ -9,7 +9,7 @@ from scipy.spatial import QhullError
 
 import main
 import region
-from model import GridPhysics, MasterProblem, RemainingRegionModel
+from model import MasterProblem
 from vertify import ACPowerFlow
 
 
@@ -26,13 +26,6 @@ def test_mp_rejects_bad_solver_result_after_one_solve(status, violation, message
     with pytest.raises(RuntimeError, match=message):
         problem.solve()
     problem.model.optimize.assert_called_once()
-
-
-def test_residual_timeout_is_not_a_coverage_certificate():
-    problem = RemainingRegionModel(GridPhysics(main.FourBus(), 'socp'), 0., np.array([150.]*3),
-                                   450., [], [], 0., threads=1)
-    with problem.model, pytest.raises(TimeoutError, match='time limit'):
-        problem.solve(region.GEOMETRY_TOL, time_limit=0.)
 
 
 def test_qhull_failure_is_not_retried_in_other_coordinates():
@@ -52,7 +45,7 @@ def test_ac_nonconvergence_does_not_start_global_solver():
 
 def test_main_records_failure_and_does_not_publish_result(tmp_path):
     output = tmp_path/'monitor.json.gz'
-    with patch('region.build_sequential_region', side_effect=RuntimeError('solver probe')) as solve:
+    with patch('main.build_region', side_effect=RuntimeError('solver probe')) as solve:
         with pytest.raises(RuntimeError, match='solver probe'):
             main.run(main.FourBus(load_nodes=(1, 2)), output=output, show_ui=False, threads=1)
     solve.assert_called_once()

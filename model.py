@@ -19,8 +19,8 @@ from gurobipy import GRB
 DEFAULT_SOLVER_THREADS = 20
 MP_TIME_LIMIT = 20.
 SP_TIME_LIMIT = {'linear': 5., 'socp': 10.}
-RESIDUAL_TIME_LIMIT = 120.
 PLANNING_TOL = 1e-8
+CONE_CONV_TOL = 1e-6     # x 自由锥 MISOCP 的 barrier 收敛容差：带全部已紧化方案的提升行时更严的判据使节点松弛数值失败
 OBBT_ROUNDS = 2          # 每个方案的 OBBT 轮数
 OBBT_PAD = 1e-6          # OBBT 端点外扩（标幺），吸收最优值误差
 ENVELOPE_MARGIN = 1e-4   # 反向锥包络割右端裕量（标幺²）：AC 点严格在内，且使锥与包络之间的可行壳不致过薄
@@ -134,17 +134,6 @@ class GridPhysics:
                              old[1] if high is None else min(high+OBBT_PAD, old[1]))
             self.boxes[scheme] = box
 
-    def center(self, x, bounds):
-        """固定方案紧化可行集的内点：零目标 barrier 解，作尚无认证点的新方案的射线起点。"""
-        net = self.network
-        with new_model('center', 1) as model:
-            power = model.addVars(net.load_nodes, ub=dict(zip(net.load_nodes, bounds)), name='p_kw')
-            self.add_operation(model, dict(zip(self.keys, map(float, x))), power, scheme=x)
-            model.optimize()
-            if model.Status != GRB.OPTIMAL:
-                raise RuntimeError(f'Center: status={model.Status}, x={list(x)}')
-            return np.array([power[i].X for i in net.load_nodes])
-
     def _limits(self, name, key):
         """运行量对任意 x 成立的全局界，用于提升系数 M。"""
         low, high = {'P': (self.pmin, self.pmax), 'Q': (self.qmin, self.qmax),
@@ -257,7 +246,7 @@ class MasterProblem:
     """完整 MP：给定 power/min_total 时最小投资，否则最大化 direction@p。"""
 
     def __init__(self, equations, *, power=None, budget=np.inf,
-                 min_total=None, fixed_plan=None, cuts=(), direction=None, threads=DEFAULT_SOLVER_THREADS):
+                 min_total=None, fixed_plan=None, direction=None, threads=DEFAULT_SOLVER_THREADS):
         # 1. 读取网架参数，创建求解模型
         net = equations.network
         model = new_model('planning_'+equations.method, threads)
@@ -327,13 +316,6 @@ class MasterProblem:
         self.active_nodes = gp.MVar.fromlist(list(a.values()))
         self.operation = operation
         self.state = operation.state
-        for cut in cuts:
-            self.add_cut(cut)
-
-    def add_cut(self, cut):
-        """添加联合可行性割：α + Σβ_i p_i + Σδ_ek x_ek >= 0。"""
-        d = len(self.equations.network.load_nodes)
-        self.model.addConstr(cut[0]+gp.quicksum(c*p for c, p in zip(cut[1:1+d], self.loads.values()))+gp.quicksum(c*x for c, x in zip(cut[1+d:], self.choices.values())) >= 0.)
 
     def use_incumbent(self, incumbent):
         """提供已有可行解作为起点，并将其投资作为成本上界。"""
@@ -498,60 +480,50 @@ class SubProblem:
         return cut
 
 
-class RemainingRegionModel:
-    """完整物理 MISOCP：在认证内域并集之外搜索物理见证或证明覆盖；scheme 固定方案（含其紧化行），exclude 排除方案。"""
+def cone_misocp(equations, budget, bounds, objective, *, rows=None, exclude=(), time_limit, mip_gap=0.,
+                threads=DEFAULT_SOLVER_THREADS):
+    """x 自由的锥 MISOCP：在 xi=p/bounds 上 max objective@xi，返回全局上界与现任解。
 
-    def __init__(self, equations, budget, bounds, total_bound, cuts, inner_halfspaces, tau,
-                  *, axis_bounds=None, threads=DEFAULT_SOLVER_THREADS, scheme=None, exclude=()):
-        if equations.method != 'socp':
-            raise ValueError('Remaining region requires the complete SOCP physical model')
-        self.problem = problem = MasterProblem(equations, budget=budget, threads=threads, fixed_plan=None
-                                               if scheme is None else equations.network.decode_plan(np.asarray(scheme)))
-        for plan in exclude:
-            problem.exclude(np.asarray(plan))
-        m = self.model = problem.model
-        m.Params.BarQCPConvTol = 1e-6   # 查漏只给候选方向与覆盖上界；更严的收敛判据使紧化后的节点松弛数值失败
-        problem.power.UB = bounds if axis_bounds is None else axis_bounds
-        m.addConstr(problem.power.sum() <= total_bound)
-        self.distance_scale = 1000.
-        d = len(bounds)
-        for cut in cuts:
-            cut = np.asarray(cut)
-            scale = max(np.max(np.abs(np.r_[cut[0], cut[1:1+d]*bounds, cut[1+d:]])), 1e-20)
-            problem.add_cut(cut*self.distance_scale/scale)
-        # 等价缩放，避免 1e-8 的覆盖阈值与求解器绝对容差处于相近量级。
-        delta = m.addVar(lb=-4.*self.distance_scale, ub=4.*self.distance_scale, name='uncovered_distance')
-        for k, eq in enumerate(inner_halfspaces):
-            select = m.addVars(len(eq), vtype=GRB.BINARY, name=f'outside_{k}')
-            m.addConstr(select.sum() == 1)
-            for f, face in enumerate(eq):
-                a = face[:d]*(1-tau)
-                # xi=p/bounds in [0,1]^3；M 由该盒的精确下界推出。
-                big_m = 4.-face[d]-np.minimum(a, 0.).sum()
-                expression = gp.quicksum(float(a[j]/bounds[j])*problem.power[j].item() for j in range(d))
-                m.addConstr(delta <= self.distance_scale*(expression+float(face[d])+float(big_m)*(1-select[f])))
-        m.setObjective(delta, GRB.MAXIMIZE)
+    分支定界自己选网架，不枚举方案；已紧化方案的行按汉明距离提升，对全部 x 有效，未紧化方案为纯 SOCP，
+    故 ObjBound 在任何终止状态下都是 R 在该锥上的有效上界。
+    """
+    # 1. 完整 MP：全部 0/1 选型、拓扑、预算与运行约束，x 不固定
+    problem = MasterProblem(equations, budget=budget, threads=threads)
+    with problem.model as model:
+        # 2. 全部已紧化方案的盒约束与反向锥包络行，右端加 M*H(x)
+        choice = dict(zip(equations.keys, problem.x.tolist()))
+        for scheme in equations.boxes:
+            equations._tighten(model, choice, problem.operation, scheme)
+        model.Params.BarQCPConvTol = CONE_CONV_TOL
+        xi = [p*(1./float(b)) for p, b in zip(problem.loads.values(), bounds)]
 
-    def solve(self, tolerance, time_limit=RESIDUAL_TIME_LIMIT):
-        m, problem = self.model, self.problem
-        m.Params.TimeLimit = time_limit
-        # 探索阶段只需一个可靠未覆盖点；停止证明仍必须检查全局上界。
-        m.Params.BestObjStop = max(10*tolerance, 1e-6)*self.distance_scale
-        m.optimize()
-        if m.Status == GRB.INFEASIBLE:
-            return dict(complete=True, bound=None, x=None, p=None, feasible=False)
-        if m.Status == GRB.TIME_LIMIT:
-            raise TimeoutError('Remaining region physical: time limit')
-        if m.Status not in (GRB.OPTIMAL, GRB.USER_OBJ_LIMIT) or not m.SolCount:
-            raise RuntimeError(f'Remaining region physical: status={m.Status}, SolCount={m.SolCount}')
-        bound = float(m.ObjBound)/self.distance_scale
-        if bound <= tolerance:
-            return dict(complete=True, bound=bound, x=None, p=None, feasible=False)
-        if m.ObjVal/self.distance_scale <= tolerance:
-            raise RuntimeError(f'Remaining region physical: no uncovered witness or coverage certificate, bound={bound:g}')
-        # 见证点在可行集边界上，只作候选方向；登记时由射线取严格可行点认证。
-        x, point = np.rint(problem.x.X).astype(int), problem.power.X
-        return dict(complete=False, bound=bound, x=x, p=point, feasible=True)
+        # 3. rows 给锥约束 rows@xi>=0 与分区盒 p<=bounds；否则为中心射线 xi_1=…=xi_d，并排除已知方案
+        if rows is None:
+            for j in range(1, len(xi)):
+                model.addConstr(xi[0]-xi[j] == 0., name=f'radial_direction[{j}]')
+            for scheme in exclude:
+                problem.exclude(np.asarray(scheme))
+        else:
+            for j, row in enumerate(rows):
+                model.addConstr(gp.quicksum(float(a)*v for a, v in zip(row, xi)) >= 0., name=f'cone[{j}]')
+            problem.power.UB = bounds
+        model.setObjective(gp.quicksum(float(a)*v for a, v in zip(objective, xi)), GRB.MAXIMIZE)
+
+        # 4. 解到相对间隙 mip_gap 或时限
+        model.Params.MIPGap, model.Params.TimeLimit = mip_gap, time_limit
+        model.optimize()
+        if model.Status == GRB.INTERRUPTED:
+            raise KeyboardInterrupt
+
+        # 5. 上界（尚无界时为 inf）与现任解：方案元组、功率 kW
+        try:
+            bound = float(model.ObjBound)
+        except gp.GurobiError:
+            bound = np.inf
+        found = model.SolCount > 0
+        return dict(status=model.Status, bound=bound if abs(bound) < GRB.INFINITY else np.inf,
+                    x=tuple(int(v) for v in np.rint(problem.x.X)) if found else None,
+                    point=np.asarray(problem.power.X, float) if found else None)
 
 
 LOAD_PF = .95

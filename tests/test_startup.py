@@ -5,7 +5,7 @@ import numpy as np
 
 import main
 import model
-from model import GridPhysics, MasterProblem, SubProblem, RemainingRegionModel
+from model import GridPhysics, MasterProblem, SubProblem
 
 
 class StartupTests(unittest.TestCase):
@@ -37,11 +37,11 @@ class StartupTests(unittest.TestCase):
         self.assertEqual(network.fixed_q[2], 0.)
         self.assertTrue(network.required.all())
 
-    def test_thread_detection_error_is_not_retried_or_hidden(self):
-        with patch('region.threadpool_limits', side_effect=OSError('GetModuleFileNameEx failed')) as configure:
-            with self.assertRaisesRegex(OSError, 'GetModuleFileNameEx failed'):
+    def test_partition_pool_error_is_not_retried_or_hidden(self):
+        with patch('region.ProcessPoolExecutor', side_effect=OSError('pool probe')) as pool:
+            with self.assertRaisesRegex(OSError, 'pool probe'):
                 main.run(main.FourBus(load_nodes=(1, 2)), show_ui=False, output=None)
-        configure.assert_called_once_with(limits=1)
+        pool.assert_called_once()
 
     def test_threads_reach_each_solver(self):
         equations = GridPhysics(main.FourBus(), 'socp')
@@ -55,9 +55,6 @@ class StartupTests(unittest.TestCase):
                     network = equations.network
                     oracle.solve(network.encode_plan(network.initial_plan), np.zeros(3))
                 self.assertEqual(create.call_args.args, ('planning_SP', expected))
-                residual = RemainingRegionModel(equations, 0., [100.]*3, 300., [], [], .002, **options)
-                with residual.model:
-                    self.assertEqual(residual.model.Params.Threads, expected)
 
 
 if __name__ == '__main__':

@@ -20,39 +20,24 @@ gurobi.lic
 outputs/
 tmp/
 
-# Only the selected official archive is versioned.
+# Only the selected official archive is versioned (retired archives live in tags mainline-sequential-v1 / results-methods-v1).
 results/**
 !results/manifest.json
 !results/mainline/
 !results/mainline/mode_1/
-!results/mainline/mode_1/fourbus_1_2.json.gz
-!results/mainline/mode_1/fourbus_1_2_3.json.gz
-!results/mainline/mode_1/fourbus_1_2_3_result.json
-!results/mainline/mode_1/fourbus_1_2_3_protocol.json
 !results/mainline/mode_1/case33_18_25.json.gz
 !results/mainline/mode_1/case33_18_25_comparison/
 !results/mainline/mode_1/case33_18_25_comparison/**
-!results/support_face/
-!results/support_face/fourbus_3d_signed_physical/
-!results/support_face/fourbus_3d_signed_physical/*.json
-!results/support_face/fourbus_3d_signed_physical/monitor.json.gz
+!results/mainline/mode_1/case33_18_25_30.json.gz
+!results/mainline/mode_1/case33_18_25_30_comparison/
+!results/mainline/mode_1/case33_18_25_30_comparison/**
 !results/scan/
-!results/scan/**/
-!results/scan/fourbus_socp/**/*.npz
+!results/scan/case33bw/
+!results/scan/case33bw/**/
 !results/scan/case33bw/18_25/d0121a1ad0ba8cc1e009da6cc204ad9cf53881d3e5f4c488a439cb11d5f6fb69/bounds.npz
 !results/scan/case33bw/18_25/d0121a1ad0ba8cc1e009da6cc204ad9cf53881d3e5f4c488a439cb11d5f6fb69/region_17ceb84375dc2cc1.npz
 !results/scan/case33bw/18_25_30/ea7124157cce5bcd61e5782f37e7cfeb3ae25dcc2f396a26d1cb9809e7e770b5/bounds.npz
 !results/scan/case33bw/18_25_30/ea7124157cce5bcd61e5782f37e7cfeb3ae25dcc2f396a26d1cb9809e7e770b5/region_3837a4b56856fbc1.npz
-# Radial sandwich experiments (stage baseline, alongside the mainline): top-level run files only.
-!results/radial/
-!results/radial/case33_18_25/
-!results/radial/case33_18_25/*
-!results/radial/case33_18_25_near/
-!results/radial/case33_18_25_near/*
-!results/radial/case33_18_25_30_near/
-!results/radial/case33_18_25_30_near/*
-!results/radial/case33_18_25_30_volume/
-!results/radial/case33_18_25_30_volume/*
 # Curated method-comparison runs (compare_plan2, 2026-10-01): see results/methods/README.md and the manifest.
 !results/methods/
 !results/methods/**
