@@ -1044,6 +1044,7 @@ class NativeWindow:
         missed, extra = known & reference & ~computed, known & computed & ~reference
         # 2. 二维：格子着色；三维：参考域表面与遗漏/多余格心
         lower, upper = np.asarray(validation['axis_lower']), np.asarray(validation['bounds'])
+        step = (upper-lower)/np.array(ac.shape)
         if ac.ndim == 2:
             classes = np.where(missed, 3, np.where(extra, 2, np.where(known & reference, 1, 0)))
             ax.pcolormesh(*(np.linspace(a, b, n+1) for a, b, n in zip(lower, upper, ac.shape)), classes.T,
@@ -1052,19 +1053,24 @@ class NativeWindow:
             handles = [Patch(facecolor=REFERENCE, label='参考可行'), Patch(facecolor=GLOBAL, label='遗漏'),
                        Patch(facecolor=SP, label='多余')]
         else:
-            step = (upper-lower)/np.array(ac.shape)
             ax.add_collection3d(Poly3DCollection(lower+_voxel_faces(known & reference, upper-lower),
-                                                 facecolors=REFERENCE, edgecolors='none', alpha=.12, gid='reference'))
+                                                 facecolors=REFERENCE, edgecolors='none', alpha=.25, gid='reference'))
             for cells, color, gid in ((missed, GLOBAL, 'missed-cells'), (extra, SP, 'extra-cells')):
                 points = lower+(np.argwhere(cells)+.5)*step
-                ax.scatter(*points.T, color=color, s=5, marker='.', depthshade=False, gid=gid)
+                ax.scatter(*points.T, color=color, s=2, alpha=.6, marker='.', depthshade=False, gid=gid)   # 小而半透明：看疏密
             handles = [Patch(facecolor=REFERENCE, label='参考可行（表面）'),
                        Line2D([], [], color=GLOBAL, marker='.', ls='none', label='遗漏'),
                        Line2D([], [], color=SP, marker='.', ls='none', label='多余')]
-        # 3. 三组指标与本组的遗漏/多余格数
+        # 3. 三组指标；本组遗漏/多余格按符号分区计数（从多到少），看误差主要来自哪些分区
         fmt = lambda value: '—' if value is None else f'{value:.3f}%'
-        self.comparison_text.set('\n'.join(f'{label}：遗漏 {fmt(validation["comparisons"][key]["mr_percent"])}'
-            f'    多余 {fmt(validation["comparisons"][key]["fr_percent"])}' for key, label in COMPARISONS.items()))
+
+        def by_partition(cells):
+            labels = [''.join('+' if v >= 0 else '-' for v in point) for point in lower+(np.argwhere(cells)+.5)*step]
+            counts = sorted(((labels.count(label), label) for label in set(labels)), reverse=True)
+            return ' · '.join(f'{label} {count}' for count, label in counts) or '—'
+        self.comparison_text.set('\n'.join([*(f'{label}：遗漏 {fmt(validation["comparisons"][key]["mr_percent"])}'
+            f'    多余 {fmt(validation["comparisons"][key]["fr_percent"])}' for key, label in COMPARISONS.items()),
+            f'本组遗漏按分区：{by_partition(missed)}', f'本组多余按分区：{by_partition(extra)}']))
         ax.set_title(f"{COMPARISONS[selected]} · 遗漏 {int(missed.sum())} 格 · 多余 {int(extra.sum())} 格 · "
                      +'×'.join(map(str, ac.shape))+' 网格', fontsize=9)
         ax.legend(handles=handles, loc='upper right', frameon=False, fontsize=8)

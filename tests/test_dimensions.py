@@ -47,7 +47,9 @@ def test_three_comparison_modes_switch_colors_and_show_six_metrics(dimension):
             axis = window.axes['C']
             assert label in axis.get_title()
             assert [item.get_text() for item in axis.get_legend().get_texts()][1:] == ['遗漏', '多余']
-            assert window.comparison_text.get().count('遗漏') == window.comparison_text.get().count('多余') == 3
+            lines = window.comparison_text.get().splitlines()
+            assert len(lines) == 5 and all('遗漏' in line and '多余' in line for line in lines[:3])
+            assert lines[3].startswith('本组遗漏按分区') and lines[4].startswith('本组多余按分区')
             if dimension == 2:
                 meshes.append(np.asarray(axis.collections[0].get_array()).copy())
             else:
