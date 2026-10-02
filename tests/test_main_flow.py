@@ -102,6 +102,21 @@ def test_cut_loop_carries_obbt_rows_and_keeps_certified_ray_points():
         assert [key for key, _ in cutting.sets()] == [(x, 0)]
 
 
+def test_row_generation_bound_equals_the_bound_with_every_plan_tightened():
+    """行生成的锥 MISOCP 只紧化分支定界遇到的现任网架；先紧化全部预算内方案后上界不变（MIP 间隙内）。"""
+    from vertify import budget_schemes
+    part = radial('nn')
+    with threadpool_limits(limits=1):
+        cone = part.root()
+        rows = np.linalg.inv(cone.verts.T)
+        rows /= np.linalg.norm(rows, axis=1, keepdims=True)
+        lazy = part.misocp(cone.c, rows)
+        for x in budget_schemes(part.equations, part.budget):
+            part.tighten(tuple(int(v) for v in x))
+        full = part.misocp(cone.c, rows)
+    assert lazy['x'] in part.equations.boxes and lazy['bound'] == pytest.approx(full['bound'], rel=2*main.MIP_GAP)
+
+
 def test_one_partition_certifies_with_cut_networks_and_records_frames():
     network = Case33(load_nodes=(18, 25), current_limit=CURRENT_LIMIT)
     monitor = RunMonitor()

@@ -86,9 +86,9 @@ SP 固定 x,p 后最小化非负 `eta`（求解器名 violation），只允许�
 
 内域证书 `Radial.inner`：x̂ 原点可行时 K^IN_k ⊆ R^SOCP_x̂；否则需原点可行的 y 在每个生成方向的射线半径不小于 x̂ 的近端半径，K^IN_k ⊆ R^SOCP_x̂ ∪ R^SOCP_y。证书针对 OBBT 紧化 SOCP 模型，K^IN_k 不保证在 **R**^AC 内（松弛残余）。`Radial.vertex` 从原点朝分区盒边界点 `bounds*u/max(u)` 做紧化射线，半径小于 `MIN_RADIUS` 视为没有顶点；`Radial.near` 是从远端朝原点的反向射线。单次射线与原点 SP 的时限不超过 `RAY_SECONDS`。
 
-外界 `cone_misocp`：x 自由的完整 MP（全部选型、拓扑、预算、运行约束），在 xi 上最大化 `objective`；`rows` 给锥约束 `rows@xi>=0` 与分区盒，缺省时为中心射线 xi_1=…=xi_d 并以 no-good 排除 `exclude`。全部已紧化方案的行按汉明距离提升，未紧化方案为纯 SOCP，故任何终止状态下的 ObjBound 都是 **R**^SOCP 在该锥上的有效上界；`CONE_CONV_TOL` 是它的 barrier 收敛容差。返回 `status/bound/x/point`（point 为 kW 幅值），尚无界时 bound=inf。`Radial.misocp` 是懒惰 OBBT：现任方案尚未紧化时先 OBBT 再重解，至多 `Radial.misocp.rounds` 轮（锥 MISOCP 不限；中心射线为 `LAZY_ROUNDS`）。单次时限 `settings.mip_seconds`，相对间隙 `settings.mip_gap`；中心射线求解用 mip_gap=0。
+外界 `cone_misocp`：x 自由的完整 MP（全部选型、拓扑、预算、运行约束），在 xi 上最大化 `objective`；`rows` 给锥约束 `rows@xi>=0` 与分区盒，缺省时为中心射线 xi_1=…=xi_d 并以 no-good 排除 `exclude`。它用行生成，一次分支定界、不枚举方案：模型不预先带紧化行，每找到一个新的现任网架，若其盒约束与反向锥包络行尚不在模型中，先调用 `cone_misocp.tighten`（`Radial.incumbent`：记一步 lazy 并确保该网架已紧化，必要时 OBBT），再把这些行按汉明距离提升后以惰性约束（`GridPhysics._tighten.add` 取 `cbLazy`）加入，分支定界继续。没有行的网架为纯 SOCP，故任何终止状态下的 ObjBound 都是 **R**^SOCP 在该锥上的有效上界；达到 mip_gap 时现任网架都带行。回调中的异常（分区到时、取消）在求解结束后重新抛出。`CONE_CONV_TOL` 是它的 barrier 收敛容差。返回 `status/bound/x/point`（point 为 kW 幅值），尚无界时 bound=inf。`Radial.misocp` 即一次 `cone_misocp`：单次时限 `settings.mip_seconds`，相对间隙 `settings.mip_gap`；中心射线求解用 mip_gap=0。
 
-初始网架 `Radial.initial`：中心射线 MISOCP 的候选仍未紧化时，`Radial.farthest` 在已紧化、未排除的网架中取紧化中心射线（固定网架的 `ray_support`，朝 bounds）最远者；中心射线只用于选网架，其上界不进证书。胜出网架原点不可行时以 no-good 排除后重解。
+初始网架 `Radial.initial`：中心射线 MISOCP 的胜出网架（行生成保证已紧化）原点不可行时以 no-good 排除后重解。
 
 `Radial.run(epsilon, check)` 用体积准则细分：每次取 Δ_k 最大的锥，ΣΔ_k<=ε·Σvol(K^IN_k) 或 `check()` 成立即 certified。`Radial.options` 给候选剖分：解点方向的锥坐标 λ 全部 >= `SPLIT_MARGIN` 时星形剖分；三维恰有一个 λ 偏小时在对边上按 λ 投影二分；最后总有最长棱中点二分。`Radial.split` 的子锥 x̂ 取 {父 x̂, 解的方案, 父覆盖网架} 中证书成立、半径乘积最大者。锥角直径小于 `settings.min_width`、叶锥数达到 `settings.max_cones` 或没有内域证书的锥记 unresolved，不再细分。`Cone.status` 为 pending / bounded / unresolved；`Radial.run` 返回 certified / unresolved / time_limit，可续跑，阶段时限到达抛出 RegionTimeout 后保留已得证书。`Radial.schemes` 是 X*，即可能改变 **I** 的网架：先取叶锥的 x̂（按所占锥体积从大到小），再接各叶锥的覆盖网架与锥 MISOCP 解点网架（按所在锥的 Δ_k 从大到小）；只做过 OBBT 或原点测试的网架不在其中。
 
@@ -181,7 +181,7 @@ SP 固定 x,p 后最小化非负 `eta`（求解器名 violation），只允许�
 
 `cone` 帧另有 volume_ratio（ΣΔ_k/Σvol(K^IN_k)）；`cut` 帧另有 schemes 与 cut_history。
 
-判据步（check）与分区结束步（end）另带数值 `gap`（夹逼间隙，**I** 为空时为 null）。每次求解或判定在其完成时记为一帧的 `step`（`Radial.step:kind / text`，几何为 kW 幅值的点 `p` 与折线 `vertices`、点所属网架 `scheme`，`forward` 乘 sign 并给 scheme 加分区前缀；`step` 不在 MERGED 中，帧状态保留最近一次）。kind 依流程为：center（中心射线，max Σξ；候选未紧化时其后各条候选射线为 ray 步）、obbt、origin（p=0 的 SP）、ray（射线 max t，线段 0→v）、near（反向射线，线段远端→近端）、root（根锥 K_0）、cone（锥 MISOCP max c·ξ，点为解点 ξ*，折线为 K^OUT_k 的远端面 μ_k·v_{k,i}，`Radial.far_face`）、lazy（`Radial.misocp` 的懒惰 OBBT 一轮：x 自由 MISOCP 的现任网架尚未紧化，附当前上界与现任解点，随后 OBBT 并重解）、split（细分 Δ_k 最大的锥）、network（开始割网架 x）、sp（顶点评分 min η，附 feasible）、cut（取割）、network_end、check（夹逼判据）、end（分区结束）。
+判据步（check）与分区结束步（end）另带数值 `gap`（夹逼间隙，**I** 为空时为 null）。每次求解或判定在其完成时记为一帧的 `step`（`Radial.step:kind / text`，几何为 kW 幅值的点 `p` 与折线 `vertices`、点所属网架 `scheme`，`forward` 乘 sign 并给 scheme 加分区前缀；`step` 不在 MERGED 中，帧状态保留最近一次）。kind 依流程为：center（中心射线 MISOCP，max Σξ）、obbt、origin（p=0 的 SP）、ray（射线 max t，线段 0→v）、near（反向射线，线段远端→近端）、root（根锥 K_0）、cone（锥 MISOCP max c·ξ，点为解点 ξ*，折线为 K^OUT_k 的远端面 μ_k·v_{k,i}，`Radial.far_face`）、lazy（行生成：分支定界的新现任网架尚无紧化行，附当前上界与现任点，随后确保紧化并以惰性约束加入）、split（细分 Δ_k 最大的锥）、network（开始割网架 x）、sp（顶点评分 min η，附 feasible）、cut（取割）、network_end、check（夹逼判据）、end（分区结束）。
 
 收敛过程：`convergence` 由一份回放与其校验扫描网格求各分区夹逼间隙随时间（分区尚无计入 **I** 的 N^CUT_x 时 **I**=**K**^IN，由锥行体积直接求；之后取判据步的 gap），以及全部分区内域相对 AC 的 MR/FR 随时间（按 `CONVERGENCE_SAMPLES` 个等分时刻采样，只重算变化过的分区），返回 `convergence:time / mr / fr / gaps / ends`。`draw_convergence` 把多次运行画在同一张图上，`main.py --convergence 记录…`（`convergence_figure`）输出 `<案例>_<节点>_convergence.png` 到各运行目录的公共上级。
 
@@ -208,12 +208,19 @@ SP 固定 x,p 后最小化非负 `eta`（求解器名 violation），只允许�
 | `SPLIT_MARGIN / MIN_RADIUS / RAY_SECONDS` | 0.05 / 1e-9（xi）/ 30 秒 |
 | `CUT_THRESHOLD / CUT_PATIENCE / POINT_TOL` | 0.01 / 3 / 0.01 kW |
 | `CUT_SECONDS / PASS_SHARE` | 30 秒 / 0.75 |
-| `GAP_SHARE / LAZY_ROUNDS` | 0.1 / 2；一轮 CUT 的间隙降幅门槛（乘 ε）；中心射线至多紧化的现任网架数 |
+| `GAP_SHARE` | 0.1；一轮 CUT 的间隙降幅门槛（乘 ε） |
 | `DIVISIONS / SCAN_DIVISIONS / SCAN_WORKERS / SAVE_SECONDS` | 160 / {2:160,3:80} / 20 / 30 秒；每扫描进程一个求解线程 |
 | `FRAME_STRIDE` | 64 帧；回放状态快照间隔 |
 | `STEP_TRAIL / STEP_LOG / FIT_SHRINK` | 6 / 8 / 0.6；主图保留的步骤数、步骤栏行数、主图收紧坐标的比例 |
 
 单次 MP/SP 的时限仍用 MP_TIME_LIMIT/SP_TIME_LIMIT，扫描单点 60 秒；AC_ITERATIONS 为 AC 见证的迭代次数。不得合并不同语义的容差。数值配置变化须同步本表和结果协议。
+
+## 显式迁移（2026-10-02：锥 MISOCP 改为行生成）
+
+- 外界：`cone_misocp` 由“懒惰 OBBT 的重解循环”（解一次、紧化现任网架、从头重解）改为一次分支定界中的行生成，增加参数 `cone_misocp.tighten`；`Radial.misocp` 不再循环，删除 `Radial.misocp.rounds`。中心射线的轮数上限 `LAZY_ROUNDS` 与 `Radial.farthest` 是为该循环的代价加的，一并删除，`Radial.initial` 回到一次 MISOCP 加原点排除。新增 `Radial.incumbent`。
+- 模型：`GridPhysics._tighten` 的第一个参数由模型改为加约束的方法 `GridPhysics._tighten.add`（建模时 `model.addConstr`，行生成回调中 `cbLazy`）；固定方案模型的 `BarQCPConvTol=OBBT_CONV_TOL` 改在 `GridPhysics.add_operation` 中设置。
+- 对照（每算例一次运行，时限与 16 进程相同，校验复用同一扫描网格）：Case33 二维 4/4→4/4，最慢分区 21→11 s；三维 300 s 7/8→8/8，最慢分区 304→172 s；Case33Plan 二维 300 s 3/4→4/4，最慢分区 300→92 s，内域 MR 2.030%→0.026%；三维 1000 s 2/8→6/8，外界 FR 19.3%→6.8%。各分区合计的 MISOCP 用时下降 63%–83%。对照图在 results/mainline/rowgen_comparison。
+- 结果：results/mainline 的 Case33 二维、三维归档按行生成重跑（三维 8/8），并新增 Case33Plan 二维（4/4）、三维（1000 s，6/8）归档与四个运行的收敛过程图 results/mainline/<案例>_<节点>_convergence.png；Case33Plan 的扫描缓存为 region_b54763ac33ec1b0b.npz 与 region_067a43627f1f9094.npz（网格随外域扩为 161×161 与 83×80×80）。记录的 cache_path 与摘要的 ac_cache 均为相对项目根目录的路径。
 
 ## 显式迁移（2026-10-02：新算例 Case33Plan 与收敛过程图）
 
@@ -332,6 +339,7 @@ SP 固定 x,p 后最小化非负 `eta`（求解器名 violation），只允许�
 - [OBBT_PAD](../model.py)、[ENVELOPE_MARGIN](../model.py)、[OBBT_CONV_TOL](../model.py)、[OBBT_PARAMS](../model.py)
 - [obbt_pool](../model.py)、[obbt_extremes](../model.py)、[GridPhysics.boxes](../model.py)、[GridPhysics.obbt](../model.py)
 - [GridPhysics.add_operation.scheme](../model.py)、[CONE_CONV_TOL](../model.py)、[cone_misocp](../model.py)、[cone_misocp.objective](../model.py)
+- [cone_misocp.tighten](../model.py)、[GridPhysics._tighten](../model.py)、[GridPhysics._tighten.add](../model.py)
 - [cone_misocp.rows](../model.py)、[cone_misocp.exclude](../model.py)、[cone_misocp.mip_gap](../model.py)、[cone_misocp:status](../model.py)
 - [cone_misocp:bound](../model.py)、[cone_misocp:x](../model.py)、[cone_misocp:point](../model.py)
 
@@ -372,8 +380,8 @@ SP 固定 x,p 后最小化非负 `eta`（求解器名 violation），只允许�
 
 - [GEOMETRY_TOL](../region.py)、[SPLIT_MARGIN](../region.py)、[MIN_RADIUS](../region.py)、[RAY_SECONDS](../region.py)
 - [CUT_SECONDS](../region.py)、[PASS_SHARE](../region.py)、[CUT_ACCEPTED](../region.py)、[halfspaces](../region.py)
-- [GAP_SHARE](../region.py)、[LAZY_ROUNDS](../region.py)、[polygon_union](../region.py)、[union_volume](../region.py)
-- [_clip_face](../region.py)、[Radial.farthest](../region.py)、[Radial.misocp.rounds](../region.py)、[Cutting.gap](../region.py)
+- [GAP_SHARE](../region.py)、[polygon_union](../region.py)、[union_volume](../region.py)、[Radial.incumbent](../region.py)
+- [_clip_face](../region.py)、[Cutting.gap](../region.py)
 - [Cutting.declined](../region.py)、[Cutting.measures](../region.py)、[Cutting.epsilon](../region.py)
 - [clip_polytope.coefficient](../region.py)、[clip_polytope.constant](../region.py)、[covered](../region.py)、[union_measure](../region.py)
 - [register_power](../region.py)、[box_vertices](../region.py)、[clip_box](../region.py)、[cone_clip](../region.py)

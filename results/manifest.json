@@ -1,9 +1,9 @@
 {
   "schema": "planregion-results-v1",
-  "date": "2026-10-02",
+  "date": "2026-10-03",
   "path_base": "repository root",
   "archive_baseline_commit": "e79f18b30f667c007968135d8865c6d0e37fc30c",
-  "note": "Selected recorded results retained without recomputation. Current Case33 is 200 A. The mainline is method RCUT (branch main / method-RCUT); method RB is developed on branch method-RB. Archives of retired methods are kept in their tags, see retired.",
+  "note": "Selected recorded results retained without recomputation. Current Case33 is 200 A; Case33Plan is its expansion-planning variant (S1-S5 switchable existing lines, C1-C5 candidate lines, budget 14). The mainline is method RCUT (branch main / method-RCUT) with row generation in the cone MISOCP; method RB is developed on branch method-RB. Archives of retired methods are kept in their tags, see retired.",
   "runs": [
     {
       "id": "case33_18_25_RCUT_w16_r1",
@@ -545,15 +545,14 @@
         "threshold": 0.01,
         "patience": 3,
         "point_tol": 0.01,
-        "gap_share": 0.1,
-        "lazy_rounds": 2
+        "gap_share": 0.1
       },
       "status": "certified",
       "certified": true,
       "certified_partitions": 4,
       "partitions": 4,
       "timing": {
-        "total_seconds": 21.382124301046133
+        "total_seconds": 14.064499897416681
       },
       "partition_results": [
         {
@@ -563,8 +562,8 @@
           ],
           "status": "certified",
           "how": "cut",
-          "seconds": 1.6351803995203227,
-          "gap": 0.002218428096464331,
+          "seconds": 1.7513604008127004,
+          "gap": 0.0022184293257716536,
           "cones": 1
         },
         {
@@ -574,8 +573,8 @@
           ],
           "status": "certified",
           "how": "radial",
-          "seconds": 3.0137767002452165,
-          "gap": 0.0031074825654275884,
+          "seconds": 2.6070105999242514,
+          "gap": 0.0031077272953969892,
           "cones": 3
         },
         {
@@ -585,8 +584,8 @@
           ],
           "status": "certified",
           "how": "cut",
-          "seconds": 12.803813399281353,
-          "gap": 0.008600253806327895,
+          "seconds": 10.28513800026849,
+          "gap": 0.0086146239292062,
           "cones": 5
         },
         {
@@ -595,46 +594,46 @@
             -1
           ],
           "status": "certified",
-          "how": "radial",
-          "seconds": 20.19489470287226,
-          "gap": 0.0036883166938834755,
-          "cones": 4
+          "how": "cut",
+          "seconds": 13.239578396780416,
+          "gap": 0.008020220647480203,
+          "cones": 5
         }
       ],
       "metrics": {
         "inner": {
-          "mr_percent": 0.030629747610879686,
-          "fr_percent": 0.9468892261001517,
-          "missed_cells": 5,
+          "mr_percent": 0.07963734378828718,
+          "fr_percent": 0.9473492439424304,
+          "missed_cells": 13,
           "extra_cells": 156,
           "reference_cells": 16324,
-          "computed_cells": 16475
+          "computed_cells": 16467
         },
         "outer": {
           "mr_percent": 0.0,
-          "fr_percent": 1.3595987672971177,
+          "fr_percent": 1.5440289505428226,
           "missed_cells": 0,
-          "extra_cells": 225,
+          "extra_cells": 256,
           "reference_cells": 16324,
-          "computed_cells": 16549
+          "computed_cells": 16580
         }
       },
       "comparisons": {
         "result_ac": {
-          "mr_percent": 0.030629747610879686,
-          "fr_percent": 0.9468892261001517,
-          "missed_cells": 5,
+          "mr_percent": 0.07963734378828718,
+          "fr_percent": 0.9473492439424304,
+          "missed_cells": 13,
           "extra_cells": 156,
           "reference_cells": 16324,
-          "computed_cells": 16475
+          "computed_cells": 16467
         },
         "result_socp": {
-          "mr_percent": 12.41951790560315,
-          "fr_percent": 0.09711684370257967,
-          "missed_cells": 2334,
+          "mr_percent": 12.462086947267599,
+          "fr_percent": 0.09716402501973644,
+          "missed_cells": 2342,
           "extra_cells": 16,
           "reference_cells": 18793,
-          "computed_cells": 16475
+          "computed_cells": 16467
         },
         "socp_ac": {
           "mr_percent": 0.0,
@@ -646,7 +645,8 @@
         }
       },
       "validation_note": "main.run validation: paired AC/SOCP scan over the reference box and the outer extents.",
-      "source_provenance": "Generated with the code of commit e983773 (G12345 rules as RCUT) and main.py defaults."
+      "convergence_figure": "results/mainline/case33_18_25_convergence.png",
+      "source_provenance": "Generated with the code of this archive commit (cone MISOCP by row generation, parent defa692) and main.py defaults."
     },
     {
       "id": "case33_18_25_30_RCUT_mainline",
@@ -676,15 +676,14 @@
         "threshold": 0.01,
         "patience": 3,
         "point_tol": 0.01,
-        "gap_share": 0.1,
-        "lazy_rounds": 2
+        "gap_share": 0.1
       },
-      "status": "time_limit",
-      "certified": false,
-      "certified_partitions": 7,
+      "status": "certified",
+      "certified": true,
+      "certified_partitions": 8,
       "partitions": 8,
       "timing": {
-        "total_seconds": 304.7828444011975
+        "total_seconds": 210.28064198116772
       },
       "partition_results": [
         {
@@ -695,8 +694,8 @@
           ],
           "status": "certified",
           "how": "cut",
-          "seconds": 5.044437600532547,
-          "gap": 0.00841791035903805,
+          "seconds": 5.121404800564051,
+          "gap": 0.00841996709037951,
           "cones": 4
         },
         {
@@ -707,8 +706,8 @@
           ],
           "status": "certified",
           "how": "cut",
-          "seconds": 199.88108520000242,
-          "gap": 0.014980623779851099,
+          "seconds": 111.21718399738893,
+          "gap": 0.014964886632613306,
           "cones": 136
         },
         {
@@ -719,8 +718,8 @@
           ],
           "status": "certified",
           "how": "cut",
-          "seconds": 114.86605179985054,
-          "gap": 0.014938584661877474,
+          "seconds": 63.167004799470305,
+          "gap": 0.014942970146117451,
           "cones": 83
         },
         {
@@ -731,9 +730,9 @@
           ],
           "status": "certified",
           "how": "cut",
-          "seconds": 255.73210580158047,
-          "gap": 0.014813486847230939,
-          "cones": 141
+          "seconds": 124.33162640198134,
+          "gap": 0.014924650891591229,
+          "cones": 144
         },
         {
           "sign": [
@@ -743,9 +742,9 @@
           ],
           "status": "certified",
           "how": "cut",
-          "seconds": 52.42492959834635,
-          "gap": 0.014636742031382655,
-          "cones": 32
+          "seconds": 47.909262703498825,
+          "gap": 0.014718303374708919,
+          "cones": 33
         },
         {
           "sign": [
@@ -755,9 +754,9 @@
           ],
           "status": "certified",
           "how": "cut",
-          "seconds": 209.72735669719987,
-          "gap": 0.01373131387694726,
-          "cones": 68
+          "seconds": 99.16430409555323,
+          "gap": 0.014776546855745254,
+          "cones": 74
         },
         {
           "sign": [
@@ -765,11 +764,11 @@
             -1,
             1
           ],
-          "status": "time_limit",
+          "status": "certified",
           "how": "cut",
-          "seconds": 303.5696731049102,
-          "gap": 0.01817048722249548,
-          "cones": 113
+          "seconds": 209.19309309590608,
+          "gap": 0.014883738694219106,
+          "cones": 193
         },
         {
           "sign": [
@@ -779,45 +778,45 @@
           ],
           "status": "certified",
           "how": "cut",
-          "seconds": 255.61786789563484,
-          "gap": 0.014574807716419835,
-          "cones": 102
+          "seconds": 59.791181300068274,
+          "gap": 0.012870373103478938,
+          "cones": 40
         }
       ],
       "metrics": {
         "inner": {
-          "mr_percent": 0.010958753989671374,
-          "fr_percent": 4.022247935622995,
-          "missed_cells": 16,
-          "extra_cells": 6118,
+          "mr_percent": 0.019177819481924905,
+          "fr_percent": 4.281854902166501,
+          "missed_cells": 28,
+          "extra_cells": 6530,
           "reference_cells": 146002,
-          "computed_cells": 152104
+          "computed_cells": 152504
         },
         "outer": {
           "mr_percent": 0.0,
-          "fr_percent": 5.463610463610464,
+          "fr_percent": 5.595644527208773,
           "missed_cells": 0,
-          "extra_cells": 8438,
+          "extra_cells": 8654,
           "reference_cells": 146002,
-          "computed_cells": 154440
+          "computed_cells": 154656
         }
       },
       "comparisons": {
         "result_ac": {
-          "mr_percent": 0.010958753989671374,
-          "fr_percent": 4.022247935622995,
-          "missed_cells": 16,
-          "extra_cells": 6118,
+          "mr_percent": 0.019177819481924905,
+          "fr_percent": 4.281854902166501,
+          "missed_cells": 28,
+          "extra_cells": 6530,
           "reference_cells": 146002,
-          "computed_cells": 152104
+          "computed_cells": 152504
         },
         "result_socp": {
-          "mr_percent": 19.644461933603825,
-          "fr_percent": 0.6521896346554638,
-          "missed_cells": 36942,
-          "extra_cells": 992,
+          "mr_percent": 19.26371820710119,
+          "fr_percent": 0.44326996845963684,
+          "missed_cells": 36226,
+          "extra_cells": 676,
           "reference_cells": 188053,
-          "computed_cells": 152103
+          "computed_cells": 152503
         },
         "socp_ac": {
           "mr_percent": 0.0,
@@ -829,7 +828,321 @@
         }
       },
       "validation_note": "main.run validation: paired AC/SOCP scan over the reference box and the outer extents.",
-      "source_provenance": "Generated with the code of commit e983773 (G12345 rules as RCUT) and main.py defaults."
+      "convergence_figure": "results/mainline/case33_18_25_30_convergence.png",
+      "source_provenance": "Generated with the code of this archive commit (cone MISOCP by row generation, parent defa692) and main.py defaults."
+    },
+    {
+      "id": "case33plan_18_25_RCUT_mainline",
+      "recording": "results/mainline/mode_1/case33plan_18_25.json.gz",
+      "scan": "results/scan/case33bw_plan/18_25/0470b832b88c1a314afbd42f15a7d780056c245c23bc42ed44c0fe0bba414a3d/region_b54763ac33ec1b0b.npz",
+      "parameters": {
+        "mode": 1,
+        "network": "case33bw_plan",
+        "load_nodes": [
+          18,
+          25
+        ],
+        "budget": 14.0,
+        "method": "RCUT",
+        "time_limit": 300.0,
+        "workers": 16,
+        "threads": 1,
+        "tau": 0.005,
+        "eps": 0.01,
+        "discovery_eps": 0.15,
+        "discovery_share": 0.25,
+        "mip_seconds": 60.0,
+        "mip_gap": 0.001,
+        "min_width": 0.0001,
+        "max_cones": 256,
+        "threshold": 0.01,
+        "patience": 3,
+        "point_tol": 0.01,
+        "gap_share": 0.1
+      },
+      "status": "certified",
+      "certified": true,
+      "certified_partitions": 4,
+      "partitions": 4,
+      "timing": {
+        "total_seconds": 91.91908100573346
+      },
+      "partition_results": [
+        {
+          "sign": [
+            1,
+            1
+          ],
+          "status": "certified",
+          "how": "cut",
+          "seconds": 2.585020700469613,
+          "gap": 0.002810496222945158,
+          "cones": 1
+        },
+        {
+          "sign": [
+            1,
+            -1
+          ],
+          "status": "certified",
+          "how": "cut",
+          "seconds": 23.010651697404683,
+          "gap": 0.005954939909049273,
+          "cones": 12
+        },
+        {
+          "sign": [
+            -1,
+            1
+          ],
+          "status": "certified",
+          "how": "cut",
+          "seconds": 29.082086597336456,
+          "gap": 0.006080964889922713,
+          "cones": 9
+        },
+        {
+          "sign": [
+            -1,
+            -1
+          ],
+          "status": "certified",
+          "how": "cut",
+          "seconds": 90.76226849737577,
+          "gap": 0.007374545745101546,
+          "cones": 19
+        }
+      ],
+      "metrics": {
+        "inner": {
+          "mr_percent": 0.02569593147751606,
+          "fr_percent": 0.8663156106675726,
+          "missed_cells": 3,
+          "extra_cells": 102,
+          "reference_cells": 11675,
+          "computed_cells": 11774
+        },
+        "outer": {
+          "mr_percent": 0.0,
+          "fr_percent": 1.4102347576422902,
+          "missed_cells": 0,
+          "extra_cells": 167,
+          "reference_cells": 11675,
+          "computed_cells": 11842
+        }
+      },
+      "comparisons": {
+        "result_ac": {
+          "mr_percent": 0.02569593147751606,
+          "fr_percent": 0.8663156106675726,
+          "missed_cells": 3,
+          "extra_cells": 102,
+          "reference_cells": 11675,
+          "computed_cells": 11774
+        },
+        "result_socp": {
+          "mr_percent": 11.106067483734302,
+          "fr_percent": 0.20383896721589945,
+          "missed_cells": 1468,
+          "extra_cells": 24,
+          "reference_cells": 13218,
+          "computed_cells": 11774
+        },
+        "socp_ac": {
+          "mr_percent": 0.0,
+          "fr_percent": 11.67347556362536,
+          "missed_cells": 0,
+          "extra_cells": 1543,
+          "reference_cells": 11675,
+          "computed_cells": 13218
+        }
+      },
+      "validation_note": "main.run validation: paired AC/SOCP scan over the reference box and the outer extents.",
+      "convergence_figure": "results/mainline/case33plan_18_25_convergence.png",
+      "source_provenance": "Generated with the code of this archive commit (cone MISOCP by row generation, parent defa692) and main.py defaults."
+    },
+    {
+      "id": "case33plan_18_25_30_RCUT_mainline",
+      "recording": "results/mainline/mode_1/case33plan_18_25_30.json.gz",
+      "scan": "results/scan/case33bw_plan/18_25_30/78ea9d3225a89602efd17c2f897b8468454a60ee22187c2ce6e26bdd3c5b5163/region_067a43627f1f9094.npz",
+      "parameters": {
+        "mode": 1,
+        "network": "case33bw_plan",
+        "load_nodes": [
+          18,
+          25,
+          30
+        ],
+        "budget": 14.0,
+        "method": "RCUT",
+        "time_limit": 1000.0,
+        "workers": 16,
+        "threads": 1,
+        "tau": 0.005,
+        "eps": 0.015,
+        "discovery_eps": 0.15,
+        "discovery_share": 0.25,
+        "mip_seconds": 60.0,
+        "mip_gap": 0.001,
+        "min_width": 0.002,
+        "max_cones": 2048,
+        "threshold": 0.01,
+        "patience": 3,
+        "point_tol": 0.01,
+        "gap_share": 0.1
+      },
+      "status": "time_limit",
+      "certified": false,
+      "certified_partitions": 6,
+      "partitions": 8,
+      "timing": {
+        "total_seconds": 1029.1617493599188
+      },
+      "partition_results": [
+        {
+          "sign": [
+            1,
+            1,
+            1
+          ],
+          "status": "certified",
+          "how": "cut",
+          "seconds": 9.920090699801221,
+          "gap": 0.002939010021459243,
+          "cones": 2
+        },
+        {
+          "sign": [
+            1,
+            1,
+            -1
+          ],
+          "status": "time_limit",
+          "how": "cut",
+          "seconds": 1021.3228259815369,
+          "gap": 0.027515478015205597,
+          "cones": 668
+        },
+        {
+          "sign": [
+            1,
+            -1,
+            1
+          ],
+          "status": "certified",
+          "how": "cut",
+          "seconds": 195.56333298725076,
+          "gap": 0.01478017050953273,
+          "cones": 122
+        },
+        {
+          "sign": [
+            1,
+            -1,
+            -1
+          ],
+          "status": "certified",
+          "how": "cut",
+          "seconds": 648.0090523881372,
+          "gap": 0.014822575301566276,
+          "cones": 249
+        },
+        {
+          "sign": [
+            -1,
+            1,
+            1
+          ],
+          "status": "certified",
+          "how": "cut",
+          "seconds": 743.2512089868542,
+          "gap": 0.014927445242069126,
+          "cones": 353
+        },
+        {
+          "sign": [
+            -1,
+            1,
+            -1
+          ],
+          "status": "certified",
+          "how": "cut",
+          "seconds": 561.071865492966,
+          "gap": 0.014953977381855,
+          "cones": 183
+        },
+        {
+          "sign": [
+            -1,
+            -1,
+            1
+          ],
+          "status": "time_limit",
+          "how": "cut",
+          "seconds": 1027.4273532116786,
+          "gap": 0.07458989258873938,
+          "cones": 345
+        },
+        {
+          "sign": [
+            -1,
+            -1,
+            -1
+          ],
+          "status": "certified",
+          "how": "cut",
+          "seconds": 1004.3282944981474,
+          "gap": 0.0148995589940073,
+          "cones": 227
+        }
+      ],
+      "metrics": {
+        "inner": {
+          "mr_percent": 0.28375868473550253,
+          "fr_percent": 3.883897490302689,
+          "missed_cells": 165,
+          "extra_cells": 2343,
+          "reference_cells": 58148,
+          "computed_cells": 60326
+        },
+        "outer": {
+          "mr_percent": 0.0,
+          "fr_percent": 6.934908212096477,
+          "missed_cells": 0,
+          "extra_cells": 4333,
+          "reference_cells": 58148,
+          "computed_cells": 62481
+        }
+      },
+      "comparisons": {
+        "result_ac": {
+          "mr_percent": 0.28375868473550253,
+          "fr_percent": 3.883897490302689,
+          "missed_cells": 165,
+          "extra_cells": 2343,
+          "reference_cells": 58148,
+          "computed_cells": 60326
+        },
+        "result_socp": {
+          "mr_percent": 15.356728127566772,
+          "fr_percent": 0.9216589861751152,
+          "missed_cells": 10844,
+          "extra_cells": 556,
+          "reference_cells": 70614,
+          "computed_cells": 60326
+        },
+        "socp_ac": {
+          "mr_percent": 0.0,
+          "fr_percent": 17.65372305775059,
+          "missed_cells": 0,
+          "extra_cells": 12466,
+          "reference_cells": 58148,
+          "computed_cells": 70614
+        }
+      },
+      "validation_note": "main.run validation: paired AC/SOCP scan over the reference box and the outer extents.",
+      "convergence_figure": "results/mainline/case33plan_18_25_30_convergence.png",
+      "source_provenance": "Generated with the code of this archive commit (cone MISOCP by row generation, parent defa692) and main.py defaults."
     }
   ],
   "scans": {
@@ -961,230 +1274,215 @@
       "unresolved_cells": 0,
       "socp_feasible_cells": 188053,
       "socp_unresolved_cells": 1
+    },
+    "results/scan/case33bw_plan/18_25/0470b832b88c1a314afbd42f15a7d780056c245c23bc42ed44c0fe0bba414a3d/region_b54763ac33ec1b0b.npz": {
+      "kind": "AC+SOCP",
+      "shape": [
+        161,
+        161
+      ],
+      "axis_lower": [
+        -6354.0,
+        -8117.0
+      ],
+      "bounds": [
+        2824.0,
+        3763.0
+      ],
+      "method": "ac_socp_grid_v4",
+      "feasible_cells": 11675,
+      "unresolved_cells": 0,
+      "socp_feasible_cells": 13218,
+      "socp_unresolved_cells": 0
+    },
+    "results/scan/case33bw_plan/18_25_30/78ea9d3225a89602efd17c2f897b8468454a60ee22187c2ce6e26bdd3c5b5163/region_067a43627f1f9094.npz": {
+      "kind": "AC+SOCP",
+      "shape": [
+        83,
+        80,
+        80
+      ],
+      "axis_lower": [
+        -9648.0,
+        -9648.0,
+        -9648.0
+      ],
+      "bounds": [
+        4445.0,
+        7211.0,
+        9628.0
+      ],
+      "method": "ac_socp_grid_v4",
+      "feasible_cells": 58148,
+      "unresolved_cells": 0,
+      "socp_feasible_cells": 70614,
+      "socp_unresolved_cells": 0
     }
   },
   "files": {
     "results/scan/case33bw/18_25/d0121a1ad0ba8cc1e009da6cc204ad9cf53881d3e5f4c488a439cb11d5f6fb69/bounds.npz": {
       "bytes": 1599,
-      "sha256": "5e222789c09e0a53d7b2f16de25db687de9411979f535e5dc9a7d5f3dc15223f",
-      "original_path": "results/scan/case33bw/18_25/d0121a1ad0ba8cc1e009da6cc204ad9cf53881d3e5f4c488a439cb11d5f6fb69/bounds.npz",
-      "original_sha256": "5e222789c09e0a53d7b2f16de25db687de9411979f535e5dc9a7d5f3dc15223f"
+      "sha256": "5e222789c09e0a53d7b2f16de25db687de9411979f535e5dc9a7d5f3dc15223f"
     },
     "results/scan/case33bw/18_25/d0121a1ad0ba8cc1e009da6cc204ad9cf53881d3e5f4c488a439cb11d5f6fb69/region_17ceb84375dc2cc1.npz": {
       "bytes": 169706,
-      "sha256": "cf9ee90cf3b1c710d811e4e4bce97539e53611e8ab408c2b591ca57f169cfabb",
-      "original_path": "results/scan/case33bw/18_25/d0121a1ad0ba8cc1e009da6cc204ad9cf53881d3e5f4c488a439cb11d5f6fb69/region_17ceb84375dc2cc1.npz",
-      "original_sha256": "cf9ee90cf3b1c710d811e4e4bce97539e53611e8ab408c2b591ca57f169cfabb"
+      "sha256": "cf9ee90cf3b1c710d811e4e4bce97539e53611e8ab408c2b591ca57f169cfabb"
     },
     "results/methods/case33_18_25/RCUT/workers_16/run_1/summary.json": {
       "bytes": 22228,
-      "sha256": "b95eca9a636cba6ac64c3e319ec1a78ea9a12ffc1c27e45e5211f5f712dce4b1",
-      "original_path": "results/compare_plan2/case33_18_25/RCUT/workers_16/run_1/summary.json"
+      "sha256": "b95eca9a636cba6ac64c3e319ec1a78ea9a12ffc1c27e45e5211f5f712dce4b1"
     },
     "results/methods/case33_18_25/RCUT/workers_16/run_1/metrics.json": {
       "bytes": 47982,
-      "sha256": "ed8bf966308e5afd044f1d868c1c3d1b6f8036d9151b3f2ece6233a39c785b62",
-      "original_path": "results/compare_plan2/case33_18_25/RCUT/workers_16/run_1/metrics.json"
+      "sha256": "ed8bf966308e5afd044f1d868c1c3d1b6f8036d9151b3f2ece6233a39c785b62"
     },
     "results/methods/case33_18_25/RCUT/workers_16/run_1/timeline.csv": {
       "bytes": 10171,
-      "sha256": "6d386bcde51f57101a748265217038b6a0333927e34bc95e29db555626ae244d",
-      "original_path": "results/compare_plan2/case33_18_25/RCUT/workers_16/run_1/timeline.csv"
+      "sha256": "6d386bcde51f57101a748265217038b6a0333927e34bc95e29db555626ae244d"
     },
     "results/methods/case33_18_25/RCUT/workers_16/run_1/solves.csv.gz": {
       "bytes": 22612,
-      "sha256": "116beb21fb9ed3776bba0d25ed7ee75e66dba2d70b3a8ecd35c4ba38553a15aa",
-      "original_path": "results/compare_plan2/case33_18_25/RCUT/workers_16/run_1/solves.csv",
-      "original_sha256": "0b0a3c640167abcafb3377b42b83aef65a684809f7d1e6033870051b98838938",
-      "compression": "gzip"
+      "sha256": "116beb21fb9ed3776bba0d25ed7ee75e66dba2d70b3a8ecd35c4ba38553a15aa"
     },
     "results/methods/case33_18_25/RCUT/workers_16/run_1/snapshots/final.json.gz": {
       "bytes": 3933,
-      "sha256": "b485eb9939594b045122058b7fcae0793cd8520aa5a2609b3964dad161e97a0f",
-      "original_path": "results/compare_plan2/case33_18_25/RCUT/workers_16/run_1/snapshots/final.json",
-      "original_sha256": "55e9ebfa9fe536164a405bbcba1e63cfd138d184f79651429164aed1e90f8ae5",
-      "compression": "gzip"
+      "sha256": "b485eb9939594b045122058b7fcae0793cd8520aa5a2609b3964dad161e97a0f"
     },
     "results/methods/case33_18_25/RCUT-t0.5/workers_16/run_1/summary.json": {
       "bytes": 22549,
-      "sha256": "5e628efbd71ef0220dbbd1eb7faf7958847b2338c8b4ee4f84972c2db38599f0",
-      "original_path": "results/compare_plan2/case33_18_25/RCUT-t0.5/workers_16/run_1/summary.json"
+      "sha256": "5e628efbd71ef0220dbbd1eb7faf7958847b2338c8b4ee4f84972c2db38599f0"
     },
     "results/methods/case33_18_25/RCUT-t0.5/workers_16/run_1/metrics.json": {
       "bytes": 47435,
-      "sha256": "f62de0d1e48dab5a0c6a554281ca8d785824b719432e10073371dedb7aeb9596",
-      "original_path": "results/compare_plan2/case33_18_25/RCUT-t0.5/workers_16/run_1/metrics.json"
+      "sha256": "f62de0d1e48dab5a0c6a554281ca8d785824b719432e10073371dedb7aeb9596"
     },
     "results/methods/case33_18_25/RCUT-t0.5/workers_16/run_1/timeline.csv": {
       "bytes": 10902,
-      "sha256": "4972b138a53891f4774b9a10f296a49df59325cebee6e9e66bce9d27210bd30e",
-      "original_path": "results/compare_plan2/case33_18_25/RCUT-t0.5/workers_16/run_1/timeline.csv"
+      "sha256": "4972b138a53891f4774b9a10f296a49df59325cebee6e9e66bce9d27210bd30e"
     },
     "results/methods/case33_18_25/RCUT-t0.5/workers_16/run_1/solves.csv.gz": {
       "bytes": 24400,
-      "sha256": "f7939279dbc77d561f3b18fceabe783b6cc6a3055f116f613e1e2c8b7288f0cf",
-      "original_path": "results/compare_plan2/case33_18_25/RCUT-t0.5/workers_16/run_1/solves.csv",
-      "original_sha256": "80afc7cfb859f1110678f13425c14b27c9e11c78899be1c366dae02f66d59740",
-      "compression": "gzip"
+      "sha256": "f7939279dbc77d561f3b18fceabe783b6cc6a3055f116f613e1e2c8b7288f0cf"
     },
     "results/methods/case33_18_25/RCUT-t0.5/workers_16/run_1/snapshots/final.json.gz": {
       "bytes": 4303,
-      "sha256": "dd59f1340169a9d00739d3816108a00b0c6aaa86eba8380b486d5773a849577c",
-      "original_path": "results/compare_plan2/case33_18_25/RCUT-t0.5/workers_16/run_1/snapshots/final.json",
-      "original_sha256": "a407d92e00275ff239fd054dd974493802035df6020043d80297245c311e2613",
-      "compression": "gzip"
+      "sha256": "dd59f1340169a9d00739d3816108a00b0c6aaa86eba8380b486d5773a849577c"
     },
     "results/methods/case33_18_25/RCUT-t2/workers_16/run_1/summary.json": {
       "bytes": 21742,
-      "sha256": "cdf9b52442e46f37d656537cfd17ca0a3f7f9dd9b31c25178865ea7c37fada9e",
-      "original_path": "results/compare_plan2/case33_18_25/RCUT-t2/workers_16/run_1/summary.json"
+      "sha256": "cdf9b52442e46f37d656537cfd17ca0a3f7f9dd9b31c25178865ea7c37fada9e"
     },
     "results/methods/case33_18_25/RCUT-t2/workers_16/run_1/metrics.json": {
       "bytes": 49097,
-      "sha256": "79bc734ca07f576286a73e38ca8fbc5c649ca30e022d1af35461fc6e40dbb580",
-      "original_path": "results/compare_plan2/case33_18_25/RCUT-t2/workers_16/run_1/metrics.json"
+      "sha256": "79bc734ca07f576286a73e38ca8fbc5c649ca30e022d1af35461fc6e40dbb580"
     },
     "results/methods/case33_18_25/RCUT-t2/workers_16/run_1/timeline.csv": {
       "bytes": 10242,
-      "sha256": "3d0ab49da477a4434a67eb6c2ec8d77280435023801c0164076a636d4fb40668",
-      "original_path": "results/compare_plan2/case33_18_25/RCUT-t2/workers_16/run_1/timeline.csv"
+      "sha256": "3d0ab49da477a4434a67eb6c2ec8d77280435023801c0164076a636d4fb40668"
     },
     "results/methods/case33_18_25/RCUT-t2/workers_16/run_1/solves.csv.gz": {
       "bytes": 20257,
-      "sha256": "121edfd4ee678316913c50bbc3af256a82ac0306e76df94493c466225a943d6f",
-      "original_path": "results/compare_plan2/case33_18_25/RCUT-t2/workers_16/run_1/solves.csv",
-      "original_sha256": "aa8c29e9a17f36914909de910b9a794269a33b5b4823301d1efc70b47ce03b69",
-      "compression": "gzip"
+      "sha256": "121edfd4ee678316913c50bbc3af256a82ac0306e76df94493c466225a943d6f"
     },
     "results/methods/case33_18_25/RCUT-t2/workers_16/run_1/snapshots/final.json.gz": {
       "bytes": 3580,
-      "sha256": "3c7e9010e645ba8fd539d251dd6a9008c4da5b4bd1a23033c20c0572f6321652",
-      "original_path": "results/compare_plan2/case33_18_25/RCUT-t2/workers_16/run_1/snapshots/final.json",
-      "original_sha256": "7f7f400ebe44f9b98bf5bc685b8c3ed227ba229bdf7196afe79fa0c53454fcf6",
-      "compression": "gzip"
+      "sha256": "3c7e9010e645ba8fd539d251dd6a9008c4da5b4bd1a23033c20c0572f6321652"
     },
     "results/methods/case33_18_25_30/RCUT/workers_16/run_1/summary.json": {
       "bytes": 71451,
-      "sha256": "5d7c06063a8608565cb1a78e03d5a33a4fb44198e7ca44e5f8d5a1bbe4a495f0",
-      "original_path": "results/compare_plan2/case33_18_25_30/RCUT/workers_16/run_1/summary.json"
+      "sha256": "5d7c06063a8608565cb1a78e03d5a33a4fb44198e7ca44e5f8d5a1bbe4a495f0"
     },
     "results/methods/case33_18_25_30/RCUT/workers_16/run_1/metrics.json": {
       "bytes": 90180,
-      "sha256": "2068cf58c6dc6912eb3da67e2d6370c302611cdfdcd2ce7aee777b24d9631821",
-      "original_path": "results/compare_plan2/case33_18_25_30/RCUT/workers_16/run_1/metrics.json"
+      "sha256": "2068cf58c6dc6912eb3da67e2d6370c302611cdfdcd2ce7aee777b24d9631821"
     },
     "results/methods/case33_18_25_30/RCUT/workers_16/run_1/timeline.csv": {
       "bytes": 24949,
-      "sha256": "80d46f05db7ea2f9497148440e6c850b3c25f347eba3abd9c6f6778bf4ca0b40",
-      "original_path": "results/compare_plan2/case33_18_25_30/RCUT/workers_16/run_1/timeline.csv"
+      "sha256": "80d46f05db7ea2f9497148440e6c850b3c25f347eba3abd9c6f6778bf4ca0b40"
     },
     "results/methods/case33_18_25_30/RCUT/workers_16/run_1/solves.csv.gz": {
       "bytes": 220084,
-      "sha256": "847bf621489706695fcbfdc5873b69c2f4f0fb5b1d24db48fb64ab5931705ca0",
-      "original_path": "results/compare_plan2/case33_18_25_30/RCUT/workers_16/run_1/solves.csv",
-      "original_sha256": "7508940148ffe78c95d28fdb1912d7b59d1e46b75dcd0a26055ebd8c889a2955",
-      "compression": "gzip"
+      "sha256": "847bf621489706695fcbfdc5873b69c2f4f0fb5b1d24db48fb64ab5931705ca0"
     },
     "results/methods/case33_18_25_30/RCUT/workers_16/run_1/snapshots/final.json.gz": {
       "bytes": 105796,
-      "sha256": "7f79a478cca3ec8b4c90ab1a43478b01c1ab7ddbe70166378ed87289fead9d2a",
-      "original_path": "results/compare_plan2/case33_18_25_30/RCUT/workers_16/run_1/snapshots/final.json",
-      "original_sha256": "52882af9fa631062fb90f5facd7b3bce5aa2ab7bd26f6783c7e44f71f35c942c",
-      "compression": "gzip"
+      "sha256": "7f79a478cca3ec8b4c90ab1a43478b01c1ab7ddbe70166378ed87289fead9d2a"
     },
     "results/methods/case33_18_25_30/RCUT-t0.5/workers_16/run_1/summary.json": {
       "bytes": 74501,
-      "sha256": "653610b2824859140d39672410545b5f745d3c18eec42e2251ba3e1a5e4e5cfc",
-      "original_path": "results/compare_plan2/case33_18_25_30/RCUT-t0.5/workers_16/run_1/summary.json"
+      "sha256": "653610b2824859140d39672410545b5f745d3c18eec42e2251ba3e1a5e4e5cfc"
     },
     "results/methods/case33_18_25_30/RCUT-t0.5/workers_16/run_1/metrics.json": {
       "bytes": 90144,
-      "sha256": "94b1e451e60d655124e12dc3469de21cf031062216c69b69739d79c30f517dd2",
-      "original_path": "results/compare_plan2/case33_18_25_30/RCUT-t0.5/workers_16/run_1/metrics.json"
+      "sha256": "94b1e451e60d655124e12dc3469de21cf031062216c69b69739d79c30f517dd2"
     },
     "results/methods/case33_18_25_30/RCUT-t0.5/workers_16/run_1/timeline.csv": {
       "bytes": 29981,
-      "sha256": "83bf9325ef82ce8d3aeadf7b94bd8d6fafecb78aec4e8d8558f7dcf0638d7442",
-      "original_path": "results/compare_plan2/case33_18_25_30/RCUT-t0.5/workers_16/run_1/timeline.csv"
+      "sha256": "83bf9325ef82ce8d3aeadf7b94bd8d6fafecb78aec4e8d8558f7dcf0638d7442"
     },
     "results/methods/case33_18_25_30/RCUT-t0.5/workers_16/run_1/solves.csv.gz": {
       "bytes": 269248,
-      "sha256": "abbf29106562bfea5bfe4f5c6126c2ae697fde25737848b91a1ce25e99623e23",
-      "original_path": "results/compare_plan2/case33_18_25_30/RCUT-t0.5/workers_16/run_1/solves.csv",
-      "original_sha256": "065f982cbd220446325210b9c42f8249f0e9b53ad3657c5a66a368f7762d971b",
-      "compression": "gzip"
+      "sha256": "abbf29106562bfea5bfe4f5c6126c2ae697fde25737848b91a1ce25e99623e23"
     },
     "results/methods/case33_18_25_30/RCUT-t0.5/workers_16/run_1/snapshots/final.json.gz": {
       "bytes": 125208,
-      "sha256": "1c6a31385b89554a598bda4d2ce6ca88c20a1b0fc9c5371b7e94d491a9991767",
-      "original_path": "results/compare_plan2/case33_18_25_30/RCUT-t0.5/workers_16/run_1/snapshots/final.json",
-      "original_sha256": "bcd5f42c5f7c9236182c645141425f2224e64d49fd57cac9cacfcf72ec43113d",
-      "compression": "gzip"
+      "sha256": "1c6a31385b89554a598bda4d2ce6ca88c20a1b0fc9c5371b7e94d491a9991767"
     },
     "results/methods/case33_18_25_30/RCUT-t2/workers_16/run_1/summary.json": {
       "bytes": 69343,
-      "sha256": "24b44a0378c4fca3371cc6ef73d11647345bebcd80a2833bbaf8920c5d9bc92f",
-      "original_path": "results/compare_plan2/case33_18_25_30/RCUT-t2/workers_16/run_1/summary.json"
+      "sha256": "24b44a0378c4fca3371cc6ef73d11647345bebcd80a2833bbaf8920c5d9bc92f"
     },
     "results/methods/case33_18_25_30/RCUT-t2/workers_16/run_1/metrics.json": {
       "bytes": 90159,
-      "sha256": "7f88753bdb3b060adc4e1e9abbe7c2350d7c9a825f6506af0cdbac6f2f52173e",
-      "original_path": "results/compare_plan2/case33_18_25_30/RCUT-t2/workers_16/run_1/metrics.json"
+      "sha256": "7f88753bdb3b060adc4e1e9abbe7c2350d7c9a825f6506af0cdbac6f2f52173e"
     },
     "results/methods/case33_18_25_30/RCUT-t2/workers_16/run_1/timeline.csv": {
       "bytes": 24073,
-      "sha256": "e4316d566e7202e99ccc89d78bcae7ed9cae0a5fd2b8e3704c3c55ae47eea64d",
-      "original_path": "results/compare_plan2/case33_18_25_30/RCUT-t2/workers_16/run_1/timeline.csv"
+      "sha256": "e4316d566e7202e99ccc89d78bcae7ed9cae0a5fd2b8e3704c3c55ae47eea64d"
     },
     "results/methods/case33_18_25_30/RCUT-t2/workers_16/run_1/solves.csv.gz": {
       "bytes": 197830,
-      "sha256": "4760029a2b982378029f58e4d281d7e267b744df0ba82f949667f59b566c3e76",
-      "original_path": "results/compare_plan2/case33_18_25_30/RCUT-t2/workers_16/run_1/solves.csv",
-      "original_sha256": "2aa03f982e4aff8e803e075fd673d4403e5c80b09c329f935b63fdb707348ae1",
-      "compression": "gzip"
+      "sha256": "4760029a2b982378029f58e4d281d7e267b744df0ba82f949667f59b566c3e76"
     },
     "results/methods/case33_18_25_30/RCUT-t2/workers_16/run_1/snapshots/final.json.gz": {
       "bytes": 98937,
-      "sha256": "2055f302ae53dfa26babd5c3a945db0b7fd28abb32592c43655db5cf5eb84cd6",
-      "original_path": "results/compare_plan2/case33_18_25_30/RCUT-t2/workers_16/run_1/snapshots/final.json",
-      "original_sha256": "ef8776d0986ed786901bc3d54d56deafd1841de8e4776487cae46fa61e22662f",
-      "compression": "gzip"
+      "sha256": "2055f302ae53dfa26babd5c3a945db0b7fd28abb32592c43655db5cf5eb84cd6"
     },
     "results/mainline/mode_1/case33_18_25.json.gz": {
-      "bytes": 36607,
-      "sha256": "e34ecc465c4f167ac7716e7ca6bc74c4bd46e1cf0ea38d113d39fea54fe3618b"
+      "bytes": 48253,
+      "sha256": "5c0c96f44f85f19dfa8e025532c85fb3e2e1d6020d5bd7d3e4723f163eb04f25"
     },
     "results/mainline/mode_1/case33_18_25_comparison/comparison.csv": {
       "bytes": 1085264,
-      "sha256": "d356a2aea23eff2d53dcff203e096195d90f65325182ab0424d772011d07b96e"
+      "sha256": "f3e6d36a5a261c4bd552fceb0f298dd985e65b6507c7568f59e82288aabbf206"
     },
     "results/mainline/mode_1/case33_18_25_comparison/comparison.npz": {
-      "bytes": 7917,
-      "sha256": "f2cfc0a89f42e4201df82d268a6cc0600f1b34c88638d337476c1051be4cd63b"
+      "bytes": 7926,
+      "sha256": "7aa44d2288547f1e08cc9a874316759839b74d6a7634e8c696268f03c778a6bc"
     },
     "results/mainline/mode_1/case33_18_25_comparison/summary.json": {
-      "bytes": 2878,
-      "sha256": "484bcc3012ce8705adcfcd5f08879636bb4a1733d0d6f5328475050b5341dc59"
+      "bytes": 2879,
+      "sha256": "4a6ffdb9d45882cad10f5fa7523fd42dc0c8c1b1ec40b863c060eba07837561b"
     },
     "results/scan/case33bw/18_25/d0121a1ad0ba8cc1e009da6cc204ad9cf53881d3e5f4c488a439cb11d5f6fb69/region_737610b09f58fa3c.npz": {
       "bytes": 170237,
       "sha256": "cdb2c2b098143c0a64337d78acdacf8e4b33e5c7e67524abe92171937842f8b4"
     },
     "results/mainline/mode_1/case33_18_25_30.json.gz": {
-      "bytes": 1412836,
-      "sha256": "71843cd56e9a691790e5b8bc6c332299d59511fa4448c25258c6c2ed8f57403c"
+      "bytes": 1690910,
+      "sha256": "958acab376b7633b197cf3917a3afbaa5b7fdc1aab5248d74d826ac199270f56"
     },
     "results/scan/case33bw/18_25_30/ea7124157cce5bcd61e5782f37e7cfeb3ae25dcc2f396a26d1cb9809e7e770b5/region_3837a4b56856fbc1.npz": {
       "bytes": 1847947,
       "sha256": "80345e56ff271f31997c4982ee44b423bb0d56d0fe9614b1bf73976b5f90f695"
     },
     "results/mainline/mode_1/case33_18_25_30_comparison/comparison.npz": {
-      "bytes": 449943,
-      "sha256": "8b0e7de9d8b1fe58a6da6769516639ff2e30eac9e1e3548fea26de8d43e88d61"
+      "bytes": 449841,
+      "sha256": "b6fc38962f558bdb3d0d368325e565aa56f510a98cf8057e7957dbb310d1045e"
     },
     "results/mainline/mode_1/case33_18_25_30_comparison/summary.json": {
-      "bytes": 2943,
-      "sha256": "689a10cee54179df7a7f82f39fa73d672edc740995b32414e3d83ce13d4c9e90"
+      "bytes": 2941,
+      "sha256": "0222ceef158f9803523be25493590f454fcb314e0acd95854d1fe444e3f8d3ac"
     },
     "results/scan/case33bw/18_25_30/ea7124157cce5bcd61e5782f37e7cfeb3ae25dcc2f396a26d1cb9809e7e770b5/region_c4ccaae500788d99.npz": {
       "bytes": 1944292,
@@ -1197,6 +1495,90 @@
     "results/scan/case33bw/18_25_30/ea7124157cce5bcd61e5782f37e7cfeb3ae25dcc2f396a26d1cb9809e7e770b5/region_22dea14fe7af0414.npz": {
       "bytes": 2166586,
       "sha256": "b174867791a559d53139cceade0db239bf24c8ea5c5553306137521d60e17297"
+    },
+    "results/mainline/case33_18_25_30_convergence.png": {
+      "bytes": 149824,
+      "sha256": "ac6ad07916604b6b75d03135f54c4dd99b789e3573667394280edb2c0e3488cb"
+    },
+    "results/mainline/case33_18_25_convergence.png": {
+      "bytes": 104177,
+      "sha256": "e70073a69e090615ceaa8edd90fe2dfbde85b7d4d0ef5d47a45f5cd33d3d488a"
+    },
+    "results/mainline/case33plan_18_25_30_convergence.png": {
+      "bytes": 165108,
+      "sha256": "9f2e15e65e22507f179601f026cb0a8c35446cf48308f765c22527f52cd82f40"
+    },
+    "results/mainline/case33plan_18_25_convergence.png": {
+      "bytes": 102987,
+      "sha256": "54356e0227b972f2a22c40098a5ad6308c160ee4df3b385aa8de4df8d401be5d"
+    },
+    "results/mainline/mode_1/case33plan_18_25.json.gz": {
+      "bytes": 211293,
+      "sha256": "9045b55f2f7a4c922075695bd01c0ab9bc90a6a8fcbd1b3407660470cd2ec1e5"
+    },
+    "results/mainline/mode_1/case33plan_18_25_30.json.gz": {
+      "bytes": 8472033,
+      "sha256": "b5610575d4a2d8389eafb115508b9c29e579317ca4172da9f44fab9a65ea325b"
+    },
+    "results/mainline/mode_1/case33plan_18_25_30_comparison/comparison.npz": {
+      "bytes": 117575,
+      "sha256": "da543647d1e28b6dc59180fc3530f5ea8263be466c24e2b7312cc6cea8413b77"
+    },
+    "results/mainline/mode_1/case33plan_18_25_30_comparison/summary.json": {
+      "bytes": 2993,
+      "sha256": "1f9fb76384634a0445471d00bb3285c6a2c84aeb41eded5b4023b5a4a4ebf905"
+    },
+    "results/mainline/mode_1/case33plan_18_25_comparison/comparison.csv": {
+      "bytes": 1036467,
+      "sha256": "5b784af2342a48ea4f55ed5ffe3836d0490af5cea436ad3f0b5d16c3809f2f6e"
+    },
+    "results/mainline/mode_1/case33plan_18_25_comparison/comparison.npz": {
+      "bytes": 8746,
+      "sha256": "172d642b10b206e85dd23c8fc7521c731e18f8d4508f1a1d6e3825b65702ea54"
+    },
+    "results/mainline/mode_1/case33plan_18_25_comparison/summary.json": {
+      "bytes": 2902,
+      "sha256": "de943e9698c2dbf28c4f5ac8825a64e872c734945fe82e9ca7533ef2883e6263"
+    },
+    "results/mainline/rowgen_comparison/case33_18_25_30_convergence.png": {
+      "bytes": 178356,
+      "sha256": "a1b5b6bfc51dee690c8cd85818a76f18455dc0525437dd513603b33d7cb56f22"
+    },
+    "results/mainline/rowgen_comparison/case33_18_25_convergence.png": {
+      "bytes": 112397,
+      "sha256": "1eb32a22589b9b5516d1419bc4a0d370526208f681ce158a116648883200f362"
+    },
+    "results/mainline/rowgen_comparison/case33plan_18_25_30_convergence.png": {
+      "bytes": 186278,
+      "sha256": "d449ab7f8f42af065a86f712166d43884db11803335422c9fbdd31c67e23a102"
+    },
+    "results/mainline/rowgen_comparison/case33plan_18_25_convergence.png": {
+      "bytes": 116395,
+      "sha256": "ca4f4029655d696a688d0b5e43d3d6afe3791af0853faab87ce6f3c57f38567f"
+    },
+    "results/methods/README.md": {
+      "bytes": 2527,
+      "sha256": "d5da75691b8f231819ed40cf8bd6f77f41c9ab83bbac1eaa030b21ffc2dffc98"
+    },
+    "results/scan/case33bw/18_25_30/ea7124157cce5bcd61e5782f37e7cfeb3ae25dcc2f396a26d1cb9809e7e770b5/bounds.npz": {
+      "bytes": 1934,
+      "sha256": "6c4d0b74a6ba8ca05c283ca1fc0956f6c37bef605e7ad38f99c2c54de863e2ee"
+    },
+    "results/scan/case33bw_plan/18_25/0470b832b88c1a314afbd42f15a7d780056c245c23bc42ed44c0fe0bba414a3d/bounds.npz": {
+      "bytes": 1602,
+      "sha256": "18321422467b5c99b7d8e780cfde43925291365dc488533099dea2e470d82f7e"
+    },
+    "results/scan/case33bw_plan/18_25/0470b832b88c1a314afbd42f15a7d780056c245c23bc42ed44c0fe0bba414a3d/region_b54763ac33ec1b0b.npz": {
+      "bytes": 141814,
+      "sha256": "42d47474e3a5cdc663a314fd940ac90895740d353d057e93bc5a264a42a706c5"
+    },
+    "results/scan/case33bw_plan/18_25_30/78ea9d3225a89602efd17c2f897b8468454a60ee22187c2ce6e26bdd3c5b5163/bounds.npz": {
+      "bytes": 1956,
+      "sha256": "1e82a212414b46d8478cd598dabfa7bf53ec9f5bc0f17df0b5f6e1f2830aec19"
+    },
+    "results/scan/case33bw_plan/18_25_30/78ea9d3225a89602efd17c2f897b8468454a60ee22187c2ce6e26bdd3c5b5163/region_067a43627f1f9094.npz": {
+      "bytes": 899236,
+      "sha256": "4f00b5504c0a1cb20d047c9702a01628491b22acf3876a8871f47638dd1491f2"
     }
   },
   "method_archive": {
@@ -1397,5 +1779,15 @@
       "results/methods/case33_18_25_30/RCUT2-t2/workers_16/run_1/solves.csv.gz",
       "results/methods/case33_18_25_30/RCUT2-t2/workers_16/run_1/snapshots/final.json.gz"
     ]
+  },
+  "row_generation_comparison": {
+    "date": "2026-10-02",
+    "figures": [
+      "results/mainline/rowgen_comparison/case33_18_25_convergence.png",
+      "results/mainline/rowgen_comparison/case33_18_25_30_convergence.png",
+      "results/mainline/rowgen_comparison/case33plan_18_25_convergence.png",
+      "results/mainline/rowgen_comparison/case33plan_18_25_30_convergence.png"
+    ],
+    "note": "Cone MISOCP before (lazy-OBBT re-solve loop, commit defa692) and after (row generation) on the same scans, one run per case, 16 workers; time limits 300 s (Case33Plan 3D 1000 s). Numbers in docs/notation.md, migration of 2026-10-02. The runs themselves are not archived."
   }
 }

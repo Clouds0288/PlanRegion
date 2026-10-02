@@ -8,8 +8,8 @@ AC 可行域 R^AC ⊆ R^SOCP。
 R：方向用单纯锥 K_k=cone(u_1..u_d) 剖分。锥内三角 K^IN_k=conv(0, v_{k,1..d})，v_{k,i} 为内域网架 x̂ 沿 u_i 的
 紧化射线顶点；x̂ 原点不可行时由原点可行的网架 y 覆盖近端，K^IN_k ⊆ R^SOCP_x̂ ∪ R^SOCP_y ⊆ R^SOCP。外界：
 Q=[v_1..v_d]，c=1ᵀQ⁻¹，网架不固定的锥 MISOCP 的上界 μ_k 给出 K^OUT_k={xi∈K_k: c@xi<=μ_k}=μ_k·K^IN_k ⊇ R^SOCP∩K_k。
-每次细分体积缺口 Δ_k=(μ_k^d-1)·vol(K^IN_k) 最大的锥，ΣΔ_k<=ε·Σvol(K^IN_k) 即认证。
-初始网架由中心射线 MISOCP 给出：懒惰 OBBT 至多 LAZY_ROUNDS 轮，现任仍未紧化时在已紧化的网架中取紧化中心射线最远者。
+每次细分体积缺口 Δ_k=(μ_k^d-1)·vol(K^IN_k) 最大的锥，ΣΔ_k<=ε·Σvol(K^IN_k) 即认证。初始网架由中心射线 MISOCP
+给出。x 自由的 MISOCP 用行生成：一次分支定界中，新现任网架的紧化行以惰性约束加入，尚未紧化的先做 OBBT。
 CUT：只割可能改变 I 的网架 X*（叶锥的 x̂、覆盖网架与锥 MISOCP 解点网架）。N^CUT_x 从 conv(K^OUT) ∩ 盒出发
 （K^OUT ⊇ R^SOCP ⊇ R^SOCP_x），SP 为顶点评分，违反量 η 最大的顶点由对偶 LP 取联合割（带该网架的 OBBT 盒与包络行）；
 连续 patience 次割的体积缩减比例 < threshold 即停滞，N^CUT_x 当作该网架的可行域（外近似，不作内域认证）。一轮 CUT
@@ -47,7 +47,6 @@ CUT_SECONDS = 30.        # 单个网架一次割循环的时限上限
 PASS_SHARE = .75         # 一轮 CUT 最多用分区剩余时间的比例，其余留给径向续跑
 CUT_ACCEPTED = ('stagnated', 'exact', 'empty')   # 计入 N^CUT 的状态（empty：N^CUT_x=∅，即分区内 R^SOCP_x=∅）
 GAP_SHARE = .1           # 一轮 CUT 中某网架使夹逼间隙下降不足 GAP_SHARE·ε 时结束本轮
-LAZY_ROUNDS = 2          # 中心射线 MISOCP 至多紧化的现任网架数
 
 
 # ---- 凸多面体几何（xi 或 kW，同一坐标系内运算） -------------------------------------------------
@@ -474,57 +473,35 @@ class Radial:
                     return dict(x=x, verts=np.array(verts), cover=y)
         return None
 
-    # 外界：x 自由锥 MISOCP 与懒惰 OBBT
-    def misocp(self, objective, rows=None, exclude=(), rounds=np.inf):
-        """x 自由 MISOCP：现任网架尚未紧化时先 OBBT 再重解（至多 rounds 轮），使上界用到它的紧化行；分区到时返回最后一轮。"""
-        while True:
-            answer = cone_misocp(self.equations, self.budget, self.bounds, objective, rows=rows, exclude=exclude,
-                                 time_limit=self.remaining(self.settings.mip_seconds),
-                                 mip_gap=0. if rows is None else self.settings.mip_gap, threads=self.settings.threads)
-            if (answer['status'] == GRB.INFEASIBLE or answer['x'] is None or answer['x'] in self.equations.boxes
-                    or rounds == 0 or self.monitor.clock() >= self.deadline):
-                return answer
-            self.step('lazy', f"懒惰 OBBT：x 自由 MISOCP 的现任网架 {self.label(answer['x'])} 尚未紧化（当前上界 "
-                              f"{answer['bound']:.4f}）→ 先紧化再重解", p=answer['point'], scheme=self.label(answer['x']))
-            self.tighten(answer['x'])
-            rounds -= 1
+    # 外界：x 自由锥 MISOCP（行生成）
+    def misocp(self, objective, rows=None, exclude=()):
+        """x 自由 MISOCP：一次分支定界，新现任网架尚未紧化时先 OBBT，其紧化行以惰性约束加入（model.cone_misocp）。"""
+        return cone_misocp(self.equations, self.budget, self.bounds, objective, tighten=self.incumbent, rows=rows,
+                           exclude=exclude, time_limit=self.remaining(self.settings.mip_seconds),
+                           mip_gap=0. if rows is None else self.settings.mip_gap, threads=self.settings.threads)
+
+    def incumbent(self, x, point, bound):
+        """行生成回调：记一步，并确保分支定界的新现任网架已紧化（必要时 OBBT）。"""
+        self.step('lazy', f'行生成：分支定界的现任网架 {self.label(x)} 尚无紧化行（当前上界 {bound:.4f}）→ '
+                          '紧化并以惰性约束加入，分支定界继续', p=point, scheme=self.label(x))
+        self.tighten(x)
 
     def initial(self):
-        """中心射线选初始网架；胜出方案原点不可行时以 no-good 排除后重解。返回 (首个胜出方案, 原点可行的胜出方案)。"""
+        """中心射线 MISOCP（x 自由，ξ_1=…=ξ_d）选初始网架：胜出方案原点不可行时以 no-good 排除后重解。
+        返回 (首个胜出方案, 原点可行的胜出方案)。"""
         excluded = []
         while True:
-            # 1. 中心射线 MISOCP（x 自由，ξ_1=…=ξ_d）给出候选，懒惰 OBBT 至多 LAZY_ROUNDS 轮
-            answer = self.misocp(np.ones(self.d), exclude=excluded, rounds=LAZY_ROUNDS)
+            answer = self.misocp(np.ones(self.d), exclude=excluded)
             if answer['x'] is None:
                 self.remaining(np.inf)
                 raise RuntimeError(f'中心射线 MISOCP 没有可行网架（status={answer["status"]}）')
-            x, point, how = answer['x'], answer['point'], f"上界 {answer['bound']:.3f}"
-            # 2. 候选仍未紧化：在已紧化、未排除的网架中取紧化中心射线最远者（中心射线只选网架，上界不进证书）
-            if x not in self.equations.boxes:
-                x, point = self.farthest([y for y in self.equations.boxes if y not in excluded])
-                how = f"现任 {self.label(answer['x'])} 未紧化，取已紧化网架中中心射线最远者"
-            self.step('center', f"中心射线：max Σξ  s.t. ξ_1=…=ξ_d → 网架 {self.label(x)}，{how}"
-                      +(f'（已排除 {len(excluded)} 个原点不可行网架）' if excluded else ''),
+            x, point = answer['x'], answer['point']
+            self.step('center', f"中心射线 MISOCP：max Σξ  s.t. ξ_1=…=ξ_d，网架自由 → 网架 {self.label(x)}，"
+                      f"上界 {answer['bound']:.3f}"+(f'（已排除 {len(excluded)} 个原点不可行网架）' if excluded else ''),
                       p=point, vertices=np.vstack([np.zeros(self.d), point]), scheme=self.label(x))
-            # 3. 原点认证：不可行则排除后重解
             if self.origin_feasible(x):
                 return (excluded or [x])[0], x
             excluded.append(x)
-
-    def farthest(self, schemes):
-        """紧化中心射线（固定网架的射线 SOCP，朝 bounds 方向）最远的网架与其射线点（kW）；每条射线记一步。"""
-        reach = {}
-        for y in schemes:
-            answer = self.solved(lambda limit: ray_support(self.equations, self.budget, np.asarray(y), np.zeros(self.d),
-                                                           self.bounds, threads=self.settings.threads, time_limit=limit))
-            self.step('ray', f'中心射线候选：固定网架 {self.label(y)}，max t  s.t. t·(1,…,1) 可行（紧化 SOCP）'
-                      +(' → 无解' if answer is None else f" → t={answer['ray_fraction']:.3f}"),
-                      **({} if answer is None else dict(p=answer['p'], vertices=np.vstack([np.zeros(self.d), answer['p']]),
-                                                        scheme=self.label(y))))
-            if answer is not None:
-                reach[y] = answer
-        x = max(reach, key=lambda y: reach[y]['ray_fraction'])
-        return x, reach[x]['p']
 
     def new_cone(self, keys, inner, parent=None):
         cone = Cone(self.next_id, tuple(keys), inner['x'], inner['verts'], inner['cover'])

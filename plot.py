@@ -10,7 +10,7 @@ REFERENCE = '#c6dbef'   # 对比面板中参考可行的格
 CUT, RAY, NETWORK = '#8055a4', '#b8860b', '#555555'
 STEP_STYLE = {   # 步骤几何：标记、颜色、主图短标签（完整说明在步骤栏）
     'center': ('D', GLOBAL, 'max Σξ'), 'origin': ('o', NETWORK, 'SP  p=0'), 'ray': ('o', RAY, 'max t'),
-    'near': ('s', RAY, '反向 max t'), 'cone': ('D', GLOBAL, 'max c·ξ → μ'), 'lazy': ('P', GLOBAL, '现任未紧化 → OBBT'),
+    'near': ('s', RAY, '反向 max t'), 'cone': ('D', GLOBAL, 'max c·ξ → μ'), 'lazy': ('P', GLOBAL, '现任网架加入紧化行'),
     'sp': ('x', SP, 'min η'), 'cut': ('X', CUT, '取割')}
 
 

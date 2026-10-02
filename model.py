@@ -140,16 +140,16 @@ class GridPhysics:
                      'ell': (None, self.ellmax), 'v': (self.vmin, self.vmax)}[name]
         return (0. if low is None else low[key]), high[key]
 
-    def _tighten(self, model, x, operation, scheme):
+    def _tighten(self, add, x, operation, scheme):
         """方案的盒约束与反向锥包络割 u_L*ell+ell_L*u-u_L*ell_L <= (P_L+P_U)P-P_L*P_U+(Q_L+Q_U)Q-Q_L*Q_U+裕量
-        （另一条取 u_U、ell_U）；每行右端加 M*H(x)，H 为 x 与该方案的汉明距离，M 为该行在全局界上的最大违反量。"""
+        （另一条取 u_U、ell_U）；每行右端加 M*H(x)，H 为 x 与该方案的汉明距离，M 为该行在全局界上的最大违反量。
+        add 为加约束的方法：建模时 model.addConstr，行生成回调中 model.cbLazy。"""
         box = self.boxes[scheme]
-        model.Params.BarQCPConvTol = OBBT_CONV_TOL
         hamming = gp.quicksum(1-x[key] if bit else x[key] for key, bit in zip(self.keys, scheme))
 
         def row(terms, rhs):
             worst = sum(max(c*low, c*high) for c, _, (low, high) in terms)-rhs
-            model.addConstr(gp.quicksum(c*w for c, w, _ in terms) <= rhs+max(worst, 0.)*hamming)
+            add(gp.quicksum(c*w for c, w, _ in terms) <= rhs+max(worst, 0.)*hamming)
         for (name, key), (low, high) in box.items():
             row([(-1., getattr(operation, name)[key], self._limits(name, key))], -low)
             row([(1., getattr(operation, name)[key], self._limits(name, key))], high)
@@ -238,7 +238,8 @@ class GridPhysics:
                                  *(v[i] for i in net.nodes), *plus.values(), *minus.values()])
         operation = SimpleNamespace(P=P, Q=Q, ell=ell, v=v, plus=plus, minus=minus, state=state, cones=cones)
         if scheme is not None and tuple(scheme) in self.boxes:
-            self._tighten(model, x, operation, tuple(scheme))
+            model.Params.BarQCPConvTol = OBBT_CONV_TOL
+            self._tighten(model.addConstr, x, operation, tuple(scheme))
         return operation
 
 
@@ -480,20 +481,19 @@ class SubProblem:
         return cut
 
 
-def cone_misocp(equations, budget, bounds, objective, *, rows=None, exclude=(), time_limit, mip_gap=0.,
+def cone_misocp(equations, budget, bounds, objective, *, tighten, rows=None, exclude=(), time_limit, mip_gap=0.,
                 threads=DEFAULT_SOLVER_THREADS):
-    """x 自由的锥 MISOCP：在 xi=p/bounds 上 max objective@xi，返回全局上界与现任解。
+    """x 自由的锥 MISOCP（行生成）：在 xi=p/bounds 上 max objective@xi，一次分支定界返回全局上界与现任解。
 
-    分支定界自己选网架，不枚举方案；已紧化方案的行按汉明距离提升，对全部 x 有效，未紧化方案为纯 SOCP，
-    故 ObjBound 在任何终止状态下都是 R 在该锥上的有效上界。
+    分支定界自己选网架，不枚举方案。模型不预先带紧化行：每找到一个新的现任网架，若其盒约束与反向锥包络行尚不在模型中，
+    先调用 tighten(x, 现任功率 kW, 当前上界) 确保该网架已紧化，再把这些行（按汉明距离提升，对全部 x 有效）作为惰性约束
+    加入，分支定界继续。没有行的网架为纯 SOCP，故 ObjBound 在任何终止状态下都是 R 在该锥上的有效上界；达到 mip_gap 时
+    现任网架都带行。tighten 抛出的异常（分区到时、取消）在求解结束后重新抛出。
     """
-    # 1. 完整 MP：全部 0/1 选型、拓扑、预算与运行约束，x 不固定
+    # 1. 完整 MP：全部 0/1 选型、拓扑、预算与运行约束，x 不固定；不预先带紧化行
     problem = MasterProblem(equations, budget=budget, threads=threads)
     with problem.model as model:
-        # 2. 全部已紧化方案的盒约束与反向锥包络行，右端加 M*H(x)
         choice = dict(zip(equations.keys, problem.x.tolist()))
-        for scheme in equations.boxes:
-            equations._tighten(model, choice, problem.operation, scheme)
         model.Params.BarQCPConvTol = CONE_CONV_TOL
         xi = [p*(1./float(b)) for p, b in zip(problem.loads.values(), bounds)]
 
@@ -509,9 +509,29 @@ def cone_misocp(equations, budget, bounds, objective, *, rows=None, exclude=(), 
             problem.power.UB = bounds
         model.setObjective(gp.quicksum(float(a)*v for a, v in zip(objective, xi)), GRB.MAXIMIZE)
 
+        # 3. 行生成：新现任网架尚无紧化行时先紧化，再把它的行作为惰性约束加入
+        added, errors = set(), []
+        variables, power = problem.x.tolist(), problem.power.tolist()
+
+        def callback(solver, where):
+            if where != GRB.Callback.MIPSOL or errors:
+                return
+            x = tuple(int(round(v)) for v in solver.cbGetSolution(variables))
+            if x in added:
+                return
+            try:
+                tighten(x, np.asarray(solver.cbGetSolution(power)), solver.cbGet(GRB.Callback.MIPSOL_OBJBND))
+                equations._tighten(solver.cbLazy, choice, problem.operation, x)
+                added.add(x)
+            except BaseException as error:
+                errors.append(error)
+                solver.terminate()
+
         # 4. 解到相对间隙 mip_gap 或时限
-        model.Params.MIPGap, model.Params.TimeLimit = mip_gap, time_limit
-        model.optimize()
+        model.Params.MIPGap, model.Params.TimeLimit, model.Params.LazyConstraints = mip_gap, time_limit, 1
+        model.optimize(callback)
+        if errors:
+            raise errors[0]
         if model.Status == GRB.INTERRUPTED:
             raise KeyboardInterrupt
 

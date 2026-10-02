@@ -16,7 +16,7 @@ Python 依赖见 `requirements.txt`，测试另装 `requirements-dev.txt`；需�
 
 功率空间按符号分成 2^d 个分区（正为负荷、负为光伏），每个分区一个子进程并行，坐标为幅值 u=|p|，归一化为 xi=u/bounds∈[0,1]^d。
 
-1. R：方向用单纯锥 K_k 剖分。锥内三角 K^IN_k=conv(0, v_{k,1..d})，v_{k,i} 是内域网架沿生成方向的 OBBT 紧化射线顶点（该网架可行集 R^SOCP_x 的边界点）；网架不固定的锥 MISOCP 给出上界 μ_k，锥外块 K^OUT_k=μ_k·K^IN_k∩盒。每次细分体积缺口 (μ_k^d-1)·vol(K^IN_k) 最大的锥。初始网架由中心射线 MISOCP 选出，其懒惰 OBBT 至多 2 轮，现任仍未紧化时在已紧化网架中取中心射线最远者。
+1. R：方向用单纯锥 K_k 剖分。锥内三角 K^IN_k=conv(0, v_{k,1..d})，v_{k,i} 是内域网架沿生成方向的 OBBT 紧化射线顶点（该网架可行集 R^SOCP_x 的边界点）；网架不固定的锥 MISOCP 给出上界 μ_k，锥外块 K^OUT_k=μ_k·K^IN_k∩盒。每次细分体积缺口 (μ_k^d-1)·vol(K^IN_k) 最大的锥。初始网架由中心射线 MISOCP 选出。网架不固定的 MISOCP 不枚举方案，用行生成：一次分支定界中，每个新出现的现任网架若还没有紧化约束，就先对它做 OBBT，再把它的盒约束与反向锥包络行作为惰性约束加入，搜索继续而不重启。
 2. A 阶段：R 先做到放宽目标 ε_A=0.15（最多用分区时限的 25%），发现网架。
 3. CUT：只割可能改变 **I** 的网架（叶锥的内域网架、覆盖网架与锥 MISOCP 解点网架）。N^CUT_x 从 conv(**K**^OUT)∩盒出发，SP 为其顶点评分，违反量最大的顶点取联合割；连续 3 次割掉的体积都小于 1% 即停滞，N^CUT_x 当作该网架的可行域。每割完一个网架看夹逼间隙：已达 ε，或这个网架只让间隙下降不到 0.1ε，就结束这一轮。
 4. A+：续跑 R 到 ε=d·tau，每次锥决策后先割新出现的网架。结果内域 **I**=(**K**^IN ∪ **N**^CUT)∩**K**^OUT，vol(**K**^OUT)-vol(**I**)<=ε·vol(**I**) 即该分区认证。
@@ -39,7 +39,7 @@ N^CUT_x 是网架可行域的外近似，所以 RCUT 的结果内域 **I** 是�
 python -X utf8 main.py --case case33 --dimension 2
 python -X utf8 main.py --case case33 --dimension 3 --output results/mainline/new_run
 python -X utf8 main.py --case case33plan --dimension 3 --seconds 1000 --output results/plan/run_1
-python -X utf8 main.py --convergence results/plan/run_1/mode_1/case33plan_18_25_30.json.gz results/plan/run_2/mode_1/case33plan_18_25_30.json.gz
+python -X utf8 main.py --convergence results/mainline/mode_1/case33plan_18_25_30.json.gz results/plan/run_1/mode_1/case33plan_18_25_30.json.gz
 ```
 
 构域默认共享 300 秒总时限（`main.py` 的 `CASE_TIME_LIMIT`，`--seconds` 可改），`WORKERS=16` 个分区进程并行；事后扫描另计时。`--no-ui` 不开实时窗口，`--no-scan` 只构域。扫描格数默认二维 160×160、三维 80³（`--divisions`）。记录写入 `<输出目录>/mode_1/<案例>_<节点>.json.gz`，逐格对比写入旁边的 `_comparison/`。`--convergence` 把同一算例多次运行的收敛过程（各分区夹逼间隙、内域相对 AC 的 MR/FR 随时间）画成一张图，存于各运行目录的公共上级。
@@ -64,19 +64,24 @@ python -X utf8 monitor.py A.json.gz --compare B.json.gz
 |---|---|
 | Case33 二维 RCUT 主线（含 AC/SOCP 逐格对比） | `results/mainline/mode_1/case33_18_25.json.gz`、`case33_18_25_comparison/` |
 | Case33 三维 RCUT 主线（逐格对比只存 NPZ 与摘要） | `results/mainline/mode_1/case33_18_25_30.json.gz`、`case33_18_25_30_comparison/` |
+| Case33Plan 二维、三维 RCUT 主线（同上） | `results/mainline/mode_1/case33plan_18_25.json.gz`、`case33plan_18_25_30.json.gz` 及其 `_comparison/` |
+| 四个主线运行的收敛过程图 | `results/mainline/<案例>_<节点>_convergence.png` |
+| 行生成与原懒惰 OBBT 重解循环的对照图（同扫描，每算例一次运行） | `results/mainline/rowgen_comparison/` |
 | RCUT 的方法对照运行（停滞阈值 0.5%、1%、2%，Case33 二维、三维，300 s） | `results/methods/`，说明见其 README |
-| Case33 二维 160²（及其扩界）与三维 80³ 配对 AC/SOCP 参考扫描 | `results/scan/case33bw/` |
+| Case33、Case33Plan 二维与三维的配对 AC/SOCP 参考扫描及 SOCP 全局界 | `results/scan/case33bw/`、`results/scan/case33bw_plan/` |
 
-主线运行（300 s，16 进程，内域相对 AC 扫描）：
+主线运行（16 进程，内域相对 AC 扫描）：
 
-| 案例 | 认证分区 | 最慢获证分区 | 内域 FR / MR | 外域 FR / MR |
-|---|---|---|---|---|
-| Case33 二维 (18,25) | 4/4 | 20.2 s | 0.947% / 0.031% | 1.360% / 0% |
-| Case33 三维 (18,25,30) | 7/8（--+ 到时限，间隙 1.82%） | 255.7 s | 4.022% / 0.011% | 5.464% / 0% |
+| 案例 | 时限 | 认证分区 | 最慢获证分区 | 内域 FR / MR | 外域 FR / MR |
+|---|---|---|---|---|---|
+| Case33 二维 (18,25) | 300 s | 4/4 | 13.2 s | 0.947% / 0.080% | 1.544% / 0% |
+| Case33 三维 (18,25,30) | 300 s | 8/8 | 209.2 s | 4.282% / 0.019% | 5.596% / 0% |
+| Case33Plan 二维 (18,25) | 300 s | 4/4 | 90.8 s | 0.866% / 0.026% | 1.410% / 0% |
+| Case33Plan 三维 (18,25,30) | 1000 s | 6/8（++- 间隙 2.75%、--+ 7.46% 到时限） | 1004.3 s | 3.884% / 0.284% | 6.935% / 0% |
 
-二维、三维均为当前主线（吸收五项改动：按间隙结束 CUT、只割叶锥相关网架、从 conv(**K**^OUT) 出发、限制中心射线懒惰 OBBT、OBBT 线程随剩余分区分配）的运行，扫描网格随外域扩为 161×170 与 142×179×116。
+四个运行都是 `main.py` 默认设置的完整流程（构域、扫描、校验），代码为当前主线（锥 MISOCP 行生成）。扫描框为 SOCP 全局界与外域范围的并：Case33 为 161×170 与 142×179×116 格（三维 SOCP 参考 1 格未决，不计入），Case33Plan 为 161×161 与 83×80×80 格。内域多余格大多 SOCP 可行（Case33 二维 156 格中 140 格、三维 6530 中 5853；Case33Plan 二维 102 中 78、三维 2343 中 1787），是 SOCP 松弛相对 AC 的残余，主要在含光伏反送的分区；其余来自 **N**^CUT 的外近似与边界格点离散。RCUT 的 **I** 因此是外侧估计：Case33 中它完整包含 RB 的认证内域，只多出一层 1–2 格厚的边界壳（见 `results/methods/README.md`）。Case33Plan 三维的 165 个遗漏格中 155 个在两个到时限的分区（--+ 107、++- 48），即尚未闭合的夹逼间隙。
 
-两次都是 `main.py` 默认设置的完整流程（构域、扫描、校验）；扫描框为 SOCP 全局界与外包络范围的并，三维为 97×115×94 格，SOCP 参考只有 1 格未决（AC 不可行，不计入）。这次运行时机器后台负载较高，分区耗时比此前同代码的运行长约 20–40%，三维 --+ 分区到时限时的间隙因此较大（此前同算法 1.77%，内域 FR 4.279%）。内域多余格主要在含光伏反送的分区：二维 -- 123、-+ 35 格；三维 --- 2368、-+- 1493、+-- 1157、--+ 992 格，纯负荷分区 +++、+-+ 几乎没有。RCUT 的 **I** 含 **N**^CUT 外近似，FR 是外侧估计误差（二维 158 个多余格中 123 个来自 SOCP 松弛残余、在 **K**^IN 内）：它完整包含 RB 的认证内域，只多出一层 1–2 格厚的边界壳（见 `results/methods/README.md`）。
+行生成相对原懒惰 OBBT 重解循环（commit defa692）的对照：同扫描、每算例一次运行，Case33 三维 7/8→8/8，Case33Plan 二维 3/4→4/4、三维 2/8→6/8，各分区合计的 MISOCP 用时下降 63%–83%；明细见 docs/notation.md 的迁移记录，对照图见 `results/mainline/rowgen_comparison/`。
 
 R、H、RB、RCUT2 的方法对照运行与汇总报告，以及旧主线（逐网架顺序构域 + 完整物理查漏）、支持面认证实验、径向夹逼实验的代码与结果保存在 tag `results-methods-v1` 和 `mainline-sequential-v1` 中，需用对应 tag 的前端回放。
 
