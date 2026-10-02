@@ -20,6 +20,7 @@ DEFAULT_SOLVER_THREADS = 20
 MP_TIME_LIMIT = 20.
 SP_TIME_LIMIT = {'linear': 5., 'socp': 10.}
 PLANNING_TOL = 1e-8
+BOUND_PAD = 1e-10        # 支撑上界的相对外扩：只放宽可靠上界，不放宽物理门槛
 CONE_CONV_TOL = 1e-6     # x 自由锥 MISOCP 的 barrier 收敛容差：带全部已紧化方案的提升行时更严的判据使节点松弛数值失败
 OBBT_ROUNDS = 2          # 每个方案的 OBBT 轮数
 OBBT_PAD = 1e-6          # OBBT 端点外扩（标幺），吸收最优值误差
@@ -515,15 +516,73 @@ def cone_misocp(equations, budget, bounds, objective, *, rows=None, exclude=(), 
         if model.Status == GRB.INTERRUPTED:
             raise KeyboardInterrupt
 
-        # 5. 上界（尚无界时为 inf）与现任解：方案元组、功率 kW
+        # 5. 上界（尚无界时为 inf）与现任解：方案元组、功率 kW；已紧化方案的现任解代回原约束审计通过即 audited
         try:
             bound = float(model.ObjBound)
         except gp.GurobiError:
             bound = np.inf
-        found = model.SolCount > 0
-        return dict(status=model.Status, bound=bound if abs(bound) < GRB.INFINITY else np.inf,
-                    x=tuple(int(v) for v in np.rint(problem.x.X)) if found else None,
-                    point=np.asarray(problem.power.X, float) if found else None)
+        x = tuple(int(v) for v in np.rint(problem.x.X)) if model.SolCount else None
+        return dict(status=model.Status, bound=bound if abs(bound) < GRB.INFINITY else np.inf, x=x,
+                    point=None if x is None else np.asarray(problem.power.X, float),
+                    audited=x in equations.boxes and audit_incumbent(problem, np.asarray(x)) <= PLANNING_TOL)
+
+
+def audit_incumbent(problem, x):
+    """解代回模型的全部原约束：拓扑与预算、变量界、整数性、线性行与二次行、原 Lorentz 范数；不另求解、不修补。
+    返回最大违反量。"""
+    model = problem.model
+    variables = model.getVars()
+    values = np.asarray(model.getAttr('X', variables))
+    lower, upper = np.asarray(model.getAttr('LB', variables)), np.asarray(model.getAttr('UB', variables))
+    integer = np.asarray(model.getAttr('VType', variables)) != GRB.CONTINUOUS
+    residual = [float(model.MaxVio), float(np.max(lower-values)), float(np.max(values-upper)),
+                float(np.max(np.abs(problem.x.X-x))), float(np.max(np.abs(values[integer]-np.rint(values[integer]))))]
+    rows = model.getConstrs()
+    errors = model.getA()@values-np.asarray(model.getAttr('RHS', rows))
+    senses = np.asarray(model.getAttr('Sense', rows))
+    residual.append(float(np.max(np.where(senses == '=', np.abs(errors), np.where(senses == '<', errors, -errors)))))
+    for row in model.getQConstrs():
+        error = model.getQCRow(row).getValue()-row.QCRHS
+        residual.append(abs(error) if row.QCSense == '=' else error if row.QCSense == '<' else -error)
+    for head, tail in problem.operation.cones:
+        residual.append(float(np.linalg.norm([item.getValue() for item in tail])-head.getValue()))
+    return max(residual)
+
+
+class SupportOracle:
+    """固定方案 x 的完整 MP（含 x 的 OBBT 盒与包络行）加分区盒 0<=u<=bounds：沿单位法向 a 求支撑值 max a@xi。"""
+
+    def __init__(self, equations, x, bounds, budget, threads):
+        self.x, self.bounds = np.asarray(x, int), np.asarray(bounds, float)
+        self.problem = MasterProblem(equations, budget=budget, fixed_plan=equations.network.decode_plan(self.x),
+                                     threads=threads)
+        self.problem.power.UB = self.bounds
+        model = self.problem.model
+        model.Params.NumericFocus, model.Params.BarHomogeneous = 3, 1   # 首次求解即固定，失败后不改精度
+        model.Params.Aggregate, model.Params.ScaleFlag = 0, 0
+
+    def solve(self, normal, time_limit):
+        """返回 lb/ub/point/status/normal（xi 坐标）。"""
+        problem, model = self.problem, self.problem.model
+        # 1. 目标 Σ a_i·u_i/b_i：ObjVal、ObjBound 即 xi 坐标下的支撑值
+        normal = np.asarray(normal, float)/np.linalg.norm(normal)
+        model.setObjective(gp.quicksum(float(a/b)*p for a, b, p in zip(normal, self.bounds, problem.loads.values())),
+                           GRB.MAXIMIZE)
+        model.Params.TimeLimit = time_limit
+        model.optimize()
+        if model.Status == GRB.INTERRUPTED:
+            raise KeyboardInterrupt
+        # 2. 只接受 OPTIMAL：其他状态既不给上界，也不给认证点
+        if model.Status != GRB.OPTIMAL:
+            return dict(lb=-np.inf, ub=np.inf, point=None, status=model.Status, normal=normal)
+        # 3. 上界取 ObjBound 外扩 BOUND_PAD；解代回原约束审计通过才是认证点
+        bound = float(model.ObjBound)
+        ub = float(np.nextafter(bound+BOUND_PAD*(1.+abs(bound)), np.inf))
+        point = problem.power.X/self.bounds if audit_incumbent(problem, self.x) <= PLANNING_TOL else None
+        lb = -np.inf if point is None else float(normal@point)
+        if lb > ub:
+            raise RuntimeError('Audited support incumbent exceeds the solver upper bound')
+        return dict(lb=lb, ub=ub, point=point, status=model.Status, normal=normal)
 
 
 LOAD_PF = .95

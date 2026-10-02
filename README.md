@@ -1,6 +1,6 @@
 # PlanRegion
 
-构建配电网二维／三维功率可行域（正负功率、符号分区），独立 AC/SOCP 扫描校验，原生前端实时显示与回放。主线为方法 RCUT：径向锥夹逼（R）做全局搜索与外界，主线割平面（CUT）逐网架构域。
+构建配电网二维／三维功率可行域（正负功率、符号分区），独立 AC/SOCP 扫描校验，原生前端实时显示与回放。本分支 method-RB 为方法 RB：径向锥夹逼（R）做全局搜索与外界，逐网架支撑查询（B）认证各网架的内多面体。
 
 ## 环境
 
@@ -18,10 +18,10 @@ Python 依赖见 `requirements.txt`，测试另装 `requirements-dev.txt`；需�
 
 1. R：方向用单纯锥剖分。每个锥的内域 T=conv(0, v_1..v_d)，v_i 是内域网架沿生成方向的 OBBT 紧化射线顶点；x 自由的锥 MISOCP 给出上界 μ̄，外界 O=μ̄·T。每次细分体积缺口 (μ̄^d-1)·vol(T) 最大的锥。
 2. A 阶段：R 先做到放宽目标 ε_A=0.15（最多用分区时限的 25%），发现网架。
-3. CUT：对出现过的每个网架 x，从分区盒出发做主线割平面：SP 为 N_x 顶点评分，违反量最大的顶点取联合割；连续 3 次割掉的体积都小于 1% 即停滞，N_x 当作该网架的可行域。
-4. A+：续跑 R 到 ε=d·tau，新出现的网架也先割。内域 I=(I_R ∪ ∪N_x)∩O_R，vol(O_R∩盒)-vol(I)<=ε·vol(I) 即该分区认证。
+3. B：对出现过的每个网架 x，以径向阶段的认证点（射线端点、零接入点、审计过的现任解）为 V_x，内多面体 P_x=conv(V_x)。P_x 的每个非分区边界面用固定 x 的支撑 SOCP 的可靠上界认证，上界同时裁剪该网架的支撑外界 O_x；审计过的越界解补进 V_x。网架在全部面认证或 vol(O_x)/vol(P_x)-1<=ε/2 时停止。
+4. A+：续跑 R 到 ε=d·tau。内域 I=I_R ∪ ∪P_x，vol(O_R∩盒)-vol(I)<=ε·vol(I) 即该分区认证。
 
-N_x 是网架可行域的外近似，所以 RCUT 的内域是外侧估计，不是认证内域；外界 O_R 由 MISOCP 上界给出，是有效外界。超时保留已有证据，只有全部分区获证才报告 certified。符号与字段约定见 [docs/notation.md](docs/notation.md)。
+P_x 由认证点张成，RB 的内域是认证内域；外界 O_R 由 MISOCP 上界给出，是有效外界。超时保留已有证据，只有全部分区获证才报告 certified。符号与字段约定见 [docs/notation.md](docs/notation.md)。
 
 ## 计算
 
@@ -49,7 +49,7 @@ python -X utf8 monitor.py results/mainline/mode_1/case33_18_25_30.json.gz
 python -X utf8 monitor.py A.json.gz --compare B.json.gz
 ```
 
-窗口分三部分：总图显示外包络 O_R 与内域（二维为并集，三维为各锥远端面片），网架面板显示各网架的 N_x、当前割与 SP 评分点，校验面板显示最终 AC/SOCP 扫描对比。支持暂停、单步、逐割跳转、拖动进度、网架翻页和三维旋转；计算中的暂停与单步同时作用于各分区子进程。
+窗口分三部分：总图显示外包络 O_R 与内域（二维为并集，三维为各锥远端面片），网架面板显示各网架的 O_x（灰）、P_x（绿）、当前支撑面与支撑点，校验面板显示最终 AC/SOCP 扫描对比。支持暂停、单步、逐割跳转、拖动进度、网架翻页和三维旋转；计算中的暂停与单步同时作用于各分区子进程。
 
 ## 已保存结果
 
@@ -66,8 +66,8 @@ python -X utf8 monitor.py A.json.gz --compare B.json.gz
 
 | 分支 / tag | 内容 |
 |---|---|
-| `main`、`method-RCUT` | 方法 RCUT 主线（本分支） |
-| `method-RB` | 方法 RB 主线：R + 逐网架支撑查询，内域为认证内域 |
+| `main`、`method-RCUT` | 方法 RCUT 主线：R + 主线割平面，内域为外侧估计 |
+| `method-RB` | 方法 RB 主线（本分支）：R + 逐网架支撑查询，内域为认证内域 |
 | `method-<方法>-v1` | 方法对照实验中各方法的代码版本 |
 | `results-methods-v1` | 方法对照归档 |
 | `mainline-sequential-v1` | 旧主线 |
@@ -87,8 +87,8 @@ python -X utf8 vertify.py results/mainline/mode_1/case33_18_25.json.gz --workers
 | 文件 | 职责 |
 |---|---|
 | `main.py` | 参数、计算与回放入口 |
-| `model.py` | 物理模型、OBBT 紧化、SP 与联合割、锥 MISOCP |
-| `region.py` | 径向锥夹逼、逐网架割平面、分区并行 |
+| `model.py` | 物理模型、OBBT 紧化、SP 与联合割、锥 MISOCP、固定方案支撑查询 |
+| `region.py` | 径向锥夹逼、逐网架支撑查询、分区并行 |
 | `monitor.py`、`plot.py` | 原生前端、回放与三维并集测度 |
 | `vertify.py` | 独立 AC/SOCP 参考、缓存、结果比较 |
 | `Network/` | FourBus、当前 Case33 与原始数据 |

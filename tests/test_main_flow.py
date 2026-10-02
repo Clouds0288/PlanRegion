@@ -1,4 +1,4 @@
-"""RCUT 主线：锥几何与夹逼测度、细分与停滞规则、带 OBBT 紧化行的割平面循环，以及一个分区的端到端构域。"""
+"""RB 主线：锥几何与夹逼测度、细分规则、面判据几何、网架支撑认证与一轮 B，以及一个分区的端到端构域。"""
 from collections import Counter
 from types import SimpleNamespace
 
@@ -7,18 +7,17 @@ import pytest
 from threadpoolctl import threadpool_limits
 
 import main
-from model import new_model
 from monitor import RunMonitor
 from Network.case33bw import Case33, CURRENT_LIMIT
-from region import (CUT_ACCEPTED, Cone, Cutting, Radial, box_vertices, build_partition, clip_box, cone_outer,
-                    contains, halfspaces, piece, polytope_volume, sandwich, stagnated)
+from region import (CERTIFIED_FACES, Cone, Network, Radial, Support, allowed_offsets, boundary_faces, box_vertices,
+                    build_partition, chebyshev_center, choose_criterion, clip_box, cone_outer, contains, face_measures,
+                    halfspaces, piece, polytope_volume, sandwich)
 
 
 def settings(d):
     return SimpleNamespace(threads=1, obbt_workers=1, tau=main.REGION_TAU, discovery_eps=main.DISCOVERY_EPS,
                            discovery_share=main.DISCOVERY_SHARE, mip_seconds=main.MIP_SECONDS, mip_gap=main.MIP_GAP,
-                           min_width=main.MIN_WIDTH[d], max_cones=main.MAX_CONES[d], threshold=main.CUT_THRESHOLD,
-                           patience=main.CUT_PATIENCE, point_tol=main.POINT_TOL)
+                           min_width=main.MIN_WIDTH[d], max_cones=main.MAX_CONES[d], network_eps=d*main.REGION_TAU/2.)
 
 
 def radial(code, seconds=120.):
@@ -29,6 +28,11 @@ def radial(code, seconds=120.):
                   settings(len(code)))
     part.deadline = monitor.clock()+seconds
     return part
+
+
+def support(normal, ub, point):
+    normal = np.asarray(normal, float)
+    return dict(lb=-np.inf if point is None else float(normal@point), ub=ub, point=point, status=2, normal=normal)
 
 
 def test_cone_outer_and_sandwich_clip_network_sets_to_the_outer_bound():
@@ -46,13 +50,6 @@ def test_cone_outer_and_sandwich_clip_network_sets_to_the_outer_bound():
         assert inner == pytest.approx(polytope_volume(np.vstack([np.zeros(d), V])))
         assert len(piece(box_vertices(d)+2., U, halfspace)) == 0
         np.testing.assert_allclose(clip_box(cone_outer(U, None)).max(axis=0), np.ones(d))
-
-
-def test_stagnation_needs_patience_consecutive_small_cuts():
-    assert stagnated([.5, .3, .001, .005, .009], .01, 3)
-    assert not stagnated([.5, .001, .02, .005, .009], .01, 3)   # 中间一次 >= threshold 重新计数
-    assert not stagnated([.001, .001], .01, 3)
-    assert not stagnated([.5, .3, .01, .005, .009], .01, 3)     # 等于 threshold 不算小割（同主线）
 
 
 def test_split_options_star_edge_and_longest_edge_midpoint():
@@ -74,33 +71,55 @@ def test_split_options_star_edge_and_longest_edge_midpoint():
     assert len(edge) == 2 and {keys[2] for keys in edge} == {2}
 
 
-def test_cut_loop_carries_obbt_rows_and_keeps_certified_ray_points():
+def test_face_criteria_boundary_faces_measures_and_center():
+    corner = np.array([[0., 0.], [.5, 0.], [.5, .5], [0., .5]])
+    faces = halfspaces(corner)
+    boundary = boundary_faces(faces)
+    assert boundary.sum() == 2                                      # xi_1>=0、xi_2>=0 由分区盒认证
+    assert choose_criterion(faces, boundary) == 'origin'            # 原点在 P_x 上且离两个非边界面 0.5
+    np.testing.assert_allclose(sorted(allowed_offsets(faces, 'origin', None, .005)[~boundary]), [.5/.995]*2)
+    np.testing.assert_allclose(face_measures(corner, faces), .5)
+    inside = halfspaces(corner+.2)
+    center = chebyshev_center(inside)
+    np.testing.assert_allclose(center, [.45, .45])
+    assert choose_criterion(inside, boundary_faces(inside)) == 'center'
+    upper = inside[np.argmax(inside[:, 0]), :]                      # 面 xi_1<=0.7：β'=β+tau·(β-n@c)
+    assert allowed_offsets(upper[None], 'center', center, .005)[0] == pytest.approx(.7+.005*.25)
+
+
+def test_network_certifies_faces_clips_its_outer_and_grows_with_violating_points():
+    corner = np.array([[0., 0.], [.5, 0.], [.5, .5], [0., .5]])
+    network = Network((0,), 'x', corner, 1., 2, main.REGION_TAU, .01)
+    assert list(network.face_status).count('BOUNDARY') == 2 and list(network.face_status).count('PENDING') == 2
+    for _ in range(2):   # 两个非边界面的支撑上界恰为 β：面认证，O_x 被裁到 P_x
+        normal = network.next_normal()
+        network.add(normal, support(normal, .5, .5*np.abs(normal)))
+    assert network.status == 'certified' and np.isin(network.face_status, CERTIFIED_FACES).all()
+    assert polytope_volume(network.outer) == pytest.approx(.25) and network.ratio() == pytest.approx(0.)
+    grown = Network((1,), 'y', corner, 1., 2, main.REGION_TAU, .01)
+    grown.add(np.array([0., 1.]), support([0., 1.], .9, np.array([.1, .8])))   # 审计点越过允许值：补进 V_x
+    assert grown.version == 2 and any(np.allclose(v, [.1, .8]) for v in grown.vertices)
+    assert grown.outer[:, 1].max() <= .9 and grown.status == 'active'
+    empty = Network((2,), 'z', np.empty((0, 2)), 1., 2, main.REGION_TAU, .01)
+    np.testing.assert_allclose(empty.next_normal(), [1., 0.])     # 尚无认证点：先查种子方向
+    empty.add(np.array([1., 0.]), support([1., 0.], .3, np.array([.3, .1])))
+    assert len(empty.vertices) == 1 and not empty.full
+
+
+def test_support_pass_keeps_certified_points_inside_the_support_outer():
     part = radial('nn')
-    x = tuple(int(v) for v in part.network.encode_plan(part.network.initial_plan))   # 原点可行：两条射线顶点都存在
-    cutting = Cutting(part)
-
-    def rows():
-        with new_model('rows', 1) as model:
-            part.oracle._build(model, np.asarray(x), np.zeros(2))
-            model.update()
-            linear = model.NumConstrs
-            model.remove(model.getQConstrs())   # 与 SubProblem._cut 相同：割 LP 只去掉锥约束
-            model.update()
-            return linear, model.NumConstrs
+    x = tuple(int(v) for v in part.network.encode_plan(part.network.initial_plan))   # 原点可行：射线顶点作种子
+    builder = Support(part)
     with threadpool_limits(limits=1):
-        plain = rows()
-        cutting.run([x])
-        tight = rows()
-        added = 2*len(part.equations.boxes[x])+2*sum(x)
-        assert tight[0]-plain[0] == tight[1]-plain[1] == added   # SP 与割 LP 都带全部盒约束行与反向锥包络行
-        state = cutting.networks[x]
-        assert state['status'] in CUT_ACCEPTED and cutting.count > 0
-        points = np.array([part.vertex(x, key) for key in range(2)])   # 紧化射线认证点：有效割不会切掉
-        assert contains(points, halfspaces(state['vertices']), 1e-7).all()
-        assert [key for key, _ in cutting.sets()] == [(x, 0)]
+        assert part.origin_feasible(x) and all(part.vertex(x, key) is not None for key in range(2))
+        builder.run([x])
+    network = builder.networks[x]
+    assert network.status in ('certified', 'eps_B') and builder.count > 0 and x in part.equations.boxes
+    assert network.full and contains(network.vertices, halfspaces(network.outer), 1e-7).all()   # P_x ⊆ O_x
+    assert [key for key, _ in builder.sets()] == [(x, network.version)]
 
 
-def test_one_partition_certifies_with_cut_networks_and_records_frames():
+def test_one_partition_certifies_with_support_networks_and_records_frames():
     network = Case33(load_nodes=(18, 25), current_limit=CURRENT_LIMIT)
     monitor = RunMonitor()
     monitor.time_limit = 120.

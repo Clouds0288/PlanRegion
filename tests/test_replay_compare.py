@@ -8,8 +8,9 @@ def test_two_windows_seek_play_and_hold_shorter_recording(tmp_path):
     for index in range(2):
         monitor, _, _ = recorded_monitor(2, tmp_path/f'{index}.json.gz')
         for number in range(index+1):
-            monitor.forward('--', dict(event='point', phase='网架切割', active_scheme='1', eta=float(number+1),
-                                       feasible=False, sp_point=dict(scheme='1', p=[number+1., 2.])))
+            monitor.forward('--', dict(event='point', phase='网架支撑', active_scheme='1',
+                                       support=dict(certified=1, faces=4, ratio=None, status='active'),
+                                       sp_point=dict(scheme='1', p=[number+1., 2.])))
         monitor._emit('region_end', phase='构域停止', result=dict(status='time_limit', certified=False,
                                                               inner=[], outer=[]), partition=None)
         assert monitor.state['result']['certified'] is False

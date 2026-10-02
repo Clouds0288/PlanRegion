@@ -74,7 +74,7 @@ def test_real_scan_is_reused_and_metrics_are_recomputed_for_new_result(tmp_path)
     assert {tuple(row['sign']) for row in state['result']['outer']} == {(1, 1), (1, -1), (-1, 1), (-1, -1)}
     assert min(row[0] for part in state['result']['inner'] for row in part['vertices']) < 0.
     assert sum('result' in event['patch'] for event in restored.history) == 1
-    assert len(state['cut_history']) == sum(p['cuts'] for p in result['partitions'])
+    assert len(state['cut_history']) <= sum(p['supports'] for p in result['partitions'])   # 有限上界才记为割
     assert all(':' in key for key in (*state['schemes'], *state['cones'], *state['cut_history']))
     window = NativeWindow(restored)
     try:

@@ -5,23 +5,25 @@ import numpy as np
 
 
 def recorded_monitor(d, output=None):
-    """合成回放（不调用求解器）：分区 '-'*d 的根锥求界；网架 '1' 的 N_x 从分区盒出发评分一次、加割 Σu<=150 后
-    停滞；根锥沿 e1,e2 的棱中点二分。各帧以子进程的幅值 kW 送入 forward。返回 (monitor, x, cut)。"""
+    """合成回放（不调用求解器）：分区 '-'*d 的根锥求界；网架 '1' 的 O_x 从分区盒出发，一次支撑查询未给出上界，
+    下一次的上界 Σu<=150 裁剪 O_x 后网架按 ε_B 停止，P_x 取 O_x 的一半；根锥沿 e1,e2 的棱中点二分。各帧以子进程的
+    幅值 kW 送入 forward。返回 (monitor, x, cut)。"""
     from monitor import RunMonitor
     from Network.four_bus_five_corridor import FourBus
     from region import clip_polytope
     network = FourBus(load_nodes=(1, 2, 3)[:d])
     bounds, label = np.full(d, 100.), '-'*d
-    monitor = RunMonitor(output=output, algorithm='RCUT')
+    monitor = RunMonitor(output=output, algorithm='RB')
     monitor._emit('start', phase='初始化', network=network.name, load_nodes=network.load_nodes, budget=20000.,
-                  algorithm='RCUT', time_limit=30., cost_unit=network.cost_unit, initial_plan=network.initial_plan,
+                  algorithm='RB', time_limit=30., cost_unit=network.cost_unit, initial_plan=network.initial_plan,
                   bounds=bounds, partitions=['+'*d, label], cones={}, schemes={}, cut_history={}, status='running')
     x = network.encode_plan(network.initial_plan).astype(int)
     cut = np.r_[150., -np.ones(d), np.zeros(len(x))]
     box = np.array(list(product((0., 1.), repeat=d)))*bounds
     clipped = clip_polytope(box, 150., -np.ones(d))
-    row = lambda status, outer=clipped: dict(x=x, choice=network.initial_plan, cost=0., outer=outer, status=status,
-                                             inner=outer if status == 'stagnated' else np.empty((0, d)))
+    row = lambda status, outer=clipped: dict(x=x, choice=network.initial_plan, cost=0., outer=outer, inner=.5*outer,
+                                             status=status)
+    info = lambda status, ratio: dict(certified=d, faces=2*d+1, ratio=ratio, status=status)
     cone = lambda U: dict(inner=np.vstack([np.zeros(d), .5*U*bounds]), outer=np.vstack([np.zeros(d), .6*U*bounds]),
                           scheme='1', mu=1.2)
     middle = np.zeros(d)
@@ -31,12 +33,10 @@ def recorded_monitor(d, output=None):
     for patch in (dict(event='phase_start', phase='径向搜索 A', status='running', cones={}, schemes={}, cut_history={}),
                   dict(event='cone', phase='径向搜索 A', cones={'0': cone(np.eye(d))}, cone_count=1, volume_ratio=.44,
                        global_point=dict(scheme='1', p=np.full(d, 30.))),
-                  dict(event='point', phase='网架切割', active_scheme='1', eta=.5, feasible=False, sp_point=point,
-                       schemes={'1': row('slice', box)}),
-                  dict(event='cut', phase='网架切割', active_scheme='1', schemes={'1': row('slice')},
-                       cut_history={'1': dict(cut=cut, scheme='1')}, area_ratio=.25, small_cuts=0, patience=3,
-                       sp_point=point),
-                  dict(event='network', phase='网架切割', active_scheme=None, schemes={'1': row('stagnated')}),
+                  dict(event='point', phase='网架支撑', active_scheme='1', support=info('active', 2**d-1.),
+                       sp_point=None, schemes={'1': row('active', box)}),
+                  dict(event='cut', phase='网架支撑', active_scheme='1', schemes={'1': row('eps_B')},
+                       cut_history={'1': dict(cut=cut, scheme='1')}, support=info('eps_B', .004), sp_point=point),
                   dict(event='cone', phase='径向续跑 A+', cones={'0': None, '1': cone(halves[0]), '2': cone(halves[1])},
                        cone_count=2, volume_ratio=.44, global_point=None)):
         monitor.forward(label, patch)

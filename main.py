@@ -1,4 +1,4 @@
-"""规划域主线（方法 RCUT：径向锥夹逼 + 主线割平面）：参数、计算入口与原生回放入口。"""
+"""规划域主线（方法 RB：径向锥夹逼 + 逐网架支撑查询）：参数、计算入口与原生回放入口。"""
 import argparse
 from pathlib import Path
 from types import SimpleNamespace
@@ -26,9 +26,6 @@ MIP_SECONDS = 60.                 # 单次锥 MISOCP 的时限上限
 MIP_GAP = 1e-3                    # 锥 MISOCP 的相对间隙
 MIN_WIDTH = {2: 1e-4, 3: 2e-3}    # 锥角直径下限（rad），更窄的锥不再细分
 MAX_CONES = {2: 256, 3: 2048}     # 每个分区的叶锥数上限
-CUT_THRESHOLD = .01               # 连续小割的体积缩减比例
-CUT_PATIENCE = 3
-POINT_TOL = 1e-2                  # 同一几何点的最大坐标差，kW
 DIVISIONS = 160                   # FourBus 二维每轴扫描格数
 SCAN_DIVISIONS = {2: 160, 3: 80}  # Case33 及 FourBus 三维每轴扫描格数
 SCAN_WORKERS = 20                 # 扫描进程数；并行时每个求解器用 1 个线程
@@ -49,13 +46,12 @@ def run(network, *, budget=BUDGET, divisions=DIVISIONS, show_ui=SHOW_UI, output=
         tau=REGION_TAU, time_limit=CASE_TIME_LIMIT, workers=WORKERS, threads=SOLVER_THREADS,
         scan=True, reference=None, scan_workers=SCAN_WORKERS,
         force_rescan=FORCE_RESCAN, scan_output=SCAN_OUTPUT):
-    monitor = RunMonitor(output=output, algorithm='RCUT · 径向夹逼 + 割平面')
+    monitor = RunMonitor(output=output, algorithm='RB · 径向夹逼 + 网架支撑')
     ac = ac_network(network)
     d = len(network.load_nodes)
     settings = SimpleNamespace(threads=threads, tau=tau, discovery_eps=DISCOVERY_EPS, discovery_share=DISCOVERY_SHARE,
                                mip_seconds=MIP_SECONDS, mip_gap=MIP_GAP, min_width=MIN_WIDTH[d],
-                               max_cones=MAX_CONES[d], threshold=CUT_THRESHOLD, patience=CUT_PATIENCE,
-                               point_tol=POINT_TOL)
+                               max_cones=MAX_CONES[d], network_eps=d*tau/2.)   # ε_B=ε/2：网架的 vol(O_x)/vol(P_x)-1
 
     def calculate():
         # 1. 符号分区并行构域，保存过程回放
@@ -109,7 +105,7 @@ def main(case=None, load_nodes=None, divisions=None, *, dimension=None, seconds=
 
 
 if __name__ == '__main__':
-    parser = argparse.ArgumentParser(description='符号分区规划域（RCUT）与离线回放')
+    parser = argparse.ArgumentParser(description='符号分区规划域（RB）与离线回放')
     parser.add_argument('--case', choices=('fourbus', 'case33', 'both'),
                         default={FourBus: 'fourbus', Case33: 'case33'}[NETWORK])
     parser.add_argument('--dimension', type=int, choices=(2, 3), default=DIMENSION)

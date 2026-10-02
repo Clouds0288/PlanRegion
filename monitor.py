@@ -489,7 +489,7 @@ class NativeWindow:
         ttk.Label(point_bar, text='坐标固定于分区盒').pack(side='right', padx=8)
         body = ttk.Panedwindow(self.root, orient='horizontal')
         body.pack(fill='both', expand=True, padx=8, pady=6)
-        left, right = ttk.Frame(body), ttk.LabelFrame(body, text="B  网架 · N_x 灰色（停滞后计入内域，绿色）/ 紫色割")
+        left, right = ttk.Frame(body), ttk.LabelFrame(body, text="B  网架 · O_x 灰色 / P_x 绿色（认证内域）/ 紫色为支撑面")
         body.add(left, weight=1)
         body.add(right, weight=1)
         self.axes, self.canvases = {}, {}
@@ -718,20 +718,18 @@ class NativeWindow:
         return ax
 
     def _markers(self, ax, state, scheme=None, *, partition=None, size_scale=1.):
-        """过程图层：锥 MISOCP 的解点（红菱）与 SP 评分点（橙圆，不可行为叉）；标记不参与视口计算。"""
+        """过程图层：锥 MISOCP 的解点（红菱）与审计过的支撑点（橙圆）；标记不参与视口计算。"""
         from matplotlib.lines import Line2D
         handles = []
         if scheme is not None:
             partition = scheme.split(':')[0]
         for key, color, marker, label in (('global_point', GLOBAL, 'D', '锥 MISOCP 解点'),
-                                         ('sp_point', SP, 'o', 'SP 评分点')):
+                                         ('sp_point', SP, 'o', '支撑点')):
             point = state.get(key)
             if not point or (scheme is not None and point['scheme'] != scheme):
                 continue
             if partition and np.any(np.asarray(point['p'])*np.array([1 if s == '+' else -1 for s in partition]) < -1e-8):
                 continue
-            if key == 'sp_point' and state.get('feasible') is False:
-                marker, label = 'x', 'SP 不可行点'
             ax.scatter(*np.asarray(point['p']).reshape(-1, len(state['bounds'])).T, c=color, marker=marker,
                        s=40*size_scale, zorder=10, gid=key)
             handles.append(Line2D([], [], color=color, marker=marker, ls='none', label=label))
@@ -781,20 +779,18 @@ class NativeWindow:
         phase, detail = state.get('phase', '初始化'), ''
         if phase.startswith('径向') and state.get('volume_ratio') is not None:
             detail = f" · 叶锥 {state['cone_count']} · ΣΔ/ΣT = {state['volume_ratio']:.4g}"
-        elif phase == '网架切割' and state.get('active_scheme'):
-            detail = f" · 网架 {state['active_scheme']}"
-            if state.get('event') == 'point':
-                detail += f" · η={state['eta']:.3g} · {'可行' if state['feasible'] else '不可行'}"
-            elif state.get('event') == 'cut':
-                detail += (f" · 切割{measure} {100*state['area_ratio']:.3f}% · 连续小割 "
-                           f"{state['small_cuts']}/{state['patience']}")
+        elif phase == '网架支撑' and state.get('active_scheme'):
+            info = state['support']
+            ratio = '—' if info['ratio'] is None else f"{info['ratio']:.4g}"
+            detail = (f" · 网架 {state['active_scheme']} · 面 {info['certified']}/{info['faces']} 已认证"
+                      f" · {measure}比 O_x/P_x-1 = {ratio} · {info['status']}")
         if state.get('error'):
             detail = ' · '+state['error']
         partition = state.get('partition')
         cones = sum(row is not None for row in state.get('cones', {}).values())
         self.status.set(f"{'分区 '+partition+' · ' if partition else ''}{phase}{detail}    "
                         f"叶锥 {cones} · 网架 {len(state.get('schemes', {}))} · 割 {len(state.get('cut_history', {}))}")
-        for key, text, label in (('global_point', self.global_text, 'MISOCP 解点'), ('sp_point', self.sp_text, 'SP 点')):
+        for key, text, label in (('global_point', self.global_text, 'MISOCP 解点'), ('sp_point', self.sp_text, '支撑点')):
             point = state.get(key)
             coordinates = '' if not point else ', '.join(f'{p:.3f}' for p in point['p'])
             text.set(label+'：—' if not point else f"{label}：{point['scheme']}  p=({coordinates}) kW")

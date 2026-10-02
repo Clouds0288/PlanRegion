@@ -1,6 +1,6 @@
 # 数学符号与代码变量契约
 
-本文描述当前主线，即方法 RCUT：径向锥夹逼 R 加逐网架割平面 CUT。相同数学量必须保留登记名称、单位、索引、状态布局和结果键；不能通过删登记绕过检查。新增量先登记，语义或输出格式变化必须显式迁移并同步调用方与回归。
+本文描述方法 RB 的主线（分支 method-RB）：径向锥夹逼 R 加逐网架支撑查询 B。相同数学量必须保留登记名称、单位、索引、状态布局和结果键；不能通过删登记绕过检查。新增量先登记，语义或输出格式变化必须显式迁移并同步调用方与回归。
 
 ## 维数、索引与单位
 
@@ -55,17 +55,17 @@ SP 固定 x,p 后最小化非负 `eta`（求解器名 violation），只允许�
 
 唯一联合割方向是 `alpha + beta @ p + delta @ x >= 0`，数组布局 `[alpha, *beta, *delta]`，长度 `1+d+t`；beta 作用于 kW（分区内为幅值 u）。`_separating_cut.dual` 按求解器线性行排列，`coefficients` 按变量索引，`h` 提取全部 state 列。采用 Gurobi 行乘子方向，固定 x/p 的等式乘子先置零：`alpha=-dual@rhs + max(h,0)@y_ub_global + min(h,0)@y_lb_global`。正比例归一化后截距加 `1e-10` 保守补偿。`calls/cut_calls` 分别计 SP 与取割 LP 次数。
 
-方案紧化：方案首次使用时 `GridPhysics.obbt` 在独立功率 `[0,bounds]` 内对选中型号的 P/Q/ell 与节点 v 做 `OBBT_ROUNDS` 轮 OBBT，盒存于 `GridPhysics.boxes[tuple(x)]`，键 `(量名, 型号键或节点)`、标幺；端点外扩 `OBBT_PAD`，未证得最优的端点保留原界（首轮为全局界）。`add_operation(..., scheme=x)` 对已紧化方案追加盒约束与反向锥包络割 `u_L*ell+ell_L*u-u_L*ell_L <= (P_L+P_U)P-P_L*P_U+(Q_L+Q_U)Q-Q_L*Q_U+ENVELOPE_MARGIN`（另一条取 u_U、ell_U，u 为参考送端电压平方），每行右端加 `M*H(x)`：H 为 x 与该方案的汉明距离，M 为该行在全局界上的最大违反量，故联合割对全部 x 仍有效。SP、射线与割 LP 传入 scheme；锥 MISOCP 同时带全部已紧化方案的提升行。含紧化行的模型和 OBBT 用 `OBBT_CONV_TOL`。`obbt_extremes` 以 `settings.obbt_workers` 份模型副本并行求解，结果与串行逐位相同。
+方案紧化：方案首次使用时 `GridPhysics.obbt` 在独立功率 `[0,bounds]` 内对选中型号的 P/Q/ell 与节点 v 做 `OBBT_ROUNDS` 轮 OBBT，盒存于 `GridPhysics.boxes[tuple(x)]`，键 `(量名, 型号键或节点)`、标幺；端点外扩 `OBBT_PAD`，未证得最优的端点保留原界（首轮为全局界）。`add_operation(..., scheme=x)` 对已紧化方案追加盒约束与反向锥包络割 `u_L*ell+ell_L*u-u_L*ell_L <= (P_L+P_U)P-P_L*P_U+(Q_L+Q_U)Q-Q_L*Q_U+ENVELOPE_MARGIN`（另一条取 u_U、ell_U，u 为参考送端电压平方），每行右端加 `M*H(x)`：H 为 x 与该方案的汉明距离，M 为该行在全局界上的最大违反量，故联合割对全部 x 仍有效。SP、射线与支撑查询（固定方案 MP）传入 scheme；锥 MISOCP 同时带全部已紧化方案的提升行。含紧化行的模型和 OBBT 用 `OBBT_CONV_TOL`。`obbt_extremes` 以 `settings.obbt_workers` 份模型副本并行求解，结果与串行逐位相同。
 
 有限逐线路电流的 Port SP 固定使用既有 Gurobi 连续 SOCP；其他 Port SP 和射线使用 Clarabel。`solve_conic.basis/offset` 表示消元坐标，`cone_scale` 只是等价锥缩放。射线内域见证使用既有 `1e-6` 锥裕量，有限电流界同时扣除相同裕量；原物理残差仍按 `1e-8` 验收。`numeric_focus` 是求解设置，不改变数学可行性。
 
 ## 符号分区与几何坐标
 
-主线只用符号分区：`PortPhysics.sign` 为 ±1 向量，内部非负幅值 u，真实 p=sign*u；负荷 PF=0.95、光伏 PF=1，允许反送。`main.mode=1` 只传给扫描接口（`vertify` 的缓存身份仍区分 mode）。输出、回放和扫描始终是真实 kW；割只在所属符号区有效，联合割在分区内共享。
+主线只用符号分区：`PortPhysics.sign` 为 ±1 向量，内部非负幅值 u，真实 p=sign*u；负荷 PF=0.95、光伏 PF=1，允许反送。`main.mode=1` 只传给扫描接口（`vertify` 的缓存身份仍区分 mode）。输出、回放和扫描始终是真实 kW；支撑上界只对所属符号区的该网架有效。
 
-`bounds=port_bounds(network)` 为公共正数坐标尺度 b（kW），内部点 `xi=u/bounds∈[0,1]^d` 无量纲；分区盒即 `[0,1]^d`。结果 `bound` 是查询目标的标量界，不能与 bounds 混用。叶锥、内三角形、N_x 与测度都在 xi 中计算，`build_partition` 返回前乘回 bounds 得 kW 幅值，`build_region` 再乘 sign 得带符号 kW。
+`bounds=port_bounds(network)` 为公共正数坐标尺度 b（kW），内部点 `xi=u/bounds∈[0,1]^d` 无量纲；分区盒即 `[0,1]^d`。结果 `bound` 是查询目标的标量界，不能与 bounds 混用。叶锥、内三角形、P_x、O_x 与测度都在 xi 中计算，`build_partition` 返回前乘回 bounds 得 kW 幅值，`build_region` 再乘 sign 得带符号 kW。
 
-`halfspaces/contains/clip_polytope` 不自动换算。面方程为 `F@xi+g<=0`；裁剪接口为 `constant+coefficient@xi>=0`。固定 x 的联合割在 xi 中为 `alpha+delta@x+(beta*bounds)@xi>=0`（`Cutting.clip`）。`covered` 先按包围盒筛点再逐行 `contains`，结果与逐行判定相同。`clip_box` 裁到 xi<=1（xi>=0 由锥保证），`cone_clip` 裁到锥 `U⁻¹xi>=0`，`box_vertices` 为分区盒顶点。
+`halfspaces/contains/clip_polytope` 不自动换算。面方程为 `F@xi+g<=0`；裁剪接口为 `constant+coefficient@xi>=0`。`covered` 先按包围盒筛点再逐行 `contains`，结果与逐行判定相同。`clip_box` 裁到 xi<=1（xi>=0 由锥保证），`cone_clip` 裁到锥 `U⁻¹xi>=0`，`box_vertices` 为分区盒顶点。
 
 ## 径向锥夹逼（R）
 
@@ -81,41 +81,49 @@ SP 固定 x,p 后最小化非负 `eta`（求解器名 violation），只允许�
 | Δ | `Radial.delta` | (μ̄^d-1)·vol(T)，xi^d |
 | ΣΔ/Σvol(T) | `Radial.volume_ratio` | 体积缺口比；尚无锥时为 inf |
 | 射线与原点证书 | `Radial.rays`、`Radial.nears`、`Radial.origin`、`Radial.incumbents` | 键 (方案, 方向编号)；远端点与近端点为 xi；原点认证为布尔；锥 MISOCP 出现过的现任方案 |
+| 审计过的现任解 | `Radial.incumbent_points`、`cone_misocp:audited` | (方案, xi)：已紧化方案的锥 MISOCP 现任解代回原约束（`audit_incumbent`）通过，作为 B 的认证点 |
 
 内域证书 `Radial.inner`：x̂ 原点可行时 T ⊆ R_x̂；否则需原点可行的 y 在每个生成方向的射线半径不小于 x̂ 的近端半径，T ⊆ R_x̂ ∪ R_y。`Radial.vertex` 从原点朝分区盒边界点 `bounds*u/max(u)` 做紧化射线，半径小于 `MIN_RADIUS` 视为没有顶点；`Radial.near` 是从远端朝原点的反向射线。单次射线与原点 SP 的时限不超过 `RAY_SECONDS`。
 
-外界 `cone_misocp`：x 自由的完整 MP（全部选型、拓扑、预算、运行约束），在 xi 上最大化 `objective`；`rows` 给锥约束 `rows@xi>=0` 与分区盒，缺省时为中心射线 xi_1=…=xi_d 并以 no-good 排除 `exclude`。全部已紧化方案的行按汉明距离提升，未紧化方案为纯 SOCP，故任何终止状态下的 ObjBound 都是 R 在该锥上的有效上界；`CONE_CONV_TOL` 是它的 barrier 收敛容差。返回 `status/bound/x/point`（point 为 kW 幅值），尚无界时 bound=inf。`Radial.misocp` 是懒惰 OBBT：现任方案尚未紧化时先 OBBT 再重解。单次时限 `settings.mip_seconds`，相对间隙 `settings.mip_gap`；中心射线求解用 mip_gap=0。
+外界 `cone_misocp`：x 自由的完整 MP（全部选型、拓扑、预算、运行约束），在 xi 上最大化 `objective`；`rows` 给锥约束 `rows@xi>=0` 与分区盒，缺省时为中心射线 xi_1=…=xi_d 并以 no-good 排除 `exclude`。全部已紧化方案的行按汉明距离提升，未紧化方案为纯 SOCP，故任何终止状态下的 ObjBound 都是 R 在该锥上的有效上界；`CONE_CONV_TOL` 是它的 barrier 收敛容差。返回 `status/bound/x/point/audited`（point 为 kW 幅值），尚无界时 bound=inf。`Radial.misocp` 是懒惰 OBBT：现任方案尚未紧化时先 OBBT 再重解。单次时限 `settings.mip_seconds`，相对间隙 `settings.mip_gap`；中心射线求解用 mip_gap=0。
 
 `Radial.run(epsilon, check)` 用体积准则细分：每次取 Δ 最大的锥，ΣΔ<=ε·Σvol(T) 或 `check()` 成立即 certified。`Radial.options` 给候选剖分：解点方向的锥坐标 λ 全部 >= `SPLIT_MARGIN` 时星形剖分；三维恰有一个 λ 偏小时在对边上按 λ 投影二分；最后总有最长棱中点二分。`Radial.split` 的子锥 x̂ 取 {父 x̂, 解的方案, 父覆盖网架} 中证书成立、半径乘积最大者。锥角直径小于 `settings.min_width`、叶锥数达到 `settings.max_cones` 或没有内域证书的锥记 unresolved，不再细分。`Cone.status` 为 pending / bounded / unresolved；`Radial.run` 返回 certified / unresolved / time_limit，可续跑，阶段时限到达抛出 RegionTimeout 后保留已得证书。`Radial.schemes` 是 X*：叶锥的 x̂ 与覆盖网架、现任方案、已紧化与原点认证的方案，按所占锥体积从大到小。
 
-## 逐网架割平面（CUT）
+## 逐网架支撑查询（B）
+
+面方程沿用 `halfspaces` 的 `[n, b]`，|n|=1，内侧 n@xi+b<=0，记 β=-b。h_x(n)=max n@xi 为固定方案 x 的紧化可行集上的支撑值，UB 为其可靠上界。
 
 | 数学量 | 代码 | 单位与含义 |
 |---|---|---|
-| N_x | `Cutting.networks`（方案 → `Cutting.cut:vertices` / `Cutting.cut:status` / `Cutting.cut:version`） | 固定方案 x 的割平面多面体（xi）：分区盒被分区内共享的联合割裁剪，N_x ⊇ R_x；version 在其他网架的新割裁剪它时加一 |
-| 共享割 | `Cutting.cuts`、`Cutting.count` | 布局 `[alpha, *beta, *delta]`，beta 作用于幅值 u（kW）；count 为分区内割序号 |
-| area_ratio | `Cutting.cut.history` | 每次割掉的体积 / 割前 vol(N_x) |
-| threshold、patience | `settings.threshold / settings.patience`，`stagnated` | 连续 patience 次 area_ratio < threshold 即停滞；等于 threshold 不算小割 |
-| point_tol | `settings.point_tol`，`register_power` | kW 最大坐标差内视为同一 SP 评分点，不移动代表点 |
-| 计入内域的状态 | `CUT_ACCEPTED` | stagnated / exact / empty；empty 即 N_x=∅ |
+| V_x、P_x | `Network.points`、`Network.vertices`、`Network.full` | 网架 x 的认证点（xi）及其凸包顶点；full 表示 P_x 满维 |
+| O_x | `Network.outer` | 分区盒逐次被可靠支撑上界 n@xi<=UB 裁剪的外界（xi），O_x ⊇ R_x |
+| 面与状态 | `Network.faces`、`Network.boundary`、`Network.face_status`、`CERTIFIED_FACES` | P_x 的面；分区边界面掩码（`boundary_faces`，容差 `BOUNDARY_TOL`）；BOUNDARY / GEOMETRY_CERTIFIED / SUPPORT_CERTIFIED / UNRESOLVED / PENDING |
+| 判据与 c_x | `Network.criterion`、`Network.center`、`choose_criterion`、`chebyshev_center` | auto：原点在 P_x 内且到每个非边界面的距离 >= `ORIGIN_CLEARANCE` 用 origin，否则 center；c_x 满维时为 Chebyshev 中心，低维时为顶点形心 |
+| β' | `Network.allowed`、`allowed_offsets` | 允许的支撑值：origin 为 β/(1-tau)（E_x=P_x/(1-tau)），center 为 β+tau·(β-n@c_x)（E_x=c_x+(1+tau)(P_x-c_x)）；UB-β'<=GEOMETRY_TOL 即该面认证 |
+| 优先级 | `Network.priority`、`Network.upper`、`face_measures` | 面积×max(UB-β, 0)；UB 取 O_x 顶点上的几何上界与缓存支撑上界的较小者；面积用 `FACE_TOL` 判定面上顶点 |
+| 支撑缓存 | `Network.cache`、`normal_key`、`Network.lost` | 键为单位法向（不翻转符号）；复用时加键舍入差的保守补偿 Σmax(n-n_cached,0)；补点后 P_x 未变的面记入 lost，状态为 UNRESOLVED |
+| ε_B | `settings.network_eps`、`Network.ratio` | 网架停止阈值 vol(O_x)/vol(P_x)-1<=ε_B，默认 ε/2 |
+| 权重 | `Network.weight` | 所占叶锥体积加均值的 10%；分配本轮时间片 |
 
-`Cutting.cut` 的一次循环：N_x 从分区盒出发，先被已有割裁剪；SP（固定 x，带该网架的 OBBT 盒与包络行，`score_only=True`）为 N_x 的每个顶点评分，η 最大的待割顶点由 `generate_cut` 取联合割裁剪 N_x，直到停滞（stagnated）、全部顶点可行（exact）或 N_x 为空（empty）。其余终态不计入内域：时间片用完（slice）、该点数值失败（failed）、顶点都已取过割却仍不可行（point_resolution）、本轮未及开始（skipped，下一轮重试）。`cache/powers/applied/failed/fresh` 是该循环的局部状态：SP 答案缓存、评分点代表、已取割的点、数值失败的点、本循环的新割。循环结束后新割裁剪本分区其他网架的 N_x（割对全部可行点有效）。
+`SupportOracle` 是固定方案 x 的完整 MP（含 x 的 OBBT 盒与包络行）加分区盒 0<=u<=bounds；`SupportOracle.solve(normal, time_limit)` 的目标直接为 Σ a_i·u_i/b_i，ObjVal/ObjBound 即 xi 坐标的支撑值。只接受 OPTIMAL：ub 为 ObjBound 外扩 `BOUND_PAD`，解代回原约束（`audit_incumbent`：拓扑与预算、变量界、整数性、线性与二次行、原 Lorentz 范数，不修补）通过才返回认证点 point（xi）与 lb=n@point；lb>ub 时报错。其他状态返回 ub=inf、point=None，该面保持待查或记 UNRESOLVED。单次时限不超过 `SUPPORT_SECONDS`。
 
-`Cutting.run` 是一轮 CUT：未割过或上轮 skipped 的网架按 X* 次序排队，本轮最多用分区剩余时间的 `PASS_SHARE`，单个网架不超过 `CUT_SECONDS`；`CutSlice` 表示一个网架的时间片用完。N_x 是 R_x 的外近似，RCUT 把停滞的 N_x 当作该网架的可行域，不作内域认证。
+`Network.add` 处理一次支撑结果：缓存；有限 ub 裁剪 O_x；point 越过某个面的 β' 时补进 V_x 并重建 P_x（`Network.rebuild`，`Network.version` 加一，旧面结论作废）；最后 `Network.check` 判断停止：全部面认证（certified）、vol(O_x)/vol(P_x)-1<=ε_B（eps_B）、没有待查面（unresolved）、尚无认证点且种子方向 ±e_j、±1/√d 查完（no_points）。`Network.next_normal` 取优先级最高的待查面（尚无认证点时取未查的种子方向）。
 
-内域 I=(I_R ∪ ∪N_x)∩O_R，`sandwich` 返回 (vol(I), vol(O_R∩盒))，单位 xi^d：二维为 shapely 并集；三维按叶锥分解（叶锥内部互不相交），每锥的并集体积按 (锥几何, 相交 N_x 的版本键 `Cutting.sets`) 缓存，并集数值失败时只计 T（内域只会低估）。`piece` 是 N_x 与 锥∩O∩盒 之交，零体积时为空。分区认证 `build_partition.certified`：vol(O_R∩盒)-vol(I)<=ε·vol(I)，ε=d·tau；或径向部分自身满足 ΣΔ<=ε·Σvol(T)。
+`Support.run` 是一轮 B：X* 的网架以径向阶段的认证点为 V_x（`Support.seeds`：射线远端与近端、零接入点、审计过的已紧化现任解），按权重从大到小依次查询，各网架分得本轮剩余时间（分区剩余时间的 `PASS_SHARE`）按权重的份额，用完记 paused。`Support.query` 为一次查询并记录一帧；`Support.count` 为支撑次数；`Support.sets` 给出满维的 P_x 及其版本键。
+
+内域 I=I_R ∪ ∪P_x（P_x ⊆ R_x 由认证点保证，是认证内域），`sandwich` 返回 (vol(I), vol(O_R∩盒))，单位 xi^d：二维为 shapely 并集；三维按叶锥分解（叶锥内部互不相交），每锥的并集体积按 (锥几何, 相交 P_x 的版本键) 缓存，并集数值失败时只计 T（内域只会低估）。`piece` 是 P_x 与 锥∩O∩盒 之交，零体积时为空。分区认证 `build_partition.certified`：vol(O_R∩盒)-vol(I)<=ε·vol(I)，ε=d·tau；或径向部分自身满足 ΣΔ<=ε·Σvol(T)。
 
 ## 分区流程、并行与结果
 
-`build_partition` 依次为：A 阶段 `Radial.run(settings.discovery_eps)`，时限为分区时限的 `settings.discovery_share`；若体积缺口比仍大于 ε，CUT 割 X*；A+ 续跑 `Radial.run(ε, check)`，每次锥决策后先割新出现的网架，再检查夹逼判据。返回分区摘要：
+`build_partition` 依次为：A 阶段 `Radial.run(settings.discovery_eps)`，时限为分区时限的 `settings.discovery_share`；若体积缺口比仍大于 ε，B 对 X* 做一轮支撑查询；A+ 续跑 `Radial.run(ε, check)`，每次锥决策后检查夹逼判据（新出现的网架不再查询支撑）。返回分区摘要：
 
 | 键 | 含义 |
 |---|---|
 | `build_partition:sign / status / certified` | 分区符号；certified / unresolved / time_limit；是否获证 |
-| `build_partition:how` | radial（径向部分自身满足体积准则）或 cut（夹逼判据） |
+| `build_partition:how` | radial（径向部分自身满足体积准则）或 support（夹逼判据） |
 | `build_partition:seconds / gap / volume_ratio` | 分区墙钟秒；vol(O)/vol(I)-1；ΣΔ/Σvol(T) |
-| `build_partition:cones / networks / accepted / cuts` | 叶锥数；做过 CUT 的网架数；其中计入内域的数目；割数 |
-| `build_partition:inner / outer` | 内域块（各锥 T 与按锥裁到 O 的 N_x）与外域块（各锥 O∩盒，尚无锥时为分区盒）的顶点，kW 幅值 |
+| `build_partition:cones / networks / accepted / supports` | 叶锥数；做过 B 的网架数；其中停止于 certified 或 eps_B 的数目；支撑次数 |
+| `build_partition:inner / outer` | 内域块（各锥 T 与按锥裁剪的 P_x）与外域块（各锥 O∩盒，尚无锥时为分区盒）的顶点，kW 幅值 |
 
 `build_region` 为每个分区起一个 spawn 子进程（`_partition`），并发数 min(`workers`, 2^d)，`settings.obbt_workers=max(1, workers//2^d)`；后启动的分区得到剩余时间按并发比例的份额，总时限为 `seconds`。子进程的 `RunMonitor(sign=...)` 经 `_connect` 设置的通道发送事件，主进程 `RunMonitor.share` 建立通道、`RunMonitor.forward` 转发、`RunMonitor.close` 发送结束标记；主进程中断时置取消信号并读空队列。结果 `inner/outer` 为带符号 kW 的 `[dict(vertices, sign)]`，`build_region:axis_lower/axis_bounds` 为外域顶点的范围，`build_region:partitions` 为各分区摘要（去掉 inner/outer），另含 status/certified/timing。
 
@@ -138,21 +146,21 @@ SP 固定 x,p 后最小化非负 `eta`（求解器名 violation），只允许�
 
 `scan_path` 给出 `results/scan/<网络>/<节点>/<身份>/`，`region_path` 由 origin/step/start/shape 生成区域摘要。扩界保留格点，部分覆盖只补算缺点；AC/SOCP 分别补零标签。`import_ac_reference` 仅接受同版本同身份数据。`force_rescan` 先备份；主进程每 `SAVE_SECONDS` 至多原子落盘一次，结束或中断时必落盘，独占锁避免并发覆盖。
 
-比较使用最终 inner 作为计算域，另保留 outer 指标。`comparison_metrics` 的 MR=`missed/reference`、FR=`extra/computed`，百分数，空分母 None；同时保留 missed_cells/extra_cells/reference_cells/computed_cells。`comparisons` 键为 result_ac/result_socp/socp_ac。导出版本 paired_scan_v2，NPZ 的 power 为 `(N,d)` kW，ac_states/socp_states/inner/outer 对应同坐标；CSV 标签列为 ac_state/socp_state。网格误差不是连续体积证明。RCUT 的内域含 N_x 外近似，相对 AC 的 FR 是外侧估计误差。
+比较使用最终 inner 作为计算域，另保留 outer 指标。`comparison_metrics` 的 MR=`missed/reference`、FR=`extra/computed`，百分数，空分母 None；同时保留 missed_cells/extra_cells/reference_cells/computed_cells。`comparisons` 键为 result_ac/result_socp/socp_ac。导出版本 paired_scan_v2，NPZ 的 power 为 `(N,d)` kW，ac_states/socp_states/inner/outer 对应同坐标；CSV 标签列为 ac_state/socp_state。网格误差不是连续体积证明。RB 的内域是认证内域，相对 AC 的 FR 来自 OBBT 紧化模型与 AC 的差（SOCP 松弛残余）。
 
-回放 version=4：history 保存增量过程，validation_state 保存最终扫描；version=3 兼容读取。子进程事件为 phase_start、cone、point、cut、network、partition_end，主进程另有 start、region_end。`MERGED` 中的 schemes/cones/cut_history 按键增量合并，键带分区前缀 `<分区>:`（如 `+-:3`），坐标在 `signed_values` 中乘 sign：
+回放 version=4：history 保存增量过程，validation_state 保存最终扫描；version=3 兼容读取。子进程事件为 phase_start、cone、point、cut、partition_end，主进程另有 start、region_end。`MERGED` 中的 schemes/cones/cut_history 按键增量合并，键带分区前缀 `<分区>:`（如 `+-:3`），坐标在 `signed_values` 中乘 sign：
 
 | 状态 | 行内容 |
 |---|---|
 | `cones` | `Radial.publish:inner / outer / scheme / mu`：T 与 O∩盒的顶点、x̂ 标签、μ̄；被细分的父锥置 None |
-| `schemes` | `Cutting.row:x / choice / cost / outer / inner / status` 与 sign：outer 为 N_x，计入内域时 inner=N_x，否则为空 |
-| `cut_history` | 割 `cut`（布局同联合割，beta 已乘 sign）、来源网架 `scheme`、`sign` |
+| `schemes` | `Support.row:x / choice / cost / outer / inner / status` 与 sign：outer 为 O_x，inner 为满维的 P_x，否则为空 |
+| `cut_history` | 支撑上界写成的条件割 `Support.query:cut`（布局同联合割，beta 已乘 sign；右端加 M·汉明距离，M 为盒上的最大违反量，只对来源网架起作用）、来源网架 `scheme`、`sign` |
 
-`cone` 帧另有 cone_count、volume_ratio 与 global_point（锥 MISOCP 的解点）；`point` 帧有 eta、feasible 与 sp_point；`cut` 帧有 area_ratio、small_cuts、patience。仅当前帧之前的锥、网架、割与点出现在过程图；最终扫描独立显示。result 包含 status/certified/inner/outer/partitions/timing，分区证书在 partition_end；数值未决和时限未完不能改成 certified。JSON 非有限值为 null，仅预算 null 可按 inf 解释。
+`cone` 帧另有 cone_count、volume_ratio 与 global_point（锥 MISOCP 的解点）；支撑查询给出有限上界时为 `cut` 帧，否则为 `point` 帧，两者都有 `Support.query:support`（certified/faces/ratio/status：已认证面数、面数、vol(O_x)/vol(P_x)-1、网架状态）与 sp_point（审计过的支撑点）。仅当前帧之前的锥、网架、割与点出现在过程图；最终扫描独立显示。result 包含 status/certified/inner/outer/partitions/timing，分区证书在 partition_end；数值未决和时限未完不能改成 certified。JSON 非有限值为 null，仅预算 null 可按 inf 解释。
 
 ## 方法归档
 
-方法对照实验的精选运行归档在 `results/methods/<算例>/<方法>/workers_<w>/run_<r>/`（summary.json、metrics.json、timeline.csv、solves.csv.gz、snapshots/final.json.gz），登记于 `results/manifest.json` 的 `method_archive`、`runs`、`files`；各方法的代码版本由 tag `method-<方法>-v1` 固定，归档整体为 `results-methods-v1`。主线分支 main 为方法 RCUT（与分支 method-RCUT 同源）；方法 RB 的主线实现在分支 method-RB。
+方法对照实验的精选运行归档在 `results/methods/<算例>/<方法>/workers_<w>/run_<r>/`（summary.json、metrics.json、timeline.csv、solves.csv.gz、snapshots/final.json.gz），登记于 `results/manifest.json` 的 `method_archive`、`runs`、`files`；各方法的代码版本由 tag `method-<方法>-v1` 固定，归档整体为 `results-methods-v1`。主线分支 main 为方法 RCUT（分支 method-RCUT）；本分支 method-RB 是方法 RB 的主线实现。
 
 ## 容差与默认设置
 
@@ -169,11 +177,20 @@ SP 固定 x,p 后最小化非负 `eta`（求解器名 violation），只允许�
 | `MIP_SECONDS / MIP_GAP` | 60 秒 / 1e-3 |
 | `MIN_WIDTH / MAX_CONES` | {2:1e-4, 3:2e-3} rad / {2:256, 3:2048} |
 | `SPLIT_MARGIN / MIN_RADIUS / RAY_SECONDS` | 0.05 / 1e-9（xi）/ 30 秒 |
-| `CUT_THRESHOLD / CUT_PATIENCE / POINT_TOL` | 0.01 / 3 / 0.01 kW |
-| `CUT_SECONDS / PASS_SHARE` | 30 秒 / 0.75 |
+| `SUPPORT_SECONDS / PASS_SHARE / settings.network_eps` | 30 秒 / 0.75 / ε/2 |
+| `BOUNDARY_TOL / ORIGIN_CLEARANCE / FACE_TOL / BOUND_PAD` | 1e-7 / 1e-6 / 1e-9（xi）/ 1e-10（相对） |
 | `DIVISIONS / SCAN_DIVISIONS / SCAN_WORKERS / SAVE_SECONDS` | 160 / {2:160,3:80} / 20 / 30 秒；每扫描进程一个求解线程 |
 
 单次 MP/SP/AC 的时限仍用 MP_TIME_LIMIT/SP_TIME_LIMIT/AC_TIME_LIMIT；AC_ITERATIONS 为迭代次数。不得合并不同语义的容差。数值配置变化须同步本表和结果协议。
+
+## 显式迁移（2026-10-02：method-RB）
+
+本分支自 method-RCUT 的 77c9043 分出，把 CUT 换成 B；R、分区并行、前端与扫描不变。
+
+- 去掉 RCUT 的割平面构域：`Cutting`、`CutSlice`、`stagnated`、`register_power`、`CUT_SECONDS`、`CUT_ACCEPTED`、`build_partition:cuts`，以及入口的 `CUT_THRESHOLD`、`CUT_PATIENCE`、`POINT_TOL`；它们留在 main / method-RCUT。分区摘要的支撑次数为 `build_partition:supports`，`accepted` 改为停止于 certified 或 eps_B 的网架数。
+- B 的接口自方法对照实验（tag `method-RB-v1`，experiments/compare_plan2.py、plan2_geometry.py、test_support_face_certification_fourbus_2d.py）迁入并精简：`BOUND_PAD`、`audit_incumbent` 语义不变；`SupportOracle` 合并了实验的 PartitionOracle（分区盒、只接受 OPTIMAL），`SupportOracle.solve` 改为 (normal, time_limit)，返回 lb/ub/point/status/normal，不再自带缓存（由 `Network.cache` 按同一 `normal_key` 缓存）；`NetworkState` 改为 `Network`（points/vertices/outer/criterion/center 含义不变），`SupportPhase` 的 B 部分改为 `Support`（一轮、顺序查询，无覆盖证书 C 与进程池）。
+- 面判据统一为 UB-β'<=GEOMETRY_TOL：origin 判据原为 (1-tau)·UB+b<=GEOMETRY_TOL，两者只差 GEOMETRY_TOL·tau；`classify_support`、`classify_center`、`face_margins` 并入 `Network.evaluate`，近退化几何的兜底（`GEOMETRY_ERRORS`）去掉，数值失败直接报错。
+- `cone_misocp` 增加返回键 audited，`Radial.incumbent_points` 收集审计过的已紧化现任解作为 V_x 的种子。前端阶段名为“网架支撑”，网架面板的灰色为 O_x、绿色为 P_x，支撑上界以条件割显示。
 
 ## 显式迁移（2026-10-02：RCUT 成为主线）
 
@@ -237,7 +254,9 @@ SP 固定 x,p 后最小化非负 `eta`（求解器名 violation），只允许�
 - [GridPhysics.pmin](../model.py)、[GridPhysics.qmax](../model.py)、[GridPhysics.qmin](../model.py)、[GridPhysics.r](../model.py)
 - [GridPhysics.reactance](../model.py)、[GridPhysics.slack_slice](../model.py)、[GridPhysics.types](../model.py)、[GridPhysics.v_slice](../model.py)
 - [GridPhysics.vmax](../model.py)、[GridPhysics.vmin](../model.py)、[GridPhysics.y_lb_global](../model.py)、[GridPhysics.y_ub_global](../model.py)
-- [MP_TIME_LIMIT](../model.py)、[MasterProblem.__init__.budget](../model.py)、[MasterProblem.__init__.direction](../model.py)、[MasterProblem.__init__.f](../model.py)
+- [BOUND_PAD](../model.py)、[audit_incumbent](../model.py)、[SupportOracle](../model.py)、[SupportOracle.solve](../model.py)
+- [SupportOracle.solve.time_limit](../model.py)、[SupportOracle.solve:lb](../model.py)、[SupportOracle.solve:ub](../model.py)、[SupportOracle.solve:point](../model.py)
+- [SupportOracle.solve:normal](../model.py)、[cone_misocp:audited](../model.py)、[MP_TIME_LIMIT](../model.py)、[MasterProblem.__init__.budget](../model.py)、[MasterProblem.__init__.direction](../model.py)、[MasterProblem.__init__.f](../model.py)
 - [MasterProblem.__init__.min_total](../model.py)、[MasterProblem.__init__.power](../model.py)、[MasterProblem.active_nodes](../model.py)、[MasterProblem.choices](../model.py)
 - [MasterProblem.direction](../model.py)、[MasterProblem.loads](../model.py)、[MasterProblem.operation](../model.py)、[MasterProblem.power](../model.py)
 - [MasterProblem.solve.incumbent](../model.py)、[MasterProblem.solve.radial_gap_kw](../model.py)、[MasterProblem.solve.start](../model.py)、[MasterProblem.solve:bound](../model.py)
@@ -279,45 +298,52 @@ SP 固定 x,p 后最小化非负 `eta`（求解器名 violation），只允许�
 
 ### main.py
 
-- [BUDGET](../main.py)、[CASE_TIME_LIMIT](../main.py)、[CUT_PATIENCE](../main.py)、[CUT_THRESHOLD](../main.py)
-- [DIMENSION](../main.py)、[DIVISIONS](../main.py)、[FORCE_RESCAN](../main.py)、[NETWORK](../main.py)
-- [POINT_TOL](../main.py)、[REGION_TAU](../main.py)、[SCAN_DIVISIONS](../main.py)、[SCAN_OUTPUT](../main.py)
-- [SCAN_WORKERS](../main.py)、[SOLVER_THREADS](../main.py)、[WORKERS](../main.py)、[DISCOVERY_EPS](../main.py)
-- [DISCOVERY_SHARE](../main.py)、[MIP_SECONDS](../main.py)、[MIP_GAP](../main.py)、[MIN_WIDTH](../main.py)
-- [MAX_CONES](../main.py)、[main](../main.py)、[main.case](../main.py)、[main.dimension](../main.py)
-- [main.load_nodes](../main.py)、[mode](../main.py)、[recording_path](../main.py)、[run](../main.py)
-- [run.budget](../main.py)、[run.force_rescan](../main.py)、[run.scan_output](../main.py)、[run.workers](../main.py)
-- [run.threads](../main.py)、[run.settings](../main.py)
+- [BUDGET](../main.py)、[CASE_TIME_LIMIT](../main.py)、[DIMENSION](../main.py)、[DIVISIONS](../main.py)
+- [FORCE_RESCAN](../main.py)、[NETWORK](../main.py)、[REGION_TAU](../main.py)、[SCAN_DIVISIONS](../main.py)
+- [SCAN_OUTPUT](../main.py)、[SCAN_WORKERS](../main.py)、[SOLVER_THREADS](../main.py)、[WORKERS](../main.py)
+- [DISCOVERY_EPS](../main.py)、[DISCOVERY_SHARE](../main.py)、[MIP_SECONDS](../main.py)、[MIP_GAP](../main.py)
+- [MIN_WIDTH](../main.py)、[MAX_CONES](../main.py)、[main](../main.py)、[main.case](../main.py)
+- [main.dimension](../main.py)、[main.load_nodes](../main.py)、[mode](../main.py)、[recording_path](../main.py)
+- [run](../main.py)、[run.budget](../main.py)、[run.force_rescan](../main.py)、[run.scan_output](../main.py)
+- [run.workers](../main.py)、[run.threads](../main.py)、[run.settings](../main.py)
 
 ### region.py
 
 - [GEOMETRY_TOL](../region.py)、[SPLIT_MARGIN](../region.py)、[MIN_RADIUS](../region.py)、[RAY_SECONDS](../region.py)
-- [CUT_SECONDS](../region.py)、[PASS_SHARE](../region.py)、[CUT_ACCEPTED](../region.py)、[halfspaces](../region.py)
-- [clip_polytope.coefficient](../region.py)、[clip_polytope.constant](../region.py)、[covered](../region.py)、[union_measure](../region.py)
-- [register_power](../region.py)、[box_vertices](../region.py)、[clip_box](../region.py)、[cone_clip](../region.py)
-- [cone_outer](../region.py)、[stagnated](../region.py)、[stagnated.threshold](../region.py)、[stagnated.patience](../region.py)
-- [piece](../region.py)、[sandwich](../region.py)、[Cone](../region.py)、[Cone.keys](../region.py)
-- [Cone.x](../region.py)、[Cone.verts](../region.py)、[Cone.cover](../region.py)、[Cone.inherited](../region.py)
-- [Cone.mu](../region.py)、[Cone.final](../region.py)、[Cone.status](../region.py)、[Cone.c](../region.py)
-- [Cone.halfspace](../region.py)、[Radial](../region.py)、[Radial.bounds](../region.py)、[Radial.directions](../region.py)
-- [Radial.midpoints](../region.py)、[Radial.rays](../region.py)、[Radial.nears](../region.py)、[Radial.origin](../region.py)
-- [Radial.incumbents](../region.py)、[Radial.cones](../region.py)、[Radial.deadline](../region.py)、[Radial.U](../region.py)
-- [Radial.vertex](../region.py)、[Radial.near](../region.py)、[Radial.inner](../region.py)、[Radial.misocp](../region.py)
-- [Radial.solve](../region.py)、[Radial.options](../region.py)、[Radial.split](../region.py)、[Radial.delta](../region.py)
-- [Radial.volume_ratio](../region.py)、[Radial.run](../region.py)、[Radial.run.epsilon](../region.py)、[Radial.run.check](../region.py)
-- [Radial.schemes](../region.py)、[Radial.geometry](../region.py)、[Radial.publish](../region.py)、[Radial.publish:inner](../region.py)
-- [Radial.publish:outer](../region.py)、[Radial.publish:scheme](../region.py)、[Radial.publish:mu](../region.py)、[CutSlice](../region.py)
-- [Cutting](../region.py)、[Cutting.cuts](../region.py)、[Cutting.networks](../region.py)、[Cutting.count](../region.py)
-- [Cutting.clip](../region.py)、[Cutting.sets](../region.py)、[Cutting.run](../region.py)、[Cutting.cut](../region.py)
-- [Cutting.cut.history](../region.py)、[Cutting.cut:vertices](../region.py)、[Cutting.cut:status](../region.py)、[Cutting.cut:version](../region.py)
-- [Cutting.row](../region.py)、[Cutting.row:x](../region.py)、[Cutting.row:choice](../region.py)、[Cutting.row:cost](../region.py)
-- [Cutting.row:outer](../region.py)、[Cutting.row:inner](../region.py)、[Cutting.row:status](../region.py)、[build_partition](../region.py)
-- [build_partition.certified](../region.py)、[build_partition:sign](../region.py)、[build_partition:status](../region.py)、[build_partition:certified](../region.py)
-- [build_partition:how](../region.py)、[build_partition:seconds](../region.py)、[build_partition:gap](../region.py)、[build_partition:volume_ratio](../region.py)
-- [build_partition:cones](../region.py)、[build_partition:networks](../region.py)、[build_partition:accepted](../region.py)、[build_partition:cuts](../region.py)
-- [build_partition:inner](../region.py)、[build_partition:outer](../region.py)、[_partition](../region.py)、[build_region](../region.py)
-- [build_region.workers](../region.py)、[build_region.seconds](../region.py)、[build_region.settings](../region.py)、[build_region:axis_lower](../region.py)
-- [build_region:axis_bounds](../region.py)、[build_region:partitions](../region.py)
+- [SUPPORT_SECONDS](../region.py)、[PASS_SHARE](../region.py)、[BOUNDARY_TOL](../region.py)、[ORIGIN_CLEARANCE](../region.py)
+- [FACE_TOL](../region.py)、[CERTIFIED_FACES](../region.py)、[halfspaces](../region.py)、[covered](../region.py)
+- [clip_polytope.coefficient](../region.py)、[clip_polytope.constant](../region.py)、[union_measure](../region.py)、[box_vertices](../region.py)
+- [clip_box](../region.py)、[cone_clip](../region.py)、[cone_outer](../region.py)、[piece](../region.py)
+- [sandwich](../region.py)、[boundary_faces](../region.py)、[face_measures](../region.py)、[chebyshev_center](../region.py)
+- [choose_criterion](../region.py)、[allowed_offsets](../region.py)、[normal_key](../region.py)、[Cone](../region.py)
+- [Cone.keys](../region.py)、[Cone.x](../region.py)、[Cone.verts](../region.py)、[Cone.cover](../region.py)
+- [Cone.inherited](../region.py)、[Cone.mu](../region.py)、[Cone.final](../region.py)、[Cone.status](../region.py)
+- [Cone.c](../region.py)、[Cone.halfspace](../region.py)、[Radial](../region.py)、[Radial.bounds](../region.py)
+- [Radial.directions](../region.py)、[Radial.midpoints](../region.py)、[Radial.rays](../region.py)、[Radial.nears](../region.py)
+- [Radial.origin](../region.py)、[Radial.incumbents](../region.py)、[Radial.incumbent_points](../region.py)、[Radial.cones](../region.py)
+- [Radial.deadline](../region.py)、[Radial.U](../region.py)、[Radial.vertex](../region.py)、[Radial.near](../region.py)
+- [Radial.inner](../region.py)、[Radial.misocp](../region.py)、[Radial.solve](../region.py)、[Radial.options](../region.py)
+- [Radial.split](../region.py)、[Radial.delta](../region.py)、[Radial.volume_ratio](../region.py)、[Radial.run](../region.py)
+- [Radial.run.epsilon](../region.py)、[Radial.run.check](../region.py)、[Radial.schemes](../region.py)、[Radial.geometry](../region.py)
+- [Radial.publish](../region.py)、[Radial.publish:inner](../region.py)、[Radial.publish:outer](../region.py)、[Radial.publish:scheme](../region.py)
+- [Radial.publish:mu](../region.py)、[Network](../region.py)、[Network.points](../region.py)、[Network.vertices](../region.py)
+- [Network.full](../region.py)、[Network.outer](../region.py)、[Network.faces](../region.py)、[Network.boundary](../region.py)
+- [Network.face_status](../region.py)、[Network.criterion](../region.py)、[Network.center](../region.py)、[Network.allowed](../region.py)
+- [Network.areas](../region.py)、[Network.upper](../region.py)、[Network.priority](../region.py)、[Network.cache](../region.py)
+- [Network.lost](../region.py)、[Network.status](../region.py)、[Network.version](../region.py)、[Network.weight](../region.py)
+- [Network.seeds](../region.py)、[Network.rebuild](../region.py)、[Network.evaluate](../region.py)、[Network.next_normal](../region.py)
+- [Network.add](../region.py)、[Network.ratio](../region.py)、[Network.check](../region.py)、[Support](../region.py)
+- [Support.networks](../region.py)、[Support.oracles](../region.py)、[Support.count](../region.py)、[Support.seeds](../region.py)
+- [Support.run](../region.py)、[Support.query](../region.py)、[Support.query:support](../region.py)、[Support.query:certified](../region.py)
+- [Support.query:faces](../region.py)、[Support.query:ratio](../region.py)、[Support.query:status](../region.py)、[Support.query:sp_point](../region.py)
+- [Support.query:cut](../region.py)、[Support.row](../region.py)、[Support.row:x](../region.py)、[Support.row:choice](../region.py)
+- [Support.row:cost](../region.py)、[Support.row:outer](../region.py)、[Support.row:inner](../region.py)、[Support.row:status](../region.py)
+- [Support.sets](../region.py)、[build_partition](../region.py)、[build_partition.certified](../region.py)、[build_partition:sign](../region.py)
+- [build_partition:status](../region.py)、[build_partition:certified](../region.py)、[build_partition:how](../region.py)、[build_partition:seconds](../region.py)
+- [build_partition:gap](../region.py)、[build_partition:volume_ratio](../region.py)、[build_partition:cones](../region.py)、[build_partition:networks](../region.py)
+- [build_partition:accepted](../region.py)、[build_partition:supports](../region.py)、[build_partition:inner](../region.py)、[build_partition:outer](../region.py)
+- [_partition](../region.py)、[build_region](../region.py)、[build_region.workers](../region.py)、[build_region.seconds](../region.py)
+- [build_region.settings](../region.py)、[build_region:axis_lower](../region.py)、[build_region:axis_bounds](../region.py)、[build_region:partitions](../region.py)
 
 ### plot.py
 

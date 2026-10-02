@@ -33,8 +33,9 @@ def test_forward_prefixes_partition_and_maps_signs():
     monitor, x, cut = recorded_monitor(2)
     state = monitor.state
     assert np.all(np.asarray(state['cones']['--:1']['inner']) <= 0.)
-    assert state['schemes']['--:1']['x'] == x.tolist() and state['schemes']['--:1']['status'] == 'stagnated'
+    assert state['schemes']['--:1']['x'] == x.tolist() and state['schemes']['--:1']['status'] == 'eps_B'
     assert state['cut_history']['--:1']['sign'] == [-1, -1] and state['cut_history']['--:1']['scheme'] == '--:1'
+    assert state['schemes']['--:1']['sign'] == [-1, -1]
     mapped = np.asarray(state['cut_history']['--:1']['cut'])
     power = np.array([40., 60.])
     assert cut[0]+cut[1:3]@power == pytest.approx(mapped[0]+mapped[1:3]@(-power))
