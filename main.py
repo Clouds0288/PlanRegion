@@ -1,21 +1,23 @@
 """规划域主线（方法 RCUT：径向锥夹逼 + 主线割平面）：参数、计算入口与原生回放入口。"""
 import argparse
+import os
 from pathlib import Path
 from types import SimpleNamespace
 import numpy as np
 
 from Network.four_bus_five_corridor import FourBus
-from Network.case33bw import Case33, CURRENT_LIMIT
+from Network.case33bw import Case33, Case33Plan, CURRENT_LIMIT
 from region import build_region
 from monitor import RunMonitor, SynchronizedReplay
-from vertify import (ac_network, scan_path, scan_ac_reference, reference_box,
+from plot import draw_convergence
+from vertify import (ac_network, scan_path, scan_ac_reference, reference_box, convergence, load_scan,
                      import_ac_reference, export_comparison, AC_CACHE_METHOD)
 
 # 运行设置：DIMENSION 同时控制计算、扫描及回放的维数。
 mode = 1                          # 符号分区：负光伏至正负荷
-NETWORK = Case33                  # FourBus / Case33
+NETWORK = Case33                  # FourBus / Case33 / Case33Plan
 DIMENSION = 3                     # 2 / 3；Case33: (18,25) / (18,25,30)
-BUDGET = 20000.                   # FourBus 建设预算；Case33 用其 switch_budget
+BUDGET = 20000.                   # FourBus 建设预算；Case33 用其 switch_budget，Case33Plan 用其 plan_budget
 CASE_TIME_LIMIT = 300             # 构域总时限（墙钟，各分区并行），含初始化和记录，不含事后扫描
 WORKERS = 16                      # 并行分区进程数；OBBT 线程数为 WORKERS//仍在计算的分区数
 SOLVER_THREADS = 1                # 每个构域求解器的线程数（分区已并行）
@@ -39,8 +41,12 @@ OUTPUT = ROOT/'results'/'mainline'
 SCAN_OUTPUT = ROOT/'results'/'scan'
 
 
+CASES = {'fourbus': (FourBus, BUDGET, (1, 2, 3)), 'case33': (Case33, Case33.switch_budget, (18, 25, 30)),
+         'case33plan': (Case33Plan, Case33Plan.plan_budget, (18, 25, 30))}   # 算例键 → (网架类, 预算, 三维节点)
+
+
 def recording_path(case, output=OUTPUT, load_nodes=None, dimension=DIMENSION, mode=mode):
-    nodes = ({'fourbus': (1, 2, 3), 'case33': (18, 25, 30)}[case][:dimension]
+    nodes = (CASES[case][2][:dimension]
              if load_nodes is None else load_nodes)
     return Path(output)/f"mode_{mode}"/f"{case}_{'_'.join(map(str, nodes))}.json.gz"
 
@@ -95,23 +101,40 @@ def run(network, *, budget=BUDGET, divisions=DIVISIONS, show_ui=SHOW_UI, output=
 
 def main(case=None, load_nodes=None, divisions=None, *, dimension=None, seconds=CASE_TIME_LIMIT,
          show=SHOW_UI, scan=True, reference=None, output=OUTPUT, force_rescan=None):
-    case = {FourBus: 'fourbus', Case33: 'case33'}[NETWORK] if case is None else case
+    case = next(key for key, (kind, _, _) in CASES.items() if kind is NETWORK) if case is None else case
     dimension = DIMENSION if dimension is None else dimension
-    load_nodes = ({'fourbus': (1, 2, 3), 'case33': (18, 25, 30)}[case][:dimension]
-                  if load_nodes is None else tuple(load_nodes))
-    network_type, budget = {'fourbus': (FourBus, BUDGET), 'case33': (Case33, Case33.switch_budget)}[case]
+    network_type, budget, nodes = CASES[case]
+    load_nodes = nodes[:dimension] if load_nodes is None else tuple(load_nodes)
     divisions = (DIVISIONS if case == 'fourbus' and len(load_nodes) == 2 else SCAN_DIVISIONS[len(load_nodes)]) if divisions is None else divisions
-    network = network_type(load_nodes=load_nodes, **({'current_limit': CURRENT_LIMIT} if case == 'case33' else {}))
+    network = network_type(load_nodes=load_nodes, **({} if case == 'fourbus' else {'current_limit': CURRENT_LIMIT}))
     return run(network, budget=budget, divisions=divisions,
         show_ui=show, output=recording_path(case, output, load_nodes), tau=REGION_TAU,
         time_limit=seconds, workers=WORKERS, threads=SOLVER_THREADS, scan=scan, reference=reference, scan_workers=SCAN_WORKERS,
         force_rescan=FORCE_RESCAN if force_rescan is None else force_rescan, scan_output=SCAN_OUTPUT)
 
 
+def convergence_figure(recordings):
+    """同一算例多次运行的收敛过程画成一张图（扫描网格取各记录的校验缓存），存于各运行目录的公共上级。"""
+    runs = {}
+    for path in recordings:
+        monitor = RunMonitor()
+        monitor.load_recording(path)
+        result, validation = monitor.state['result'], monitor.state['validation']
+        parts = result['partitions']
+        name = (f"{Path(path).parent.parent.name}：{sum(p['certified'] for p in parts)}/{len(parts)} 获证，"
+                f"最慢分区 {max(p['seconds'] for p in parts):.0f} s，内域 MR {validation['mr_percent']:.3f}% / "
+                f"FR {validation['fr_percent']:.3f}%")
+        runs[name] = convergence(monitor, load_scan(ROOT/validation['cache_path']))
+    target = Path(os.path.commonpath([Path(p).parent.parent for p in recordings]))/(
+        Path(recordings[0]).name.removesuffix('.json.gz')+'_convergence.png')
+    draw_convergence(runs, len(monitor.state['load_nodes'])*REGION_TAU, target)
+    return target
+
+
 if __name__ == '__main__':
     parser = argparse.ArgumentParser(description='符号分区规划域（RCUT）与离线回放')
-    parser.add_argument('--case', choices=('fourbus', 'case33', 'both'),
-                        default={FourBus: 'fourbus', Case33: 'case33'}[NETWORK])
+    parser.add_argument('--case', choices=(*CASES, 'both'),
+                        default=next(key for key, (kind, _, _) in CASES.items() if kind is NETWORK))
     parser.add_argument('--dimension', type=int, choices=(2, 3), default=DIMENSION)
     parser.add_argument('--load-nodes', type=lambda value: tuple(map(int, value.split(','))))
     parser.add_argument('--seconds', type=float, default=CASE_TIME_LIMIT)
@@ -122,9 +145,12 @@ if __name__ == '__main__':
     parser.add_argument('--force-rescan', action='store_true', default=FORCE_RESCAN)
     parser.add_argument('--reference', type=Path, help='导入同配置的 AC/SOCP 区域缓存或包含该缓存路径的新记录')
     parser.add_argument('--replay', nargs='?', const=True, type=Path, help='只回放；可指定记录路径')
+    parser.add_argument('--convergence', nargs='+', type=Path, help='由同一算例多次运行的记录画收敛过程图，不运行优化器')
     args = parser.parse_args()
     cases = ('fourbus', 'case33') if args.case == 'both' else (args.case,)
-    if args.replay:
+    if args.convergence:
+        print(convergence_figure(args.convergence))
+    elif args.replay:
         paths = ([args.replay] if args.replay is not True else
                  [recording_path(case, args.output, load_nodes=args.load_nodes, dimension=args.dimension)
                   for case in cases])

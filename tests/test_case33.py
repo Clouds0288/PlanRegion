@@ -26,6 +26,21 @@ class Case33Tests(unittest.TestCase):  # 检查模型共享的数据和物理证
                                    np.tile(network.original_q[fixed], (2, 1)), atol=1e-12)  # 无功背景必须等于原始 kvar 数据。
         np.testing.assert_allclose(q[:, network.selected]*network.base, power*network.q_ratio)
 
+    def test_expansion_case_switches_candidates_and_budget(self):  # 扩展规划算例：开断免费、候选计建设费、原始方案费用 0。
+        from types import SimpleNamespace
+        from Network.case33bw import Case33Plan, CURRENT_LIMIT
+        from vertify import budget_schemes
+        plan = Case33Plan(current_limit=CURRENT_LIMIT)
+        variable = {c.id: (c.initial_active, float(c.types[0].investment_cost)) for c in plan.corridors if c.switchable}
+        self.assertEqual(variable, {'7-8': (True, 0.), '11-12': (True, 0.), '14-15': (True, 0.), '28-29': (True, 0.),
+                                    '32-33': (True, 0.), '21-8': (False, 4.), '9-15': (False, 4.), '12-22': (False, 4.),
+                                    '18-33': (False, 1.), '25-29': (False, 1.)})
+        x0 = plan.encode_plan(plan.initial_plan)
+        self.assertEqual(plan.cost_offset+plan.cost@x0, 0.)
+        np.testing.assert_allclose(plan.r, network.r)  # 线路参数与原 Case33 相同（候选即原联络线）
+        counts = [len(budget_schemes(SimpleNamespace(network=plan), budget)) for budget in (0, 2, plan.plan_budget)]
+        self.assertEqual(counts, [1, 11, 87])
+
 
 if __name__=='__main__':  # 支持单独运行物理数据检查。
     unittest.main()  # 执行当前文件测试。

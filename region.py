@@ -387,8 +387,8 @@ class Radial:
         return self.midpoints[key]
 
     def step(self, kind, text, **geometry):
-        """记录一步求解为 step 帧：kind、说明文字与几何（kW 幅值：点 p、折线 vertices；点所属网架 scheme），
-        回放时逐步画出。"""
+        """记录一步求解为 step 帧：kind、说明文字与几何（kW 幅值：点 p、折线 vertices；点所属网架 scheme），回放时
+        逐步画出；判据步另带夹逼间隙 gap。"""
         self.monitor._emit('step', phase=self.phase, step=dict(kind=kind, text=text, **geometry))
 
     # 证书：紧化、原点认证、射线顶点与近端覆盖
@@ -740,7 +740,7 @@ class Cutting:
                 self.declined.update(queue[k+1:])
                 reason = '已达 ε' if after <= self.epsilon else f'降幅不足 {GAP_SHARE:g}ε'
                 radial.step('check', f'CUT 本轮结束：割完网架 {radial.label(x)} 后间隙 {before:.2%} → {after:.2%}，'
-                                     f'{reason}；本轮其余 {len(queue)-k-1} 个网架不再割')
+                                     f'{reason}；本轮其余 {len(queue)-k-1} 个网架不再割', gap=after)
                 return
             before = after
 
@@ -850,7 +850,8 @@ def build_partition(network, sign, budget, monitor, settings):
     def certified():
         """夹逼判据：vol(K^OUT)-vol(I)<=ε·vol(I)，I=(K^IN ∪ N^CUT)∩K^OUT。"""
         gap = cutting.gap()
-        radial.step('check', f"判据：vol(K^OUT)/vol(I)−1 = {gap:.2%}，ε = {epsilon:.1%} → {'认证' if gap <= epsilon else '未满足'}")
+        radial.step('check', f"判据：vol(K^OUT)/vol(I)−1 = {gap:.2%}，ε = {epsilon:.1%} → {'认证' if gap <= epsilon else '未满足'}",
+                    gap=gap)
         return gap <= epsilon
 
     # 2. A：径向全局搜索到放宽目标 ε_A，时限为分区时限的 share_A
@@ -885,7 +886,7 @@ def build_partition(network, sign, budget, monitor, settings):
                   cuts=cutting.count, inner=[r*radial.bounds for r in rows['inner']],
                   outer=[r*radial.bounds for r in rows['outer']])
     monitor._emit('partition_end', phase='分区完成' if result['certified'] else '分区停止', status=status,
-                  active_scheme=None, step=dict(kind='end', text=f"分区结束：{status}，{result['cones']} 个锥、"
+                  active_scheme=None, step=dict(kind='end', gap=result['gap'], text=f"分区结束：{status}，{result['cones']} 个锥、"
                                                                 f"{result['cuts']} 刀，间隙 {result['gap']:.2%}"
                                                 if result['gap'] is not None else f'分区结束：{status}'))
     return result

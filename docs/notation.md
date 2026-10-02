@@ -27,6 +27,8 @@
 
 Case33 保留原 MATPOWER 线路与背景负荷，仅七条开关可变；相对初始状态的一次闭合或断开各计一次，预算 `switch_budget=7`。常闭开关成本系数为 -1，常开为 +1，`cost_offset` 补回初始常闭数。
 
+Case33Plan（`--case case33plan`，网架名 case33bw_plan）是扩展规划算例，线路参数与背景负荷同 Case33：`Case33Plan.switches` 为可开断的既有线路 S1–S5（7-8、11-12、14-15、28-29、32-33，基态闭合，开断不计费）；`Case33Plan.candidates` 为基态不建的候选走廊 C1–C5（即原五条联络线 8-21、9-15、12-22、18-33、25-29，阻抗不变，相对建设费 4、4、4、1、1）；其余线路固定。预算为所建候选的建设费之和，`Case33Plan.plan_budget=14` 即全部候选都可建，共 87 个径向方案。两个算例共用 `_Case33bw._build`：按 MATPOWER 数据建网，`cost_offset=-c@x0` 使原始方案的费用为 0。
+
 入口共同采用 `CURRENT_LIMIT=200` A（实验指定值，不是原数据额定值）。`Case33(current_limit=...)` 可显式传标量或 37 项数组，构造器默认 inf 保留。`ell_limit=(current_limit/I_base)**2`，`I_base=base/(sqrt(3)*voltage_kv)` A；型号及树上的 `ell_limit` 始终是标幺电流平方。主线与 AC/SOCP 参考使用同一限额。
 
 ## 拓扑与运行状态
@@ -179,7 +181,9 @@ SP 固定 x,p 后最小化非负 `eta`（求解器名 violation），只允许�
 
 `cone` 帧另有 volume_ratio（ΣΔ_k/Σvol(K^IN_k)）；`cut` 帧另有 schemes 与 cut_history。
 
-每次求解或判定在其完成时记为一帧的 `step`（`Radial.step:kind / text`，几何为 kW 幅值的点 `p` 与折线 `vertices`、点所属网架 `scheme`，`forward` 乘 sign 并给 scheme 加分区前缀；`step` 不在 MERGED 中，帧状态保留最近一次）。kind 依流程为：center（中心射线，max Σξ；候选未紧化时其后各条候选射线为 ray 步）、obbt、origin（p=0 的 SP）、ray（射线 max t，线段 0→v）、near（反向射线，线段远端→近端）、root（根锥 K_0）、cone（锥 MISOCP max c·ξ，点为解点 ξ*，折线为 K^OUT_k 的远端面 μ_k·v_{k,i}，`Radial.far_face`）、lazy（`Radial.misocp` 的懒惰 OBBT 一轮：x 自由 MISOCP 的现任网架尚未紧化，附当前上界与现任解点，随后 OBBT 并重解）、split（细分 Δ_k 最大的锥）、network（开始割网架 x）、sp（顶点评分 min η，附 feasible）、cut（取割）、network_end、check（夹逼判据）、end（分区结束）。
+判据步（check）与分区结束步（end）另带数值 `gap`（夹逼间隙，**I** 为空时为 null）。每次求解或判定在其完成时记为一帧的 `step`（`Radial.step:kind / text`，几何为 kW 幅值的点 `p` 与折线 `vertices`、点所属网架 `scheme`，`forward` 乘 sign 并给 scheme 加分区前缀；`step` 不在 MERGED 中，帧状态保留最近一次）。kind 依流程为：center（中心射线，max Σξ；候选未紧化时其后各条候选射线为 ray 步）、obbt、origin（p=0 的 SP）、ray（射线 max t，线段 0→v）、near（反向射线，线段远端→近端）、root（根锥 K_0）、cone（锥 MISOCP max c·ξ，点为解点 ξ*，折线为 K^OUT_k 的远端面 μ_k·v_{k,i}，`Radial.far_face`）、lazy（`Radial.misocp` 的懒惰 OBBT 一轮：x 自由 MISOCP 的现任网架尚未紧化，附当前上界与现任解点，随后 OBBT 并重解）、split（细分 Δ_k 最大的锥）、network（开始割网架 x）、sp（顶点评分 min η，附 feasible）、cut（取割）、network_end、check（夹逼判据）、end（分区结束）。
+
+收敛过程：`convergence` 由一份回放与其校验扫描网格求各分区夹逼间隙随时间（分区尚无计入 **I** 的 N^CUT_x 时 **I**=**K**^IN，由锥行体积直接求；之后取判据步的 gap），以及全部分区内域相对 AC 的 MR/FR 随时间（按 `CONVERGENCE_SAMPLES` 个等分时刻采样，只重算变化过的分区），返回 `convergence:time / mr / fr / gaps / ends`。`draw_convergence` 把多次运行画在同一张图上，`main.py --convergence 记录…`（`convergence_figure`）输出 `<案例>_<节点>_convergence.png` 到各运行目录的公共上级。
 
 窗口：A 是全部分区的全局总图，坐标 `NativeWindow.limits` 由 `NativeWindow._fit_limits` 取最新帧全部 K^OUT_k 的范围（两侧各 10%；可勾选取整个分区盒）；回放时即最终外界、全程不变，实时运行中只在内容超出或某一维缩到范围的 `FIT_SHRINK` 以下时重设。网架面板取其中本分区所在的卦限，新网架追加在末页、默认不跟随当前网架。`NativeWindow._draw_steps` 在 A 上画所选分区最近 `STEP_TRAIL` 个步骤（plot.py 的 `STEP_STYLE` 给标记、颜色与短标签；坐标外的点贴边画空心），网架面板只画当前步骤中属于本网架的点，并描出当前帧新建或求界的锥与切割中的 N^CUT_x；步骤栏列出 `STEP_LOG` 行，点击跳转。“逐步跟踪”选定分区后，上一步/下一步、上一割/下一割与播放只停在该分区的帧（`NativeWindow.frame_meta` 记各帧的分区、事件与是否步骤）。校验面板是逐格对比：参考可行格为浅色（三维画其表面），遗漏格红色、多余格橙色，可在计算域—AC、计算域—SOCP、SOCP—AC 之间切换。仅当前帧之前的锥、网架、割与点出现在过程图；最终扫描独立显示。result 包含 status/certified/inner/outer/partitions/timing，分区证书在 partition_end；数值未决和时限未完不能改成 certified。JSON 非有限值为 null，仅预算 null 可按 inf 解释。
 
@@ -211,6 +215,12 @@ SP 固定 x,p 后最小化非负 `eta`（求解器名 violation），只允许�
 
 单次 MP/SP 的时限仍用 MP_TIME_LIMIT/SP_TIME_LIMIT，扫描单点 60 秒；AC_ITERATIONS 为 AC 见证的迭代次数。不得合并不同语义的容差。数值配置变化须同步本表和结果协议。
 
+## 显式迁移（2026-10-02：新算例 Case33Plan 与收敛过程图）
+
+- 网架：Case33 的建网代码移入基类 `_Case33bw._build`（Case33 的数据与网架指纹不变，原扫描缓存继续可用）；新增 `Case33Plan`。`main.py` 的算例表改为 `CASES`（算例键 → 网架类、预算、三维节点）。
+- 记录：判据步与分区结束步增加数值 `gap`，旧记录没有该字段，收敛图中计入 N^CUT_x 之后的间隙不可得。
+- 新增 `vertify.convergence`、`plot.draw_convergence` 与 `main.py --convergence`。
+
 ## 显式迁移（2026-10-02：RCUT 吸收五项改动，模块各司其职）
 
 对照实验 G12345 成为主线，方法名仍为 RCUT（实验脚本已删除，二维 60 s 对照运行在被 git 忽略的 results/rcut_variants）：
@@ -222,7 +232,7 @@ SP 固定 x,p 后最小化非负 `eta`（求解器名 violation），只允许�
 - OBBT 线程数由固定的 `settings.obbt_workers=workers//2^d` 改为 `settings.workers // RunMonitor.running()`；`RunMonitor.share` 的通道增加仍在计算的分区数。
 - 记录精简：删除 `global_point`、`sp_point`、`eta`、`feasible`、`area_ratio`、`small_cuts`、`patience`、`cone_count` 与 `Cutting.row:inner`；过程点并入 step 的 `p` 与 `scheme`，计入 **I** 由网架状态判定。窗口不再单列 MISOCP 解点与 SP 点，坐标并入步骤说明。
 - 模块分工：plot.py 只画图，原有的三维并集测度 `union_volume`、`_clip_face` 移入 region.py；monitor.py 的 `_union` 移入 region.py 为 `polygon_union`；monitor.py 的绘图基元与配色移入 plot.py 并改为公开名：`_cut_segment`→`cut_segment`、`_cut_polygon`→`cut_polygon`、`_hull_geometry`→`hull_geometry`、`_draw_3d`→`draw_3d`、`_voxel_faces`→`voxel_faces`、`_cap`→`cap`、`_draw`→`draw_geometry`，`STEP_STYLE` 与配色常数同移。
-- 结果：results/mainline 的二维归档为新主线运行（扫描缓存 region_f629fae70ed82ac4.npz，网格随外域扩为 161×170）；三维归档仍是改动前 RCUT 的运行，待新主线三维扫描完成后替换。
+- 结果：results/mainline 的二维、三维归档为新主线运行（扫描缓存 region_f629fae70ed82ac4.npz 与 region_22dea14fe7af0414.npz，网格随外域扩为 161×170 与 142×179×116）。
 
 ## 显式迁移（2026-10-02：回放逐步标注与全局主图）
 
@@ -263,7 +273,8 @@ SP 固定 x,p 后最小化非负 `eta`（求解器名 violation），只允许�
 ### Network/case33bw.py
 
 - [CURRENT_LIMIT](../Network/case33bw.py)、[Case33](../Network/case33bw.py)、[Case33.__init__.current_limit](../Network/case33bw.py)、[Case33.switch_budget](../Network/case33bw.py)
-- [LOAD_NODES](../Network/case33bw.py)
+- [LOAD_NODES](../Network/case33bw.py)、[Case33Plan](../Network/case33bw.py)、[Case33Plan.switches](../Network/case33bw.py)、[Case33Plan.candidates](../Network/case33bw.py)
+- [Case33Plan.plan_budget](../Network/case33bw.py)、[_Case33bw](../Network/case33bw.py)、[_Case33bw._build](../Network/case33bw.py)、[_Case33bw._build.price](../Network/case33bw.py)
 
 ### vertify.py
 
@@ -275,7 +286,9 @@ SP 固定 x,p 后最小化非负 `eta`（求解器名 violation），只允许�
 - [reference_box](../vertify.py)、[region_path](../vertify.py)、[save_scan](../vertify.py)、[scan_ac_reference](../vertify.py)
 - [scan_ac_reference.origin](../vertify.py)、[scan_ac_reference.start](../vertify.py)、[scan_ac_reference.states](../vertify.py)、[scan_ac_reference.step](../vertify.py)
 - [scan_line](../vertify.py)、[scan_path](../vertify.py)、[scan_problem](../vertify.py)、[scan_problem.eta](../vertify.py)
-- [signed_ac_witness](../vertify.py)、[SAVE_SECONDS](../vertify.py)
+- [signed_ac_witness](../vertify.py)、[SAVE_SECONDS](../vertify.py)、[CONVERGENCE_SAMPLES](../vertify.py)、[convergence](../vertify.py)
+- [convergence:time](../vertify.py)、[convergence:mr](../vertify.py)、[convergence:fr](../vertify.py)、[convergence:gaps](../vertify.py)
+- [convergence:ends](../vertify.py)
 
 ### monitor.py
 
@@ -352,7 +365,8 @@ SP 固定 x,p 后最小化非负 `eta`（求解器名 violation），只允许�
 - [MAX_CONES](../main.py)、[main](../main.py)、[main.case](../main.py)、[main.dimension](../main.py)
 - [main.load_nodes](../main.py)、[mode](../main.py)、[recording_path](../main.py)、[run](../main.py)
 - [run.budget](../main.py)、[run.force_rescan](../main.py)、[run.scan_output](../main.py)、[run.workers](../main.py)
-- [run.threads](../main.py)、[run.settings](../main.py)
+- [run.threads](../main.py)、[run.settings](../main.py)、[CASES](../main.py)、[convergence_figure](../main.py)
+- [convergence_figure.recordings](../main.py)
 
 ### region.py
 
@@ -393,7 +407,7 @@ SP 固定 x,p 后最小化非负 `eta`（求解器名 violation），只允许�
 
 - [STEP_STYLE](../plot.py)、[cut_segment](../plot.py)、[cut_segment.axis_lower](../plot.py)、[cut_polygon](../plot.py)
 - [cut_polygon.axis_lower](../plot.py)、[hull_geometry](../plot.py)、[draw_3d](../plot.py)、[voxel_faces](../plot.py)
-- [cap](../plot.py)、[draw_geometry](../plot.py)
+- [cap](../plot.py)、[draw_geometry](../plot.py)、[SERIES](../plot.py)、[draw_convergence](../plot.py)
 
 ### Network/four_bus_five_corridor.py
 

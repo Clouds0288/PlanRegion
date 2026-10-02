@@ -161,6 +161,7 @@ SCAN_OUTPUT = Path(__file__).resolve().parent/'results'/'scan'
 SCAN_FIELDS = ('states', 'witness_x', 'residual', 'socp_states', 'socp_witness_x', 'socp_residual')
 SAVE_SECONDS = 30.   # 扫描中两次落盘的最短间隔：避免紧接着替换刚写入的缓存（Windows 上该文件可能仍被扫描占用）
 SCAN_TOL = 1e-6      # 参考扫描接受可行解的质量门槛（Gurobi 默认可行性容差）；不可行判定仍用 PLANNING_TOL。
+CONVERGENCE_SAMPLES = 150   # 收敛过程按时间等分的采样数：在采样时刻重算内域相对 AC 的 MR/FR
                      # 只决定原先给不出标签的点，已有标签不变，故不进入缓存身份
 
 
@@ -194,7 +195,9 @@ def reference_box(network, budget=None, *, mode=1, output=SCAN_OUTPUT):
                         model.optimize()
                         if model.Status == GRB.INFEASIBLE:
                             continue
-                        if model.Status not in (GRB.OPTIMAL, GRB.NODE_LIMIT, GRB.TIME_LIMIT) or not np.isfinite(model.ObjBound):
+                        # 分支定界的 ObjBound 在最优、节点 / 时间上限与数值困难提前终止（SUBOPTIMAL）时都是有效上界
+                        if (model.Status not in (GRB.OPTIMAL, GRB.NODE_LIMIT, GRB.TIME_LIMIT, GRB.SUBOPTIMAL)
+                                or not np.isfinite(model.ObjBound)):
                             raise RuntimeError(f'No finite SOCP coordinate bound: sign={sign}, axis={axis}, status={model.Status}')
                         bound = float(model.ObjBound)*problem.objective_scale
                         supports.append(dict(sign=sign, axis=axis, bound_kw=bound, status=int(model.Status)))
@@ -557,6 +560,69 @@ def scan_ac_reference(network, budget, reference, path=None, *, workers=20, mode
 
 
 
+def convergence(monitor, grid, samples=CONVERGENCE_SAMPLES):
+    """一份回放的收敛过程（已决格）：各分区夹逼间隙随时间，全部分区内域 I=K^IN ∪ (N^CUT∩K^OUT) 相对 AC 的 MR/FR 随时间。
+    间隙在分区尚无计入 I 的 N^CUT_x 时由锥行直接求（此时 I=K^IN，叶锥互不相交，体积可加），之后取判据步记录的 gap。
+    返回 dict(time, mr, fr, gaps={分区: [(秒, 间隙)]}, ends={分区: (秒, 是否获证)})。"""
+    from monitor import _merge, accepted, comparison_metrics
+    from region import covered, polytope_volume
+    # 1. 扫描格心、AC 标签与各分区所在卦限的格点
+    states, lower = np.asarray(grid['states']), np.asarray(grid['axis_lower'])
+    indices = np.indices(states.shape).reshape(states.ndim, -1).T
+    points = lower+(indices+.5)*(np.asarray(grid['bounds'])-lower)/np.array(states.shape)
+    known, truth = states.ravel() != 0, states.ravel() == 1
+    labels = monitor.state['partitions']
+    orthants = {label: np.flatnonzero(np.all(points*np.array([1. if s == '+' else -1. for s in label]) >= 0., axis=1))
+                for label in labels}
+    masks = {label: np.zeros(len(points), bool) for label in labels}
+    rows = lambda polygons: [dict(vertices=p) for p in polygons]
+
+    def partition(state, label):
+        """分区的叶锥行与计入 I 的 N^CUT_x。"""
+        cones = [row for key, row in state.get('cones', {}).items() if row and key.startswith(label+':')]
+        nets = [row['outer'] for key, row in state.get('schemes', {}).items() if key.startswith(label+':') and accepted(row)]
+        return cones, nets
+
+    # 2. 按时间顺序合并增量帧；partition 键只在变化时写入，沿历史累积
+    state, label, changed, volumes = {}, None, set(), {}
+    gaps, ends, time, mr, fr = {label: [] for label in labels}, {}, [], [], []
+    marks = list(np.linspace(0., monitor.history[-1]['elapsed'], samples+1)[1:])
+    for item in [*monitor.history, dict(elapsed=np.inf, patch=dict(event='end'))]:
+        # 3. 越过采样时刻：重算变化过的分区的格心覆盖，记全局 MR/FR
+        while marks and item['elapsed'] >= marks[0]:
+            for name in changed:
+                cones, nets = partition(state, name)
+                at = orthants[name]
+                masks[name][at] = (covered(points[at], rows(row['inner'] for row in cones))
+                                   | covered(points[at], rows(nets)) & covered(points[at], rows(row['outer'] for row in cones)))
+            changed = set()
+            metrics = comparison_metrics(np.any(list(masks.values()), axis=0)[known], truth[known])
+            time.append(marks.pop(0))
+            mr.append(np.nan if metrics['mr_percent'] is None else metrics['mr_percent'])
+            fr.append(np.nan if metrics['fr_percent'] is None else metrics['fr_percent'])
+        patch = item['patch']
+        _merge(state, patch)
+        label = patch.get('partition', label)
+        if label is None:
+            continue
+        # 4. 本帧所属分区的间隙：判据步直接记录；尚无计入 I 的网架时由锥体积求
+        step = patch.get('step') or {}
+        if {'cones', 'schemes'} & patch.keys():
+            changed.add(label)
+        if step.get('gap') is not None:
+            gaps[label].append((item['elapsed'], step['gap']))
+        elif 'cones' in patch:
+            cones, nets = partition(state, label)
+            if cones and not nets:
+                for row in cones:
+                    volumes.setdefault(id(row), (polytope_volume(row['inner']), polytope_volume(row['outer'])))
+                inner, outer = (sum(volumes[id(row)][k] for row in cones) for k in (0, 1))
+                gaps[label].append((item['elapsed'], outer/inner-1.))
+        if patch['event'] == 'partition_end':
+            ends[label] = item['elapsed'], state['status'] == 'certified'
+    return dict(time=np.array(time), mr=np.array(mr), fr=np.array(fr), gaps=gaps, ends=ends)
+
+
 def export_comparison(network, budget, result, ac_reference, output):
     """导出同坐标的实验、AC、SOCP 标签及三组遗漏率/多余率。"""
     from monitor import RunMonitor
@@ -606,7 +672,7 @@ def export_comparison(network, budget, result, ac_reference, output):
 
 
 def main():
-    from Network.case33bw import Case33, CURRENT_LIMIT
+    from Network.case33bw import Case33, Case33Plan, CURRENT_LIMIT
     from Network.four_bus_five_corridor import FourBus
     from monitor import RunMonitor
     parser = argparse.ArgumentParser(description=__doc__)
@@ -620,16 +686,17 @@ def main():
     monitor = RunMonitor(output=args.recording)
     monitor.load_recording(args.recording)
     state, result = monitor.state, monitor.state['result']
-    network = (Case33(load_nodes=tuple(state['load_nodes']), current_limit=CURRENT_LIMIT)
-               if state['network'] == 'case33bw' else FourBus(load_nodes=tuple(state['load_nodes'])))
-    budget, mode = state['budget'], state['mode']
-    path = scan_path(network, budget, mode=mode)
-    lower, upper = reference_box(network, budget, mode=mode)
+    nodes = tuple(state['load_nodes'])
+    kind = {'case33bw': Case33, 'case33bw_plan': Case33Plan, 'four_bus_five_corridor': FourBus}[state['network']]
+    network = kind(load_nodes=nodes) if kind is FourBus else kind(load_nodes=nodes, current_limit=CURRENT_LIMIT)
+    budget = state['budget']
+    path = scan_path(network, budget)
+    lower, upper = reference_box(network, budget)
     lower, upper = np.minimum(lower, result['axis_lower']), np.maximum(upper, result['axis_bounds'])
     divisions = args.divisions or (160 if len(network.load_nodes) == 2 else 80)
     reference = scan_ac_reference(network, budget,
         dict(axis_lower=lower, bounds=upper, shape=(divisions,)*len(lower), refinement=args.refine),
-        path, workers=args.workers, mode=mode, progress=monitor.scanning, force_rescan=args.force_rescan)
+        path, workers=args.workers, progress=monitor.scanning, force_rescan=args.force_rescan)
     monitor.validation_state.pop('error', None)
     monitor.validation(reference, result)
     monitor.save()

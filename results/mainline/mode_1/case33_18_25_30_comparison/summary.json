@@ -8,24 +8,24 @@
   ],
   "budget": 7,
   "shape": [
-    97,
-    115,
-    94
+    142,
+    179,
+    116
   ],
-  "cells": 1048570,
+  "cells": 2948488,
   "axis_lower_kw": [
-    -6506.0,
-    -7494.700000000001,
+    -9681.9,
+    -9700.75,
     -9688.125
   ],
   "bounds_kw": [
-    5342.550000000001,
-    4036.9249999999993,
-    6027.5
+    7663.4,
+    8248.475000000002,
+    9705.625
   ],
   "power_unit": "kW",
   "ac_identity": "ea7124157cce5bcd61e5782f37e7cfeb3ae25dcc2f396a26d1cb9809e7e770b5",
-  "ac_cache": "results/scan/case33bw/18_25_30/ea7124157cce5bcd61e5782f37e7cfeb3ae25dcc2f396a26d1cb9809e7e770b5/region_c4ccaae500788d99.npz",
+  "ac_cache": "results/scan/case33bw/18_25_30/ea7124157cce5bcd61e5782f37e7cfeb3ae25dcc2f396a26d1cb9809e7e770b5/region_22dea14fe7af0414.npz",
   "current_limit_a": [
     199.99999999999997,
     199.99999999999997,
@@ -71,42 +71,42 @@
   "ac_undecided": 0,
   "result_status": "time_limit",
   "result_certified": false,
-  "reused_points": 879207,
-  "computed_points": 169363,
+  "reused_points": 2948487,
+  "computed_points": 1,
   "metrics": {
     "inner": {
-      "mr_percent": 0.0,
-      "fr_percent": 4.366963823697017,
-      "missed_cells": 0,
-      "extra_cells": 6667,
+      "mr_percent": 0.010958753989671374,
+      "fr_percent": 4.022247935622995,
+      "missed_cells": 16,
+      "extra_cells": 6118,
       "reference_cells": 146002,
-      "computed_cells": 152669
+      "computed_cells": 152104
     },
     "outer": {
       "mr_percent": 0.0,
-      "fr_percent": 6.938114694015438,
+      "fr_percent": 5.463610463610464,
       "missed_cells": 0,
-      "extra_cells": 10885,
+      "extra_cells": 8438,
       "reference_cells": 146002,
-      "computed_cells": 156887
+      "computed_cells": 154440
     }
   },
   "comparisons": {
     "result_ac": {
-      "mr_percent": 0.0,
-      "fr_percent": 4.366963823697017,
-      "missed_cells": 0,
-      "extra_cells": 6667,
+      "mr_percent": 0.010958753989671374,
+      "fr_percent": 4.022247935622995,
+      "missed_cells": 16,
+      "extra_cells": 6118,
       "reference_cells": 146002,
-      "computed_cells": 152669
+      "computed_cells": 152104
     },
     "result_socp": {
-      "mr_percent": 19.416334756690933,
-      "fr_percent": 0.7388581759111275,
-      "missed_cells": 36513,
-      "extra_cells": 1128,
+      "mr_percent": 19.644461933603825,
+      "fr_percent": 0.6521896346554638,
+      "missed_cells": 36942,
+      "extra_cells": 992,
       "reference_cells": 188053,
-      "computed_cells": 152668
+      "computed_cells": 152103
     },
     "socp_ac": {
       "mr_percent": 0.0,

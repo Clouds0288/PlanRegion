@@ -31,15 +31,18 @@ N^CUT_x 是网架可行域的外近似，所以 RCUT 的结果内域 **I** 是�
 |---|---|---|---|
 | FourBus | 1、2 | 1、2、3 | 20000 元 |
 | Case33 | 18、25 | 18、25、30 | 7 次开合 |
+| Case33Plan | 18、25 | 18、25、30 | 相对建设费 14（全部候选可建） |
 
-正功率为负荷（PF=0.95），负功率为光伏（PF=1）。Case33 保持原线路参数与背景负荷，仅七条开关可变。主入口、AC 与 SOCP 校验共用 `Network/case33bw.py` 的 `CURRENT_LIMIT=200` A。
+正功率为负荷（PF=0.95），负功率为光伏（PF=1）。Case33 保持原线路参数与背景负荷，仅七条开关可变。Case33Plan 是扩展规划算例：S1–S5（7-8、11-12、14-15、28-29、32-33）为可开断的既有线路，基态闭合、开断不计费；C1–C5（原联络线 8-21、9-15、12-22、18-33、25-29，阻抗不变）为基态不建的候选，相对建设费 4、4、4、1、1，共 87 个径向方案。主入口、AC 与 SOCP 校验共用 `Network/case33bw.py` 的 `CURRENT_LIMIT=200` A。
 
 ```cmd
 python -X utf8 main.py --case case33 --dimension 2
 python -X utf8 main.py --case case33 --dimension 3 --output results/mainline/new_run
+python -X utf8 main.py --case case33plan --dimension 3 --seconds 1000 --output results/plan/run_1
+python -X utf8 main.py --convergence results/plan/run_1/mode_1/case33plan_18_25_30.json.gz results/plan/run_2/mode_1/case33plan_18_25_30.json.gz
 ```
 
-构域默认共享 300 秒总时限（`main.py` 的 `CASE_TIME_LIMIT`，`--seconds` 可改），`WORKERS=16` 个分区进程并行；事后扫描另计时。`--no-ui` 不开实时窗口，`--no-scan` 只构域。扫描格数默认二维 160×160、三维 80³（`--divisions`）。记录写入 `<输出目录>/mode_1/<案例>_<节点>.json.gz`，逐格对比写入旁边的 `_comparison/`。
+构域默认共享 300 秒总时限（`main.py` 的 `CASE_TIME_LIMIT`，`--seconds` 可改），`WORKERS=16` 个分区进程并行；事后扫描另计时。`--no-ui` 不开实时窗口，`--no-scan` 只构域。扫描格数默认二维 160×160、三维 80³（`--divisions`）。记录写入 `<输出目录>/mode_1/<案例>_<节点>.json.gz`，逐格对比写入旁边的 `_comparison/`。`--convergence` 把同一算例多次运行的收敛过程（各分区夹逼间隙、内域相对 AC 的 MR/FR 随时间）画成一张图，存于各运行目录的公共上级。
 
 ## 前端与回放
 
@@ -69,9 +72,9 @@ python -X utf8 monitor.py A.json.gz --compare B.json.gz
 | 案例 | 认证分区 | 最慢获证分区 | 内域 FR / MR | 外域 FR / MR |
 |---|---|---|---|---|
 | Case33 二维 (18,25) | 4/4 | 20.2 s | 0.947% / 0.031% | 1.360% / 0% |
-| Case33 三维 (18,25,30) | 7/8（--+ 到时限，间隙 7.33%） | 268.3 s | 4.367% / 0% | 6.938% / 0% |
+| Case33 三维 (18,25,30) | 7/8（--+ 到时限，间隙 1.82%） | 255.7 s | 4.022% / 0.011% | 5.464% / 0% |
 
-二维为当前主线（吸收五项改动：按间隙结束 CUT、只割叶锥相关网架、从 conv(**K**^OUT) 出发、限制中心射线懒惰 OBBT、OBBT 线程随剩余分区分配）的运行，扫描网格随外域扩为 161×170；三维仍为改动前 RCUT 的归档，新主线三维结果待扫描完成后更新。
+二维、三维均为当前主线（吸收五项改动：按间隙结束 CUT、只割叶锥相关网架、从 conv(**K**^OUT) 出发、限制中心射线懒惰 OBBT、OBBT 线程随剩余分区分配）的运行，扫描网格随外域扩为 161×170 与 142×179×116。
 
 两次都是 `main.py` 默认设置的完整流程（构域、扫描、校验）；扫描框为 SOCP 全局界与外包络范围的并，三维为 97×115×94 格，SOCP 参考只有 1 格未决（AC 不可行，不计入）。这次运行时机器后台负载较高，分区耗时比此前同代码的运行长约 20–40%，三维 --+ 分区到时限时的间隙因此较大（此前同算法 1.77%，内域 FR 4.279%）。内域多余格主要在含光伏反送的分区：二维 -- 123、-+ 35 格；三维 --- 2368、-+- 1493、+-- 1157、--+ 992 格，纯负荷分区 +++、+-+ 几乎没有。RCUT 的 **I** 含 **N**^CUT 外近似，FR 是外侧估计误差（二维 158 个多余格中 123 个来自 SOCP 松弛残余、在 **K**^IN 内）：它完整包含 RB 的认证内域，只多出一层 1–2 格厚的边界壳（见 `results/methods/README.md`）。
 
@@ -107,7 +110,7 @@ python -X utf8 vertify.py results/mainline/mode_1/case33_18_25.json.gz --workers
 | `monitor.py` | 过程记录与原生窗口（实时 / 回放） |
 | `plot.py` | 绘图基元：配色、二维几何、三维凸域、远端面片、体素表面、割的截线 |
 | `vertify.py` | 独立 AC/SOCP 参考、缓存、结果比较 |
-| `Network/` | FourBus、当前 Case33 与原始数据 |
+| `Network/` | FourBus、Case33、Case33Plan 与原始数据 |
 | `tests/` | 物理、构域、扫描与回放回归 |
 
 ```cmd
