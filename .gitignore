@@ -29,6 +29,9 @@ results/**
 !results/mainline/mode_1/case33_18_25_comparison/
 !results/mainline/mode_1/case33_18_25_comparison/**
 !results/mainline/mode_1/case33_18_25_30.json.gz
+!results/mainline/mode_1/case33_18_25_30_comparison/
+!results/mainline/mode_1/case33_18_25_30_comparison/comparison.npz
+!results/mainline/mode_1/case33_18_25_30_comparison/summary.json
 !results/scan/
 !results/scan/case33bw/
 !results/scan/case33bw/**/
@@ -37,6 +40,7 @@ results/**
 !results/scan/case33bw/18_25/d0121a1ad0ba8cc1e009da6cc204ad9cf53881d3e5f4c488a439cb11d5f6fb69/region_737610b09f58fa3c.npz
 !results/scan/case33bw/18_25_30/ea7124157cce5bcd61e5782f37e7cfeb3ae25dcc2f396a26d1cb9809e7e770b5/bounds.npz
 !results/scan/case33bw/18_25_30/ea7124157cce5bcd61e5782f37e7cfeb3ae25dcc2f396a26d1cb9809e7e770b5/region_3837a4b56856fbc1.npz
+!results/scan/case33bw/18_25_30/ea7124157cce5bcd61e5782f37e7cfeb3ae25dcc2f396a26d1cb9809e7e770b5/region_c4ccaae500788d99.npz
 # Curated method-comparison runs (compare_plan2, 2026-10-01): see results/methods/README.md and the manifest.
 !results/methods/
 !results/methods/**
