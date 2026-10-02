@@ -105,6 +105,24 @@ SP 固定 x,p 后最小化非负 `eta`（求解器名 violation），只允许�
 
 内域 I=(I_R ∪ ∪N_x)∩O_R，`sandwich` 返回 (vol(I), vol(O_R∩盒))，单位 xi^d：二维为 shapely 并集；三维按叶锥分解（叶锥内部互不相交），每锥的并集体积按 (锥几何, 相交 N_x 的版本键 `Cutting.sets`) 缓存，并集数值失败时只计 T（内域只会低估）。`piece` 是 N_x 与 锥∩O∩盒 之交，零体积时为空。分区认证 `build_partition.certified`：vol(O_R∩盒)-vol(I)<=ε·vol(I)，ε=d·tau；或径向部分自身满足 ΣΔ<=ε·Σvol(T)。
 
+## 区域一览
+
+![RCUT 各区域示意](regions_rcut.png)
+
+示意图为夸大的合成几何（两个网架、三个锥），实际运行中 I 与 O_R 只差 0.5–1.5%。
+
+| 区域 | 定义 | 由谁算出 | 与真实可行域的关系 |
+|---|---|---|---|
+| 分区盒 | xi∈[0,1]^d，xi=u/bounds | `port_bounds` | 全部范围 |
+| R_x | 网架 x 的 OBBT 紧化 SOCP 可行集（凸） | 不显式求出 | 单个网架的真实对象 |
+| R=∪R_x | 全部网架可行集的并 | 不显式求出 | AC ⊆ R（OBBT 包络对 AC 点有效） |
+| T、I_R=∪T | 锥内三角 conv(0, v_1..v_d)，v_i 为内域网架沿生成方向的紧化射线顶点 | R：`Radial.vertex`、`Cone.verts` | I_R ⊆ R，有证书内域 |
+| O=mu·T、O_R | T 按锥 MISOCP 上界放大，各锥并起来与盒取交 | R：`cone_misocp`、`Cone.mu` | R ⊆ O_R，有证书外界 |
+| N_x | 分区盒被联合割裁到停滞 | CUT：`Cutting.cut` | N_x ⊇ R_x，外近似 |
+| I | (I_R ∪ 计入的 N_x) ∩ O_R | `sandwich`、`build_partition:inner` | I_R ⊆ I ⊆ O_R，内域估计 |
+
+包含关系：I_R ⊆ R ⊆ O_R，AC ⊆ R，I_R ⊆ I ⊆ O_R；I 与 R 无严格包含，大体上 I 比 R 多一层壳。认证 vol(O_R)-vol(I) <= ε·vol(I) 表示内域估计已与有证书外界贴合到 ε 以内。
+
 ## 分区流程、并行与结果
 
 `build_partition` 依次为：A 阶段 `Radial.run(settings.discovery_eps)`，时限为分区时限的 `settings.discovery_share`；若体积缺口比仍大于 ε，CUT 割 X*；A+ 续跑 `Radial.run(ε, check)`，每次锥决策后先割新出现的网架，再检查夹逼判据。返回分区摘要：
