@@ -63,7 +63,7 @@ SP 固定 x,p 后最小化非负 `eta`（求解器名 violation），只允许�
 
 主线只用符号分区：`PortPhysics.sign` 为 ±1 向量，内部非负幅值 u，真实 p=sign*u；负荷 PF=0.95、光伏 PF=1，允许反送。`main.mode=1` 只传给扫描接口（`vertify` 的缓存身份仍区分 mode）。输出、回放和扫描始终是真实 kW；割只在所属符号区有效，联合割在分区内共享。
 
-`bounds=port_bounds(network)` 为公共正数坐标尺度 b（kW），内部点 `xi=u/bounds∈[0,1]^d` 无量纲；分区盒即 `[0,1]^d`。结果 `bound` 是查询目标的标量界，不能与 bounds 混用。叶锥、内三角形、N_x 与测度都在 xi 中计算，`build_partition` 返回前乘回 bounds 得 kW 幅值，`build_region` 再乘 sign 得带符号 kW。
+`bounds=port_bounds(network)` 为公共正数坐标尺度 b（kW），内部点 `xi=u/bounds∈[0,1]^d` 无量纲；分区盒即 `[0,1]^d`。结果 `bound` 是查询目标的标量界，不能与 bounds 混用。叶锥、K^IN_k、N^CUT_x 与测度都在 xi 中计算，`build_partition` 返回前乘回 bounds 得 kW 幅值，`build_region` 再乘 sign 得带符号 kW。
 
 `halfspaces/contains/clip_polytope` 不自动换算。面方程为 `F@xi+g<=0`；裁剪接口为 `constant+coefficient@xi>=0`。固定 x 的联合割在 xi 中为 `alpha+delta@x+(beta*bounds)@xi>=0`（`Cutting.clip`）。`covered` 先按包围盒筛点再逐行 `contains`，结果与逐行判定相同。`clip_box` 裁到 xi<=1（xi>=0 由锥保证），`cone_clip` 裁到锥 `U⁻¹xi>=0`，`box_vertices` 为分区盒顶点。
 
@@ -72,56 +72,63 @@ SP 固定 x,p 后最小化非负 `eta`（求解器名 violation），只允许�
 | 数学量 | 代码 | 单位与含义 |
 |---|---|---|
 | 方向 u_k | `Radial.directions`、`Radial.midpoints` | xi 中的单位向量，初始为坐标轴；棱 (a,b) 的中点方向由相邻锥共用，射线缓存随之共用 |
-| 锥 K=cone(u_keys) | `Cone.keys`、`Radial.U` | d 个方向编号；U 的列为 u_i |
+| 锥 K_k=cone(u_keys) | `Cone.keys`、`Radial.U` | d 个方向编号；U 的列为 u_i |
 | x̂、y | `Cone.x`、`Cone.cover` | 内域网架；x̂ 原点不可行时的近端覆盖网架，可行时为 None |
-| v_i、Q | `Cone.verts` | `(d,d)`，第 i 行 v_i=ρ_x̂(u_i)·u_i（xi）；Q=verts.T |
+| v_{k,i}、Q | `Cone.verts` | `(d,d)`，第 i 行 v_{k,i}=ρ_x̂(u_i)·u_i（xi），即 R^SOCP_x̂ 沿 u_i 的边界点；Q=verts.T |
 | c | `Cone.c` | c=1ᵀQ⁻¹，锥内 xi=Σα_i v_i 时 Σα_i=c@xi |
-| μ̄ | `Cone.mu`、`Cone.inherited` | 外界因子：锥 MISOCP 的 ObjBound；未求解时沿用父锥 (c, μ̄) |
-| T、O | `Cone.halfspace`、`cone_outer` | T=conv(0, v_1..v_d)；O={xi∈K: c@xi<=μ̄}=μ̄·T ⊇ R∩K |
-| Δ | `Radial.delta` | (μ̄^d-1)·vol(T)，xi^d |
-| ΣΔ/Σvol(T) | `Radial.volume_ratio` | 体积缺口比；尚无锥时为 inf |
+| μ_k | `Cone.mu`、`Cone.inherited` | 外界因子：锥 MISOCP 的 ObjBound；未求解时沿用父锥 (c, μ_k) |
+| K^IN_k、K^OUT_k | `Cone.halfspace`、`cone_outer` | K^IN_k=conv(0, v_{k,1..d})；K^OUT_k={xi∈K_k: c@xi<=μ_k}∩盒=μ_k·K^IN_k∩盒 ⊇ **R**^SOCP∩K_k |
+| Δ_k | `Radial.delta` | (μ_k^d-1)·vol(K^IN_k)，xi^d |
+| ΣΔ_k/Σvol(K^IN_k) | `Radial.volume_ratio` | 体积缺口比；尚无锥时为 inf |
 | 射线与原点证书 | `Radial.rays`、`Radial.nears`、`Radial.origin`、`Radial.incumbents` | 键 (方案, 方向编号)；远端点与近端点为 xi；原点认证为布尔；锥 MISOCP 出现过的现任方案 |
 
-内域证书 `Radial.inner`：x̂ 原点可行时 T ⊆ R_x̂；否则需原点可行的 y 在每个生成方向的射线半径不小于 x̂ 的近端半径，T ⊆ R_x̂ ∪ R_y。`Radial.vertex` 从原点朝分区盒边界点 `bounds*u/max(u)` 做紧化射线，半径小于 `MIN_RADIUS` 视为没有顶点；`Radial.near` 是从远端朝原点的反向射线。单次射线与原点 SP 的时限不超过 `RAY_SECONDS`。
+内域证书 `Radial.inner`：x̂ 原点可行时 K^IN_k ⊆ R^SOCP_x̂；否则需原点可行的 y 在每个生成方向的射线半径不小于 x̂ 的近端半径，K^IN_k ⊆ R^SOCP_x̂ ∪ R^SOCP_y。证书针对 OBBT 紧化 SOCP 模型，K^IN_k 不保证在 **R**^AC 内（松弛残余）。`Radial.vertex` 从原点朝分区盒边界点 `bounds*u/max(u)` 做紧化射线，半径小于 `MIN_RADIUS` 视为没有顶点；`Radial.near` 是从远端朝原点的反向射线。单次射线与原点 SP 的时限不超过 `RAY_SECONDS`。
 
-外界 `cone_misocp`：x 自由的完整 MP（全部选型、拓扑、预算、运行约束），在 xi 上最大化 `objective`；`rows` 给锥约束 `rows@xi>=0` 与分区盒，缺省时为中心射线 xi_1=…=xi_d 并以 no-good 排除 `exclude`。全部已紧化方案的行按汉明距离提升，未紧化方案为纯 SOCP，故任何终止状态下的 ObjBound 都是 R 在该锥上的有效上界；`CONE_CONV_TOL` 是它的 barrier 收敛容差。返回 `status/bound/x/point`（point 为 kW 幅值），尚无界时 bound=inf。`Radial.misocp` 是懒惰 OBBT：现任方案尚未紧化时先 OBBT 再重解。单次时限 `settings.mip_seconds`，相对间隙 `settings.mip_gap`；中心射线求解用 mip_gap=0。
+外界 `cone_misocp`：x 自由的完整 MP（全部选型、拓扑、预算、运行约束），在 xi 上最大化 `objective`；`rows` 给锥约束 `rows@xi>=0` 与分区盒，缺省时为中心射线 xi_1=…=xi_d 并以 no-good 排除 `exclude`。全部已紧化方案的行按汉明距离提升，未紧化方案为纯 SOCP，故任何终止状态下的 ObjBound 都是 **R**^SOCP 在该锥上的有效上界；`CONE_CONV_TOL` 是它的 barrier 收敛容差。返回 `status/bound/x/point`（point 为 kW 幅值），尚无界时 bound=inf。`Radial.misocp` 是懒惰 OBBT：现任方案尚未紧化时先 OBBT 再重解。单次时限 `settings.mip_seconds`，相对间隙 `settings.mip_gap`；中心射线求解用 mip_gap=0。
 
-`Radial.run(epsilon, check)` 用体积准则细分：每次取 Δ 最大的锥，ΣΔ<=ε·Σvol(T) 或 `check()` 成立即 certified。`Radial.options` 给候选剖分：解点方向的锥坐标 λ 全部 >= `SPLIT_MARGIN` 时星形剖分；三维恰有一个 λ 偏小时在对边上按 λ 投影二分；最后总有最长棱中点二分。`Radial.split` 的子锥 x̂ 取 {父 x̂, 解的方案, 父覆盖网架} 中证书成立、半径乘积最大者。锥角直径小于 `settings.min_width`、叶锥数达到 `settings.max_cones` 或没有内域证书的锥记 unresolved，不再细分。`Cone.status` 为 pending / bounded / unresolved；`Radial.run` 返回 certified / unresolved / time_limit，可续跑，阶段时限到达抛出 RegionTimeout 后保留已得证书。`Radial.schemes` 是 X*：叶锥的 x̂ 与覆盖网架、现任方案、已紧化与原点认证的方案，按所占锥体积从大到小。
+`Radial.run(epsilon, check)` 用体积准则细分：每次取 Δ_k 最大的锥，ΣΔ_k<=ε·Σvol(K^IN_k) 或 `check()` 成立即 certified。`Radial.options` 给候选剖分：解点方向的锥坐标 λ 全部 >= `SPLIT_MARGIN` 时星形剖分；三维恰有一个 λ 偏小时在对边上按 λ 投影二分；最后总有最长棱中点二分。`Radial.split` 的子锥 x̂ 取 {父 x̂, 解的方案, 父覆盖网架} 中证书成立、半径乘积最大者。锥角直径小于 `settings.min_width`、叶锥数达到 `settings.max_cones` 或没有内域证书的锥记 unresolved，不再细分。`Cone.status` 为 pending / bounded / unresolved；`Radial.run` 返回 certified / unresolved / time_limit，可续跑，阶段时限到达抛出 RegionTimeout 后保留已得证书。`Radial.schemes` 是 X*：叶锥的 x̂ 与覆盖网架、现任方案、已紧化与原点认证的方案，按所占锥体积从大到小。
 
 ## 逐网架割平面（CUT）
 
 | 数学量 | 代码 | 单位与含义 |
 |---|---|---|
-| N_x | `Cutting.networks`（方案 → `Cutting.cut:vertices` / `Cutting.cut:status` / `Cutting.cut:version`） | 固定方案 x 的割平面多面体（xi）：分区盒被分区内共享的联合割裁剪，N_x ⊇ R_x；version 在其他网架的新割裁剪它时加一 |
+| N^CUT_x | `Cutting.networks`（方案 → `Cutting.cut:vertices` / `Cutting.cut:status` / `Cutting.cut:version`） | 固定方案 x 的割平面多面体（xi）：分区盒被分区内共享的联合割裁剪，N^CUT_x ⊇ R^SOCP_x；version 在其他网架的新割裁剪它时加一 |
 | 共享割 | `Cutting.cuts`、`Cutting.count` | 布局 `[alpha, *beta, *delta]`，beta 作用于幅值 u（kW）；count 为分区内割序号 |
-| area_ratio | `Cutting.cut.history` | 每次割掉的体积 / 割前 vol(N_x) |
+| area_ratio | `Cutting.cut.history` | 每次割掉的体积 / 割前 vol(N^CUT_x) |
 | threshold、patience | `settings.threshold / settings.patience`，`stagnated` | 连续 patience 次 area_ratio < threshold 即停滞；等于 threshold 不算小割 |
 | point_tol | `settings.point_tol`，`register_power` | kW 最大坐标差内视为同一 SP 评分点，不移动代表点 |
-| 计入内域的状态 | `CUT_ACCEPTED` | stagnated / exact / empty；empty 即 N_x=∅ |
+| 计入内域的状态 | `CUT_ACCEPTED` | stagnated / exact / empty；empty 即 N^CUT_x=∅ |
 
-`Cutting.cut` 的一次循环：N_x 从分区盒出发，先被已有割裁剪；SP（固定 x，带该网架的 OBBT 盒与包络行，`score_only=True`）为 N_x 的每个顶点评分，η 最大的待割顶点由 `generate_cut` 取联合割裁剪 N_x，直到停滞（stagnated）、全部顶点可行（exact）或 N_x 为空（empty）。其余终态不计入内域：时间片用完（slice）、该点数值失败（failed）、顶点都已取过割却仍不可行（point_resolution）、本轮未及开始（skipped，下一轮重试）。`cache/powers/applied/failed/fresh` 是该循环的局部状态：SP 答案缓存、评分点代表、已取割的点、数值失败的点、本循环的新割。循环结束后新割裁剪本分区其他网架的 N_x（割对全部可行点有效）。
+`Cutting.cut` 的一次循环：N^CUT_x 从分区盒出发，先被已有割裁剪；SP（固定 x，带该网架的 OBBT 盒与包络行，`score_only=True`）为 N^CUT_x 的每个顶点评分，η 最大的待割顶点由 `generate_cut` 取联合割裁剪 N^CUT_x，直到停滞（stagnated）、全部顶点可行（exact）或 N^CUT_x 为空（empty）。其余终态不计入内域：时间片用完（slice）、该点数值失败（failed）、顶点都已取过割却仍不可行（point_resolution）、本轮未及开始（skipped，下一轮重试）。`cache/powers/applied/failed/fresh` 是该循环的局部状态：SP 答案缓存、评分点代表、已取割的点、数值失败的点、本循环的新割。循环结束后新割裁剪本分区其他网架的 N^CUT_x（割对全部可行点有效）。
 
-`Cutting.run` 是一轮 CUT：未割过或上轮 skipped 的网架按 X* 次序排队，本轮最多用分区剩余时间的 `PASS_SHARE`，单个网架不超过 `CUT_SECONDS`；`CutSlice` 表示一个网架的时间片用完。N_x 是 R_x 的外近似，RCUT 把停滞的 N_x 当作该网架的可行域，不作内域认证。
+`Cutting.run` 是一轮 CUT：未割过或上轮 skipped 的网架按 X* 次序排队，本轮最多用分区剩余时间的 `PASS_SHARE`，单个网架不超过 `CUT_SECONDS`；`CutSlice` 表示一个网架的时间片用完。N^CUT_x 是 R^SOCP_x 的外近似，RCUT 把停滞的 N^CUT_x 当作该网架的可行域，不作内域认证。
 
-内域 I=(I_R ∪ ∪N_x)∩O_R，`sandwich` 返回 (vol(I), vol(O_R∩盒))，单位 xi^d：二维为 shapely 并集；三维按叶锥分解（叶锥内部互不相交），每锥的并集体积按 (锥几何, 相交 N_x 的版本键 `Cutting.sets`) 缓存，并集数值失败时只计 T（内域只会低估）。`piece` 是 N_x 与 锥∩O∩盒 之交，零体积时为空。分区认证 `build_partition.certified`：vol(O_R∩盒)-vol(I)<=ε·vol(I)，ε=d·tau；或径向部分自身满足 ΣΔ<=ε·Σvol(T)。
+结果内域 **I**=(**K**^IN ∪ **N**^CUT)∩**K**^OUT，`sandwich` 返回 (vol(**I**), vol(**K**^OUT))，单位 xi^d：二维为 shapely 并集；三维按叶锥分解（叶锥内部互不相交），每锥的并集体积按 (锥几何, 相交 N^CUT_x 的版本键 `Cutting.sets`) 缓存，并集数值失败时只计 K^IN_k（内域只会低估）。`piece` 是 N^CUT_x 与 K^OUT_k 之交，零体积时为空。分区认证 `build_partition.certified`：vol(**K**^OUT)-vol(**I**)<=ε·vol(**I**)，ε=d·tau；或锥部分自身满足 ΣΔ_k<=ε·Σvol(K^IN_k)。
 
-## 区域一览
+## 区域与符号
+
+上标写物理含义，下标写序号（锥 k、网架 x）；单个锥或网架的集合不加粗，并集加粗。K 与锥相关，N 与网架相关，R 为真实可行域。
 
 ![RCUT 各区域示意](regions_rcut.png)
 
-示意图为夸大的合成几何（两个网架、三个锥），实际运行中 I 与 O_R 只差 0.5–1.5%。
+| 含义 | 符号 | LaTeX | 代码 | 关系 |
+|---|---|---|---|---|
+| AC 真实可行域 | **R**^AC | `\mathbf{R}^{\mathrm{AC}}` | 扫描参考 `states` | 不显式求 |
+| 网架 x 的 OBBT 紧化 SOCP 可行集（凸） | R^SOCP_x | `R^{\mathrm{SOCP}}_x` | 不显式求 | |
+| 全部网架的紧化可行域 | **R**^SOCP=∪R^SOCP_x | `\mathbf{R}^{\mathrm{SOCP}}` | 不显式求 | **R**^AC ⊆ **R**^SOCP |
+| 第 k 个锥、射线顶点 | K_k、v_{k,i} | `K_k`、`v_{k,i}` | `Cone.keys`、`Cone.verts` | v_{k,i} 在 R^SOCP_x̂ 的边界上 |
+| 锥 k 的内三角（对紧化模型有证书） | K^IN_k=conv(0, v_{k,1..d}) | `K^{\mathrm{IN}}_k` | `Cone.verts` | K^IN_k ⊆ **R**^SOCP |
+| 锥内域并集 | **K**^IN=∪K^IN_k | `\mathbf{K}^{\mathrm{IN}}` | `Radial.geometry` | **K**^IN ⊆ **R**^SOCP |
+| 锥 k 的外界因子与外块 | μ_k、K^OUT_k=μ_k·K^IN_k∩盒 | `\mu_k`、`K^{\mathrm{OUT}}_k` | `Cone.mu`、`cone_outer` | **R**^SOCP∩K_k ⊆ K^OUT_k |
+| 锥外界并集（有证书外界） | **K**^OUT=∪K^OUT_k | `\mathbf{K}^{\mathrm{OUT}}` | `build_partition:outer` | **R**^SOCP ⊆ **K**^OUT |
+| 网架 x 的割多面体 | N^CUT_x | `N^{\mathrm{CUT}}_x` | `Cutting.cut:vertices` | R^SOCP_x ⊆ N^CUT_x |
+| 计入的割多面体并集 | **N**^CUT=∪N^CUT_x | `\mathbf{N}^{\mathrm{CUT}}` | `Cutting.sets` | 停滞、精确或为空的 N^CUT_x |
+| 结果内域 | **I**=(**K**^IN ∪ **N**^CUT)∩**K**^OUT | `\mathbf{I}` | `build_partition:inner` | **K**^IN ⊆ **I** ⊆ **K**^OUT |
+| 锥 k 的体积缺口 | Δ_k=(μ_k^d-1)·vol(K^IN_k) | `\Delta_k` | `Radial.delta` | 决定细分哪个锥 |
 
-| 区域 | 定义 | 由谁算出 | 与真实可行域的关系 |
-|---|---|---|---|
-| 分区盒 | xi∈[0,1]^d，xi=u/bounds | `port_bounds` | 全部范围 |
-| R_x | 网架 x 的 OBBT 紧化 SOCP 可行集（凸） | 不显式求出 | 单个网架的真实对象 |
-| R=∪R_x | 全部网架可行集的并 | 不显式求出 | AC ⊆ R（OBBT 包络对 AC 点有效） |
-| T、I_R=∪T | 锥内三角 conv(0, v_1..v_d)，v_i 为内域网架沿生成方向的紧化射线顶点 | R：`Radial.vertex`、`Cone.verts` | I_R ⊆ R，有证书内域 |
-| O=mu·T、O_R | T 按锥 MISOCP 上界放大，各锥并起来与盒取交 | R：`cone_misocp`、`Cone.mu` | R ⊆ O_R，有证书外界 |
-| N_x | 分区盒被联合割裁到停滞 | CUT：`Cutting.cut` | N_x ⊇ R_x，外近似 |
-| I | (I_R ∪ 计入的 N_x) ∩ O_R | `sandwich`、`build_partition:inner` | I_R ⊆ I ⊆ O_R，内域估计 |
+关系：**R**^AC ⊆ **R**^SOCP，**K**^IN ⊆ **R**^SOCP ⊆ **K**^OUT，R^SOCP_x ⊆ N^CUT_x，**K**^IN ⊆ **I** ⊆ **K**^OUT。认证 vol(**K**^OUT)-vol(**I**) <= ε·vol(**I**) 表示结果内域已与有证书外界贴合到 ε 以内。K^IN_k 的证书针对紧化 SOCP，可能含 AC 不可行的格：Case33 二维正式结果中锥内三角含 123 个 AC 不可行格（全部 SOCP 可行），结果内域的 158 个多余格中其余 35 个来自 **N**^CUT 的外壳。
 
-包含关系：I_R ⊆ R ⊆ O_R，AC ⊆ R，I_R ⊆ I ⊆ O_R；I 与 R 无严格包含，大体上 I 比 R 多一层壳。认证 vol(O_R)-vol(I) <= ε·vol(I) 表示内域估计已与有证书外界贴合到 ε 以内。
+旧符号对照：T→K^IN_k，I_R→**K**^IN，O、μ̄→K^OUT_k、μ_k，O_R→**K**^OUT，N_x→N^CUT_x，R_x→R^SOCP_x，R→**R**^SOCP，AC→**R**^AC，I→**I**。代码变量名不变。示意图为合成几何（两个网架、三个锥），各集合的差距有放大。
 
 ## 分区流程、并行与结果
 
@@ -130,10 +137,10 @@ SP 固定 x,p 后最小化非负 `eta`（求解器名 violation），只允许�
 | 键 | 含义 |
 |---|---|
 | `build_partition:sign / status / certified` | 分区符号；certified / unresolved / time_limit；是否获证 |
-| `build_partition:how` | radial（径向部分自身满足体积准则）或 cut（夹逼判据） |
-| `build_partition:seconds / gap / volume_ratio` | 分区墙钟秒；vol(O)/vol(I)-1；ΣΔ/Σvol(T) |
+| `build_partition:how` | radial（锥部分自身满足体积准则）或 cut（夹逼判据） |
+| `build_partition:seconds / gap / volume_ratio` | 分区墙钟秒；vol(**K**^OUT)/vol(**I**)-1；ΣΔ_k/Σvol(K^IN_k) |
 | `build_partition:cones / networks / accepted / cuts` | 叶锥数；做过 CUT 的网架数；其中计入内域的数目；割数 |
-| `build_partition:inner / outer` | 内域块（各锥 T 与按锥裁到 O 的 N_x）与外域块（各锥 O∩盒，尚无锥时为分区盒）的顶点，kW 幅值 |
+| `build_partition:inner / outer` | **I** 的块（各 K^IN_k 与按锥裁到 K^OUT_k 的 N^CUT_x）与 **K**^OUT 的块（各 K^OUT_k，尚无锥时为分区盒）的顶点，kW 幅值 |
 
 `build_region` 为每个分区起一个 spawn 子进程（`_partition`），并发数 min(`workers`, 2^d)，`settings.obbt_workers=max(1, workers//2^d)`；后启动的分区得到剩余时间按并发比例的份额，总时限为 `seconds`。子进程的 `RunMonitor(sign=...)` 经 `_connect` 设置的通道发送事件，主进程 `RunMonitor.share` 建立通道、`RunMonitor.forward` 转发、`RunMonitor.close` 发送结束标记；主进程中断时置取消信号并读空队列。结果 `inner/outer` 为带符号 kW 的 `[dict(vertices, sign)]`，`build_region:axis_lower/axis_bounds` 为外域顶点的范围，`build_region:partitions` 为各分区摘要（去掉 inner/outer），另含 status/certified/timing。
 
@@ -156,13 +163,13 @@ SP 固定 x,p 后最小化非负 `eta`（求解器名 violation），只允许�
 
 `scan_path` 给出 `results/scan/<网络>/<节点>/<身份>/`，`region_path` 由 origin/step/start/shape 生成区域摘要。扩界保留格点，部分覆盖只补算缺点；AC/SOCP 分别补零标签。`import_ac_reference` 仅接受同版本同身份数据。`force_rescan` 先备份；主进程每 `SAVE_SECONDS` 至多原子落盘一次，结束或中断时必落盘，独占锁避免并发覆盖。
 
-`RunMonitor.validation` 只接受配对的 AC/SOCP 参考：比较使用最终 inner 作为计算域，另保留 outer 指标；未决格不计入，`RunMonitor.validation:undecided_cells / socp_undecided_cells` 为 AC/SOCP 未决格数，`RunMonitor.validation:computed_states` 为内域在格心上的掩码。`comparison_metrics` 的 MR=`missed/reference`、FR=`extra/computed`，百分数，空分母 None；同时保留 missed_cells/extra_cells/reference_cells/computed_cells。`comparisons` 键为 result_ac/result_socp/socp_ac。导出版本 paired_scan_v2，NPZ 的 power 为 `(N,d)` kW，ac_states/socp_states/inner/outer 对应同坐标；CSV 标签列为 ac_state/socp_state。网格误差不是连续体积证明。RCUT 的内域含 N_x 外近似，相对 AC 的 FR 是外侧估计误差。
+`RunMonitor.validation` 只接受配对的 AC/SOCP 参考：比较使用最终 inner 作为计算域，另保留 outer 指标；未决格不计入，`RunMonitor.validation:undecided_cells / socp_undecided_cells` 为 AC/SOCP 未决格数，`RunMonitor.validation:computed_states` 为内域在格心上的掩码。`comparison_metrics` 的 MR=`missed/reference`、FR=`extra/computed`，百分数，空分母 None；同时保留 missed_cells/extra_cells/reference_cells/computed_cells。`comparisons` 键为 result_ac/result_socp/socp_ac。导出版本 paired_scan_v2，NPZ 的 power 为 `(N,d)` kW，ac_states/socp_states/inner/outer 对应同坐标；CSV 标签列为 ac_state/socp_state。网格误差不是连续体积证明。RCUT 的 **I** 含 **N**^CUT 外近似，相对 AC 的 FR 是外侧估计误差。
 
-回放 version=4：history 保存增量过程，validation_state 保存最终扫描。子进程事件为 phase_start、cone、cut、network、partition_end，主进程另有 start、region_end；N_x 顶点的 SP 评分不单独成帧，取割顶点的 η 记在 cut 帧。`RunMonitor.frame` 从每 `FRAME_STRIDE` 帧一份的快照 `RunMonitor.snapshots` 向后合并。`MERGED` 中的 schemes/cones/cut_history 按键增量合并，键带分区前缀 `<分区>:`（如 `+-:3`），坐标在 `signed_values` 中乘 sign：
+回放 version=4：history 保存增量过程，validation_state 保存最终扫描。子进程事件为 phase_start、cone、cut、network、partition_end，主进程另有 start、region_end；N^CUT_x 顶点的 SP 评分不单独成帧，取割顶点的 η 记在 cut 帧。`RunMonitor.frame` 从每 `FRAME_STRIDE` 帧一份的快照 `RunMonitor.snapshots` 向后合并。`MERGED` 中的 schemes/cones/cut_history 按键增量合并，键带分区前缀 `<分区>:`（如 `+-:3`），坐标在 `signed_values` 中乘 sign：
 
 | 状态 | 行内容 |
 |---|---|
-| `cones` | `Radial.publish:inner / outer / scheme / mu`：T 与 O∩盒的顶点、x̂ 标签、μ̄；被细分的父锥置 None |
+| `cones` | `Radial.publish:inner / outer / scheme / mu`：K^IN_k 与 K^OUT_k 的顶点、x̂ 标签、μ_k；被细分的父锥置 None |
 | `schemes` | `Cutting.row:x / choice / cost / outer / inner / status` 与 sign：outer 为 N_x，计入内域时 inner=N_x，否则为空 |
 | `cut_history` | 割 `cut`（布局同联合割，beta 已乘 sign）、来源网架 `scheme`、`sign` |
 
@@ -207,7 +214,7 @@ SP 固定 x,p 后最小化非负 `eta`（求解器名 violation），只允许�
 主线算法由逐网架顺序构域加完整物理查漏，改为 R + CUT。退役接口及其登记保存在 tag `mainline-sequential-v1`（3c061a2），对应关系如下：
 
 - 构域：`build_sequential_region` 及其局部量（cache/powers/applied/initialized/counts/small_cuts/area_ratio/point_tol/ray_threshold 等）、`RegionState`、`stage_candidates`、`ray_gain`、`coverage_halfspaces` 由 `Radial`（全局搜索与外界）和 `Cutting`（逐网架 N_x）代替；割循环的 SP 评分、取割与停滞规则不变，局部状态现属 `Cutting.cut`，area_ratio 的序列为 `Cutting.cut.history`。主线不再做割后补射线与边界补充，`RAY_THRESHOLD` 无对应量。
-- 全局覆盖：`remaining_search`、`RemainingRegionModel`、`COVERAGE_TOL`、`RESIDUAL_TIME_LIMIT`、`GridPhysics.center` 由 x 自由的锥 MISOCP `cone_misocp` 给出的外界 O_R 与体积准则代替；`MasterProblem.__init__.cuts` 随之去掉，MP 不再携带联合割。
+- 全局覆盖：`remaining_search`、`RemainingRegionModel`、`COVERAGE_TOL`、`RESIDUAL_TIME_LIMIT`、`GridPhysics.center` 由 x 自由的锥 MISOCP `cone_misocp` 给出的外界 **K**^OUT 与体积准则代替；`MasterProblem.__init__.cuts` 随之去掉，MP 不再携带联合割。
 - 时限与并行：`PARTITION_TIME_LIMIT`、`build_region.partition_seconds`、`run.partition_seconds` 由分区并行共享总时限 `build_region.seconds` 代替；`OBBT_WORKERS`、`run.obbt_workers`、`build_region.obbt_workers` 由 `WORKERS` 推出 `settings.obbt_workers=max(1, WORKERS//2^d)`。
 - 默认值：`CUT_THRESHOLD` 语义不变，由 0.02 改为 0.01（方法对照的 RCUT 设置）；`SOLVER_THREADS` 由 20 改为 1（分区已并行）。主入口去掉 mode=0 非负负荷与 `--mode` 参数。
 - 回放：version=4 格式不变，事件改为本文所列；`RunMonitor._geometry`、`global_end`、`partition_frame`、`seed`、`sp_start`、`updated` 由子进程事件与 `RunMonitor.forward` 代替。网架行增加 status，键带分区前缀。旧主线记录只能用 `mainline-sequential-v1` 的前端回放。

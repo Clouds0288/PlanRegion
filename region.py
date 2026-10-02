@@ -1,16 +1,18 @@
 """符号分区规划域：径向锥夹逼的全局搜索（R）+ 主线割平面的逐网架构域（CUT），即方法 RCUT。
 
 坐标：符号分区 sign∈{±1}^d 内用非负幅值 u，真实功率 p=sign*u（kW）；几何在 xi=u/bounds∈[0,1]^d 中计算，
-bounds 为端口幅值上界。可行域 R=∪_x R_x，R_x 为网架 x 的 OBBT 紧化可行集（凸）。
+bounds 为端口幅值上界。符号（见 docs/notation.md「区域与符号」）：K 与锥相关、N 与网架相关、R 为真实可行域，
+上标为物理含义、下标为序号。紧化可行域 R^SOCP=∪_x R^SOCP_x，R^SOCP_x 为网架 x 的 OBBT 紧化可行集（凸），
+AC 可行域 R^AC ⊆ R^SOCP。
 
-R：方向用单纯锥 K=cone(u_1..u_d) 剖分。内域 T=conv(0, v_1..v_d)，v_i 为内域网架 x̂ 沿 u_i 的紧化射线顶点；
-x̂ 原点不可行时由原点可行的网架 y 覆盖近端，T ⊆ R_x̂ ∪ R_y ⊆ R。外界：Q=[v_1..v_d]，c=1ᵀQ⁻¹，x 自由锥
-MISOCP 的上界 μ̄ 给出 O={xi∈K: c@xi<=μ̄}=μ̄·T ⊇ R∩K。每次细分体积缺口 Δ=(μ̄^d-1)·vol(T) 最大的锥，
-ΣΔ<=ε·Σvol(T) 即认证。
-CUT：A 阶段（R 的目标放宽为 ε_A）出现的每个网架，从分区盒出发做主线割平面：SP 为 N_x 顶点评分，违反量 η
-最大的顶点由对偶 LP 取联合割（带该网架的 OBBT 盒与包络行）；连续 patience 次割的体积缩减比例 < threshold
-即停滞，N_x 当作该网架的可行域（外近似，不作内域认证）。之后续跑 R（A+），新出现的网架也先割。
-内域 I=(I_R ∪ ∪N_x)∩O_R；vol(O_R∩盒)-vol(I)<=ε·vol(I) 即认证。
+R：方向用单纯锥 K_k=cone(u_1..u_d) 剖分。锥内三角 K^IN_k=conv(0, v_{k,1..d})，v_{k,i} 为内域网架 x̂ 沿 u_i 的
+紧化射线顶点；x̂ 原点不可行时由原点可行的网架 y 覆盖近端，K^IN_k ⊆ R^SOCP_x̂ ∪ R^SOCP_y ⊆ R^SOCP。外界：
+Q=[v_1..v_d]，c=1ᵀQ⁻¹，网架不固定的锥 MISOCP 的上界 μ_k 给出 K^OUT_k={xi∈K_k: c@xi<=μ_k}=μ_k·K^IN_k ⊇ R^SOCP∩K_k。
+每次细分体积缺口 Δ_k=(μ_k^d-1)·vol(K^IN_k) 最大的锥，ΣΔ_k<=ε·Σvol(K^IN_k) 即认证。
+CUT：A 阶段（R 的目标放宽为 ε_A）出现的每个网架，从分区盒出发做主线割平面：SP 为割多面体 N^CUT_x 的顶点评分，
+违反量 η 最大的顶点由对偶 LP 取联合割（带该网架的 OBBT 盒与包络行）；连续 patience 次割的体积缩减比例 < threshold
+即停滞，N^CUT_x ⊇ R^SOCP_x 当作该网架的可行域（外近似，不作内域认证）。之后续跑 R（A+），新出现的网架也先割。
+结果内域 I=(K^IN ∪ N^CUT)∩K^OUT；vol(K^OUT)-vol(I)<=ε·vol(I) 即认证。
 """
 from concurrent.futures import ProcessPoolExecutor
 from copy import deepcopy
@@ -38,7 +40,7 @@ MIN_RADIUS = 1e-9        # 射线顶点半径下限（xi）；更小时 Q 奇异
 RAY_SECONDS = 30.        # 单次射线与原点 SP 的时限上限
 CUT_SECONDS = 30.        # 单个网架一次割循环的时限上限
 PASS_SHARE = .75         # 一轮 CUT 最多用分区剩余时间的比例，其余留给径向续跑
-CUT_ACCEPTED = ('stagnated', 'exact', 'empty')   # 计入内域的 N_x 状态（empty：N_x=∅，即分区内 R_x=∅）
+CUT_ACCEPTED = ('stagnated', 'exact', 'empty')   # 计入 N^CUT 的状态（empty：N^CUT_x=∅，即分区内 R^SOCP_x=∅）
 
 
 # ---- 凸多面体几何（xi 或 kW，同一坐标系内运算） -------------------------------------------------
@@ -208,7 +210,7 @@ def piece(vertices, U, halfspace):
 
 
 def sandwich(cones, sets, d, cache):
-    """内外测度（xi^d）：I=(I_R ∪ ∪sets)∩O_R，O=O_R∩盒。cones 为叶锥几何 (U, V, halfspace)，sets 为
+    """内外测度（xi^d）：I=(K^IN ∪ ∪sets)∩K^OUT 与 K^OUT。cones 为叶锥几何 (U, V, halfspace)，sets 为
     [(版本键, 顶点)]。二维用 shapely 并集；三维按锥分解（叶锥内部互不相交），每锥求并集体积并按
     (锥几何, 相交集合的版本) 缓存；并集数值失败时只计 T（内域只会低估，间隙只会偏大）。"""
     # 1. 各叶锥的外域 O∩盒 与内三角形 T
@@ -247,7 +249,7 @@ class Cone:
     verts: np.ndarray                # (d,d)，第 i 行 v_i=rho_x̂(u_i)·u_i（xi）
     cover: tuple | None = None       # 近端覆盖网架 y；x̂ 原点可行时为 None
     inherited: tuple | None = None   # 父锥外界 (c, mu)
-    mu: float = np.inf               # 外界因子 μ̄
+    mu: float = np.inf               # 外界因子 μ_k
     final: dict | None = None        # 最后一轮锥 MISOCP（细分用解点与方案）
     status: str = 'pending'          # pending / bounded / unresolved
 
@@ -420,7 +422,7 @@ class Radial:
         return self.new_cone(tuple(range(self.d)), inner)
 
     def solve(self, cone):
-        """锥 MISOCP：锥约束 Q⁻¹xi>=0（行归一化）、分区盒，max c@xi；μ̄=ObjBound，不可行时取 1。"""
+        """锥 MISOCP：锥约束 Q⁻¹xi>=0（行归一化）、分区盒，max c@xi；μ_k=ObjBound，不可行时取 1。"""
         rows = np.linalg.inv(cone.verts.T)
         answer = self.misocp(cone.c, rows/np.linalg.norm(rows, axis=1, keepdims=True))
         cone.mu = 1. if answer['status'] == GRB.INFEASIBLE else answer['bound']
@@ -464,7 +466,7 @@ class Radial:
         return None
 
     def delta(self, cone):
-        """体积缺口 Δ=(μ̄^d-1)·vol(T)（xi^d）：未求解的锥取父锥外界在本锥生成方向上的最大放大倍数，均无为 inf。"""
+        """体积缺口 Δ_k=(μ_k^d-1)·vol(K^IN_k)（xi^d）：未求解的锥取父锥外界在本锥生成方向上的最大放大倍数，均无为 inf。"""
         halfspace = cone.halfspace()
         if halfspace is None:
             return np.inf
@@ -551,8 +553,8 @@ class CutSlice(Exception):
 
 
 class Cutting:
-    """逐网架割平面构域；分区内的联合割共享：新网架的 N_x 先被已有割裁剪，新割也裁剪其他网架的 N_x
-    （割对全部可行点有效，N_x 仍包含 R_x）。"""
+    """逐网架割平面构域；分区内的联合割共享：新网架的 N^CUT_x 先被已有割裁剪，新割也裁剪其他网架的 N^CUT_x
+    （割对全部可行点有效，N^CUT_x 仍包含 R^SOCP_x）。"""
 
     def __init__(self, radial):
         self.radial, self.settings, self.monitor = radial, radial.settings, radial.monitor
@@ -565,7 +567,7 @@ class Cutting:
         return vertices
 
     def row(self, x):
-        """网架面板的一行（kW 幅值）：外域 N_x；停滞或精确时 N_x 也计入内域。"""
+        """网架面板的一行（kW 幅值）：外域 N^CUT_x；停滞或精确时 N^CUT_x 也计入 I。"""
         state, radial = self.networks[x], self.radial
         vertices = state['vertices']*radial.bounds
         return dict(x=x, choice=radial.network.decode_plan(np.asarray(x)),
@@ -574,7 +576,7 @@ class Cutting:
                     status=state['status'])
 
     def sets(self):
-        """计入内域的 N_x：[(版本键, 顶点)]（xi）。"""
+        """计入 N^CUT 的 N^CUT_x：[(版本键, 顶点)]（xi）。"""
         return [((x, state['version']), state['vertices']) for x, state in self.networks.items()
                 if state['status'] in CUT_ACCEPTED and len(state['vertices']) > self.radial.d]
 
@@ -605,7 +607,7 @@ class Cutting:
                 raise CutSlice()
             return radial.remaining(min(rest, SP_TIME_LIMIT['socp']))
 
-        # 1. N_x 初值：分区盒被已有联合割裁剪；先记录初值，回放时第一刀也有割前的 N_x
+        # 1. N^CUT_x 初值：分区盒被已有联合割裁剪；先记录初值，回放时第一刀也有割前的 N^CUT_x
         state = self.networks[x] = dict(vertices=self.clip(box_vertices(d), x, self.cuts), status='slice', version=0)
         monitor._emit('network', phase='网架切割', active_scheme=label, schemes={label: self.row(x)})
         cache, powers, applied, failed, history, fresh = {}, [], set(), set(), [], []
@@ -630,7 +632,7 @@ class Cutting:
                 if not len(state['vertices']):
                     state['status'] = 'empty'
                     break
-                # 2. SP 评分 N_x 的每个顶点（kW 最大坐标差 point_tol 内视为同一点）
+                # 2. SP 评分 N^CUT_x 的每个顶点（kW 最大坐标差 point_tol 内视为同一点）
                 indices = [register_power(point*bounds, powers, settings.point_tol) for point in state['vertices']]
                 kinds = {index: score(index) for index in indices}
                 pending = [index for index, kind in kinds.items() if kind == 'pending']
@@ -638,7 +640,7 @@ class Cutting:
                     values = set(kinds.values())
                     state['status'] = 'failed' if 'failed' in values else 'point_resolution' if 'applied' in values else 'exact'
                     break
-                # 3. 违反量最大的顶点取联合割（锥支撑平面 LP 的对偶），裁剪 N_x
+                # 3. 违反量最大的顶点取联合割（锥支撑平面 LP 的对偶），裁剪 N^CUT_x
                 index = max(pending, key=lambda i: (cache[i]['eta'], float(powers[i].sum()), tuple(powers[i])))
                 limit = left()
                 try:
@@ -664,7 +666,7 @@ class Cutting:
                     break
         except (CutSlice, TimeoutError):
             radial.remaining(np.inf)
-        # 5. 新割裁剪其他网架的 N_x，记录本网架终态
+        # 5. 新割裁剪其他网架的 N^CUT_x，记录本网架终态
         self.cuts.extend(fresh)
         rows = {}
         for y, other in self.networks.items():
@@ -687,7 +689,7 @@ def build_partition(network, sign, budget, monitor, settings):
     monitor._emit('phase_start', phase='径向搜索', status='running', cones={}, schemes={}, cut_history={})
 
     def certified():
-        """RB 判据：vol(O_R∩盒)-vol(I)<=ε·vol(I)，I=(I_R ∪ ∪N_x)∩O_R。"""
+        """夹逼判据：vol(K^OUT)-vol(I)<=ε·vol(I)，I=(K^IN ∪ N^CUT)∩K^OUT。"""
         inner, outer = sandwich(radial.geometry(), cutting.sets(), d, cache)
         return inner > 0. and outer-inner <= epsilon*inner
 
@@ -708,7 +710,7 @@ def build_partition(network, sign, budget, monitor, settings):
     except RegionTimeout:
         status = 'time_limit'
 
-    # 5. 汇总：内域为锥三角形与按锥裁到 O_R 的 N_x，外域为 O_R∩盒；尚无锥时外域为分区盒（kW 幅值）
+    # 5. 汇总：I 为各 K^IN_k 与按锥裁到 K^OUT_k 的 N^CUT_x，外域为 K^OUT；尚无锥时外域为分区盒（kW 幅值）
     inner, outer = sandwich(radial.geometry(), cutting.sets(), d, cache)
     rows = dict(inner=[], outer=[] if radial.cones else [box_vertices(d)])
     for U, V, halfspace in radial.geometry():

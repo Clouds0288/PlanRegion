@@ -497,7 +497,7 @@ class NativeWindow:
         ttk.Label(point_bar, text='坐标固定于分区盒').pack(side='right', padx=8)
         body = ttk.Panedwindow(self.root, orient='horizontal')
         body.pack(fill='both', expand=True, padx=8, pady=6)
-        left, right = ttk.Frame(body), ttk.LabelFrame(body, text="B  网架 · N_x 灰色（停滞后计入内域，绿色）/ 紫色割")
+        left, right = ttk.Frame(body), ttk.LabelFrame(body, text="B  网架 · N^CUT_x 灰色（停滞后计入 I，绿色）/ 紫色割")
         body.add(left, weight=1)
         body.add(right, weight=1)
         self.axes, self.canvases = {}, {}
@@ -643,7 +643,7 @@ class NativeWindow:
         return [corners*np.array([1 if s == '+' else -1 for s in label]) for label in labels]
 
     def _outer_polygons(self, state):
-        """外包络 O_R∩盒：各锥外域；尚无锥的分区取分区盒。"""
+        """外界 K^OUT：各锥外块 K^OUT_k；尚无锥的分区取分区盒。"""
         cones = {key: row for key, row in state.get('cones', {}).items() if row}
         started = {key.split(':')[0] for key in cones}
         return ([row['outer'] for row in cones.values()]
@@ -877,7 +877,7 @@ class NativeWindow:
             _draw(ax, self._removed(state, scheme), color=CUT, fill=True, alpha=.22)
 
     def _regions(self, ax, state, partition, *, linewidth=1., detail=True):
-        """外包络 O_R∩盒 与内域：二维为并集（内域再与外包络取交），三维为各锥远端面片与网架内域。
+        """外界 K^OUT 与结果内域 I：二维为并集（内域再与外包络取交），三维为各锥远端面片与网架内域。
         detail=False（总览）只画外包络。"""
         d = len(state['bounds'])
         outer = self._in_partition(self._outer_polygons(state), partition)
@@ -912,8 +912,8 @@ class NativeWindow:
         cuts = state.get('cut_history', {})
         if cuts:
             self._draw_cuts(ax, state, next(reversed(cuts.values()))['scheme'], history=False)
-        handles = [Line2D([], [], color=OUTER, ls='--', label=f'分区 {partition} 外包络 O_R' if partition else '外包络 O_R'),
-                   Line2D([], [], color=INNER, label='内域 I')]
+        handles = [Line2D([], [], color=OUTER, ls='--', label=f'分区 {partition} 外界 K^OUT' if partition else '外界 K^OUT'),
+                   Line2D([], [], color=INNER, label='结果内域 I')]
         handles.extend(self._markers(ax, state, partition=partition))
         ax.legend(handles=handles, loc='lower left', bbox_to_anchor=(-.08, 1.02),
                   ncol=3, frameon=False, fontsize=7, columnspacing=.8, handlelength=1.5)
