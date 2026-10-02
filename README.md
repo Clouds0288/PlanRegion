@@ -57,8 +57,19 @@ python -X utf8 monitor.py A.json.gz --compare B.json.gz
 
 | 保存内容 | 路径 |
 |---|---|
+| Case33 二维 RB 主线（含 AC/SOCP 逐格对比） | `results/mainline/mode_1/case33_18_25.json.gz`、`case33_18_25_comparison/` |
+| Case33 三维 RB 主线 | `results/mainline/mode_1/case33_18_25_30.json.gz` |
 | R、H、RB、RCUT、RCUT2 的方法对照（Case33 二维、三维，300 s） | `results/methods/`，说明见其 README |
-| Case33 二维 160² 与三维 80³ 配对 AC/SOCP 参考扫描 | `results/scan/case33bw/` |
+| Case33 二维 160²（及其扩界）与三维 80³ 配对 AC/SOCP 参考扫描 | `results/scan/case33bw/` |
+
+主线运行（300 s，16 进程，内域相对 AC 扫描）：
+
+| 案例 | 认证分区 | 最慢获证分区 | 内域 FR / MR | 外域 FR / MR |
+|---|---|---|---|---|
+| Case33 二维 (18,25) | 4/4 | 25.5 s | 0.809% / 0.147% | 1.348% / 0% |
+| Case33 三维 (18,25,30) | 3/8（其余 5 个到时限，间隙 1.75–3.10%） | 146.1 s | 2.580% / 0.172% | 4.202% / 0% |
+
+RB 的内域是认证内域，相对 AC 的 FR 来自 OBBT 紧化模型与 AC 的差（SOCP 松弛残余）。三维的 SOCP 参考在现行严格数值门槛下补不全（80³ 网格中 5 格的 SOCP 求解 MaxVio 超过 1e-8，扫描按设计停止），所以三维记录用 `--no-scan` 构域，校验只对该网格完整的 AC 标签发布，网格外的外域格不计入。
 
 旧主线（逐网架顺序构域 + 完整物理查漏）、支持面认证实验、径向夹逼实验的代码与结果保存在 tag `mainline-sequential-v1` 和 `results-methods-v1` 中，需用对应 tag 的前端回放。
 
