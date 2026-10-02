@@ -5,8 +5,9 @@ import numpy as np
 
 
 def recorded_monitor(d, output=None):
-    """合成回放（不调用求解器）：分区 '-'*d 的根锥求界；网架 '1' 的 N_x 从分区盒出发，加割 Σu<=150 后停滞；
-    根锥沿 e1,e2 的棱中点二分。各帧以子进程的幅值 kW 送入 forward。返回 (monitor, x, cut)。"""
+    """合成回放（不调用求解器）：分区 '-'*d 的根锥求界；网架 '1' 的 N_x 从分区盒出发，SP 评分顶点 bounds 后
+    加割 Σu<=150 并停滞；根锥沿 e1,e2 的棱中点二分。锥求界、评分、取割与细分带 step。各帧以子进程的幅值 kW
+    送入 forward。返回 (monitor, x, cut)。"""
     from monitor import RunMonitor
     from Network.four_bus_five_corridor import FourBus
     from region import clip_polytope
@@ -20,24 +21,26 @@ def recorded_monitor(d, output=None):
     cut = np.r_[150., -np.ones(d), np.zeros(len(x))]
     box = np.array(list(product((0., 1.), repeat=d)))*bounds
     clipped = clip_polytope(box, 150., -np.ones(d))
-    row = lambda status, outer=clipped: dict(x=x, choice=network.initial_plan, cost=0., outer=outer, status=status,
-                                             inner=outer if status == 'stagnated' else np.empty((0, d)))
+    row = lambda status, outer=clipped: dict(x=x, choice=network.initial_plan, cost=0., outer=outer, status=status)
     cone = lambda U: dict(inner=np.vstack([np.zeros(d), .5*U*bounds]), outer=np.vstack([np.zeros(d), .6*U*bounds]),
                           scheme='1', mu=1.2)
     middle = np.zeros(d)
     middle[:2] = 1/np.sqrt(2)
     halves = [np.vstack([np.eye(d)[:k], middle, np.eye(d)[k+1:]]) for k in (1, 0)]
-    point = dict(scheme='1', p=bounds)
     for patch in (dict(event='phase_start', phase='径向搜索 A', status='running', cones={}, schemes={}, cut_history={}),
-                  dict(event='cone', phase='径向搜索 A', cones={'0': cone(np.eye(d))}, cone_count=1, volume_ratio=.44,
-                       global_point=dict(scheme='1', p=np.full(d, 30.))),
-                  dict(event='network', phase='网架切割', active_scheme='1', schemes={'1': row('slice', box)}),
+                  dict(event='cone', phase='径向搜索 A', cones={'0': cone(np.eye(d))}, volume_ratio=.44,
+                       step=dict(kind='cone', text='锥 0 MISOCP：μ=1.200', p=np.full(d, 30.), vertices=.6*np.eye(d)*bounds,
+                                 scheme='1')),
+                  dict(event='network', phase='网架切割', active_scheme='1', schemes={'1': row('slice', box)},
+                       step=dict(kind='network', text='CUT 网架 1')),
+                  dict(event='point', phase='网架切割', active_scheme='1',
+                       step=dict(kind='sp', text='SP：η=0.5（待割）', p=bounds, scheme='1', feasible=False)),
                   dict(event='cut', phase='网架切割', active_scheme='1', schemes={'1': row('slice')},
-                       cut_history={'1': dict(cut=cut, scheme='1')}, area_ratio=.25, small_cuts=0, patience=3,
-                       eta=.5, sp_point=point),
-                  dict(event='network', phase='网架切割', active_scheme=None, schemes={'1': row('stagnated')}),
+                       cut_history={'1': dict(cut=cut, scheme='1')}, step=dict(kind='cut', text='取割 #1', p=bounds, scheme='1')),
+                  dict(event='network', phase='网架切割', active_scheme=None, schemes={'1': row('stagnated')},
+                       step=dict(kind='network_end', text='网架 1 停止：stagnated')),
                   dict(event='cone', phase='径向续跑 A+', cones={'0': None, '1': cone(halves[0]), '2': cone(halves[1])},
-                       cone_count=2, volume_ratio=.44, global_point=None)):
+                       volume_ratio=.44, step=dict(kind='split', text='细分锥 0 → 子锥 1、2'))):
         monitor.forward(label, patch)
     return monitor, x, cut
 

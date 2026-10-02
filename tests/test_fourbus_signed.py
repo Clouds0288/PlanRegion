@@ -8,7 +8,8 @@ from threadpoolctl import threadpool_limits
 from Network.four_bus_five_corridor import FourBus
 from model import GridPhysics, MasterProblem, SubProblem
 from model import PortSubProblem, PortPhysics, port_bounds, ray_support
-from monitor import signed_values, RunMonitor, _cut_polygon
+from monitor import signed_values, RunMonitor
+from plot import cut_polygon
 
 
 class SignedPartitionTests(unittest.TestCase):
@@ -122,7 +123,7 @@ class SignedPartitionTests(unittest.TestCase):
         metrics = monitor.validation_state['validation']['metrics']['inner']
         self.assertEqual(metrics['mr_percent'], 0.)
         self.assertEqual(metrics['fr_percent'], 0.)
-        face = _cut_polygon([0., 1., 1., 1., 0.], [1.], np.ones(3), -np.ones(3))
+        face = cut_polygon([0., 1., 1., 1., 0.], [1.], np.ones(3), -np.ones(3))
         self.assertEqual(len(face), 6)
         self.assertLess(np.max(np.abs(face.sum(axis=1))), 1e-10)
 

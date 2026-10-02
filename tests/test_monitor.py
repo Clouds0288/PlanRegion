@@ -8,8 +8,9 @@ import numpy as np
 import pytest
 
 import monitor as monitor_module
-from monitor import NativeWindow, RunMonitor, _cap, _union, signed_values
-from region import contains, covered, halfspaces
+from monitor import NativeWindow, RunMonitor, signed_values
+from plot import cap
+from region import contains, covered, halfspaces, polygon_union
 from tests.planning_checks import recorded_monitor
 
 
@@ -38,7 +39,8 @@ def test_forward_prefixes_partition_and_maps_signs():
     mapped = np.asarray(state['cut_history']['--:1']['cut'])
     power = np.array([40., 60.])
     assert cut[0]+cut[1:3]@power == pytest.approx(mapped[0]+mapped[1:3]@(-power))
-    assert monitor.frame(2)['global_point'] == dict(scheme='--:1', p=[-30., -30.])
+    step = monitor.frame(2)['step']   # 过程点在 step 中：坐标乘 sign，网架带分区前缀
+    assert step['p'] == [-30., -30.] and step['scheme'] == '--:1'
     assert signed_values(dict(inner=[]), np.array([-1, 1]), '-+:') == dict(inner=[])
 
 
@@ -126,7 +128,7 @@ def test_empty_metrics_do_not_claim_zero_error():
 
 def test_union_keeps_disconnected_domains_and_holes():
     from shapely.geometry import Point
-    union = _union([[[0, 0], [1, 0], [1, 1], [0, 1]], [[2, 0], [3, 0], [3, 1], [2, 1]]])
+    union = polygon_union([[[0, 0], [1, 0], [1, 1], [0, 1]], [[2, 0], [3, 0], [3, 1], [2, 1]]])
     assert union.area == 2.
     assert not union.covers(Point(1.5, .5))
 
@@ -144,8 +146,8 @@ def test_covered_matches_row_by_row_containment():
 def test_cap_keeps_the_far_face_in_cyclic_order():
     simplex = np.array([[0., 0., 0.], [3., 0., 0.], [0., 3., 0.], [0., 0., 3.]])
     clipped = np.array([[0., 0., 0.], [1., 0., 0.], [1., .5, 0.], [.5, 1., 0.], [0., 1., 0.], [0., 0., 1.]])
-    assert len(_cap(simplex)) == 3
-    ring = _cap(clipped)[:, :2]
+    assert len(cap(simplex)) == 3
+    ring = cap(clipped)[:, :2]
     signed = .5*np.sum(ring[:, 0]*np.roll(ring[:, 1], -1)-ring[:, 1]*np.roll(ring[:, 0], -1))
     assert abs(signed) > 0. and len(ring) == 5
 
@@ -164,7 +166,8 @@ def test_native_window_draws_cones_networks_and_rewinds():
         window.seek(cut_frame)
         scheme_axis = window.scheme_views['--:1'][1]
         assert any(line.get_gid() == 'cut---:1---:1' for line in scheme_axis.lines)
-        assert '-100.000, -100.000' in window.sp_text.get()
+        assert '-100.0, -100.0' in window.step_text.get()   # 取割顶点 bounds 乘 sign
+        assert any(item.get_gid() == 'step-point' for item in scheme_axis.collections)
         window.seek(0)
         assert not window.scheme_views['--:1'][0].winfo_manager()
         window.play()
@@ -173,6 +176,54 @@ def test_native_window_draws_cones_networks_and_rewinds():
         window.go_live()
         window.tick()
         assert window.index == last
+    finally:
+        window.close()
+
+
+def test_main_view_keeps_axes_and_steps_through_one_partition():
+    """主图坐标取最新帧 K^OUT 的范围、逐帧不变，网架面板取其中本分区的卦限；步骤栏、上一步/下一步与播放按所选分区走，
+    当前步骤画在主图上（坐标外的点贴边并注明）。"""
+    monitor, _, _ = recorded_monitor(2)
+    steps = [i for i, item in enumerate(monitor.history) if item['patch'].get('step')]
+    window = NativeWindow(monitor)
+    try:
+        window.root.withdraw()
+        limits = set()
+        for index in range(len(monitor.history)):
+            window.seek(index)
+            limits.add((window.axes['A'].get_xlim(), window.axes['A'].get_ylim()))
+        assert len(limits) == 1
+        (x0, x1), (y0, y1) = limits.pop()   # '--' 的锥外块到 -60 kW，'++' 尚无锥取分区盒到 100 kW，两侧各留 10%
+        assert (x0, x1, y0, y1) == pytest.approx((-76., 116., -76., 116.))
+        assert window.scheme_views['--:1'][1].get_xlim() == pytest.approx((-76., .04*192))
+        window.chosen.set('--')
+        window.seek(0)
+        window.step(1)
+        assert window.index == steps[0] and '分区 --' in window.step_text.get()
+        assert {line.get_gid() for line in window.axes['A'].lines} >= {'step-line'}
+        window.step(1)
+        window.step(1)
+        assert window.index == steps[2] and window.monitor.history[steps[2]]['patch']['event'] == 'point'
+        assert any('min η（坐标外）' == text.get_text() for text in window.axes['A'].texts)   # 评分顶点 (-100,-100) 在坐标外
+        assert window.log.curselection() == (window.log_rows.index(steps[2]),)
+        assert any(patch.get_gid() == 'step-network' for patch in window.axes['A'].patches)
+        window.seek_cut(1)
+        assert window.index == steps[3] and '取割 #1' in window.step_text.get()
+        window.seek(steps[-1])
+        assert any(patch.get_gid() == 'step-cone' for patch in window.axes['A'].patches)
+        window.log.selection_set(0)
+        window.choose_step(None)
+        assert window.index == window.log_rows[0]
+        window.chosen.set('++')
+        window.redraw()
+        assert window.log.size() == 0 and window.step_text.get() == '步骤：—'
+        window.seek(0)
+        window.play()
+        window.tick()
+        assert window.index == 0 and not window.playing   # '++' 没有步骤，播放不动
+        window.full_box.set(True)
+        window.refit()
+        assert window.axes['A'].get_xlim() == pytest.approx((-120., 120.))
     finally:
         window.close()
 

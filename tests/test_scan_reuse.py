@@ -87,13 +87,13 @@ def test_real_scan_is_reused_and_metrics_are_recomputed_for_new_result(tmp_path)
             assert set(current['cut_history']) == seen   # 回放不泄露未来的割
             latest = next(iter(restored.history[index]['patch']['cut_history']))
             row, scheme = current['cut_history'][latest], current['active_scheme']
-            from monitor import _cut_segment
+            from plot import cut_segment
             sign = np.asarray(row['sign'])
             ax = window.scheme_views[scheme][1]
             lower, upper = np.asarray([ax.get_xlim(), ax.get_ylim()]).T
             lower = np.where(sign > 0, np.maximum(lower, 0.), lower)
             upper = np.where(sign < 0, np.minimum(upper, 0.), upper)
-            segment = _cut_segment(row['cut'], current['schemes'][scheme]['x'], upper, lower)
+            segment = cut_segment(row['cut'], current['schemes'][scheme]['x'], upper, lower)
             if len(segment) == 2:
                 drawn = next(line for line in ax.lines if line.get_gid() == f'cut-{latest}-{scheme}')
                 np.testing.assert_allclose(np.asarray(drawn.get_data()).T, segment)

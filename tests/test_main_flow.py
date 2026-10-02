@@ -15,7 +15,7 @@ from region import (CUT_ACCEPTED, Cone, Cutting, Radial, box_vertices, build_par
 
 
 def settings(d):
-    return SimpleNamespace(threads=1, obbt_workers=1, tau=main.REGION_TAU, discovery_eps=main.DISCOVERY_EPS,
+    return SimpleNamespace(threads=1, workers=1, tau=main.REGION_TAU, discovery_eps=main.DISCOVERY_EPS,
                            discovery_share=main.DISCOVERY_SHARE, mip_seconds=main.MIP_SECONDS, mip_gap=main.MIP_GAP,
                            min_width=main.MIN_WIDTH[d], max_cones=main.MAX_CONES[d], threshold=main.CUT_THRESHOLD,
                            patience=main.CUT_PATIENCE, point_tol=main.POINT_TOL)
@@ -89,6 +89,8 @@ def test_cut_loop_carries_obbt_rows_and_keeps_certified_ray_points():
             return linear, model.NumConstrs
     with threadpool_limits(limits=1):
         plain = rows()
+        cone = part.new_cone((0, 1), part.inner(x, (0, 1), ()))   # K^IN 取 x 的射线顶点、外界取 μ=2：N^CUT_x 从 conv(K^OUT)∩盒出发
+        cone.mu, part.cones = 2., [cone]
         cutting.run([x])
         tight = rows()
         added = 2*len(part.equations.boxes[x])+2*sum(x)

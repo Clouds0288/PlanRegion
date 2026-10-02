@@ -521,7 +521,7 @@
     {
       "id": "case33_18_25_RCUT_mainline",
       "recording": "results/mainline/mode_1/case33_18_25.json.gz",
-      "scan": "results/scan/case33bw/18_25/d0121a1ad0ba8cc1e009da6cc204ad9cf53881d3e5f4c488a439cb11d5f6fb69/region_737610b09f58fa3c.npz",
+      "scan": "results/scan/case33bw/18_25/d0121a1ad0ba8cc1e009da6cc204ad9cf53881d3e5f4c488a439cb11d5f6fb69/region_f629fae70ed82ac4.npz",
       "parameters": {
         "mode": 1,
         "network": "case33bw",
@@ -551,7 +551,7 @@
       "certified_partitions": 4,
       "partitions": 4,
       "timing": {
-        "total_seconds": 46.82561170193367
+        "total_seconds": 21.382124301046133
       },
       "partition_results": [
         {
@@ -561,8 +561,8 @@
           ],
           "status": "certified",
           "how": "cut",
-          "seconds": 1.6643530996516347,
-          "gap": 0.005637082543539229,
+          "seconds": 1.6351803995203227,
+          "gap": 0.002218428096464331,
           "cones": 1
         },
         {
@@ -572,7 +572,7 @@
           ],
           "status": "certified",
           "how": "radial",
-          "seconds": 2.8405748002696782,
+          "seconds": 3.0137767002452165,
           "gap": 0.0031074825654275884,
           "cones": 3
         },
@@ -583,8 +583,8 @@
           ],
           "status": "certified",
           "how": "cut",
-          "seconds": 19.748568600974977,
-          "gap": 0.008756920812104108,
+          "seconds": 12.803813399281353,
+          "gap": 0.008600253806327895,
           "cones": 5
         },
         {
@@ -593,28 +593,28 @@
             -1
           ],
           "status": "certified",
-          "how": "cut",
-          "seconds": 46.21927299909294,
-          "gap": 0.006605623167628805,
-          "cones": 5
+          "how": "radial",
+          "seconds": 20.19489470287226,
+          "gap": 0.0036883166938834755,
+          "cones": 4
         }
       ],
       "metrics": {
         "inner": {
-          "mr_percent": 0.02450379808870375,
-          "fr_percent": 0.9588542298822673,
-          "missed_cells": 4,
-          "extra_cells": 158,
+          "mr_percent": 0.030629747610879686,
+          "fr_percent": 0.9468892261001517,
+          "missed_cells": 5,
+          "extra_cells": 156,
           "reference_cells": 16324,
-          "computed_cells": 16478
+          "computed_cells": 16475
         },
         "outer": {
           "mr_percent": 0.0,
-          "fr_percent": 1.5440289505428226,
+          "fr_percent": 1.3595987672971177,
           "missed_cells": 0,
-          "extra_cells": 256,
+          "extra_cells": 225,
           "reference_cells": 16324,
-          "computed_cells": 16580
+          "computed_cells": 16549
         }
       },
       "comparisons": {
@@ -914,6 +914,26 @@
       "unresolved_cells": 0,
       "socp_feasible_cells": 188053,
       "socp_unresolved_cells": 1
+    },
+    "results/scan/case33bw/18_25/d0121a1ad0ba8cc1e009da6cc204ad9cf53881d3e5f4c488a439cb11d5f6fb69/region_f629fae70ed82ac4.npz": {
+      "kind": "AC+SOCP",
+      "shape": [
+        161,
+        170
+      ],
+      "axis_lower": [
+        -6351.0,
+        -4874.0
+      ],
+      "bounds": [
+        725.0,
+        3609.0
+      ],
+      "method": "ac_socp_grid_v4",
+      "feasible_cells": 16324,
+      "unresolved_cells": 0,
+      "socp_feasible_cells": 18793,
+      "socp_unresolved_cells": 0
     }
   },
   "files": {
@@ -1104,20 +1124,20 @@
       "compression": "gzip"
     },
     "results/mainline/mode_1/case33_18_25.json.gz": {
-      "bytes": 67284,
-      "sha256": "b93dbfee8db4cf23ed83d93e902e6db49f8face4d2ea9f8a11a4dc12ffeb8fab"
+      "bytes": 36607,
+      "sha256": "e34ecc465c4f167ac7716e7ca6bc74c4bd46e1cf0ea38d113d39fea54fe3618b"
     },
     "results/mainline/mode_1/case33_18_25_comparison/comparison.csv": {
-      "bytes": 1065161,
-      "sha256": "3d1952c823320c624fce7bda9aa129afc1df0c3d3d00256b3fa102bb908033d3"
+      "bytes": 1085264,
+      "sha256": "d356a2aea23eff2d53dcff203e096195d90f65325182ab0424d772011d07b96e"
     },
     "results/mainline/mode_1/case33_18_25_comparison/comparison.npz": {
-      "bytes": 7890,
-      "sha256": "cb07deecf804518c8e506524cc620feb69efc4fef564658ffca8f9cc03676f4f"
+      "bytes": 7917,
+      "sha256": "f2cfc0a89f42e4201df82d268a6cc0600f1b34c88638d337476c1051be4cd63b"
     },
     "results/mainline/mode_1/case33_18_25_comparison/summary.json": {
-      "bytes": 2877,
-      "sha256": "3c3847e083becea73412136a301668937aa57815ddbe89852c6efd2343344c59"
+      "bytes": 2878,
+      "sha256": "484bcc3012ce8705adcfcd5f08879636bb4a1733d0d6f5328475050b5341dc59"
     },
     "results/scan/case33bw/18_25/d0121a1ad0ba8cc1e009da6cc204ad9cf53881d3e5f4c488a439cb11d5f6fb69/region_737610b09f58fa3c.npz": {
       "bytes": 170237,
@@ -1142,6 +1162,10 @@
     "results/scan/case33bw/18_25_30/ea7124157cce5bcd61e5782f37e7cfeb3ae25dcc2f396a26d1cb9809e7e770b5/region_c4ccaae500788d99.npz": {
       "bytes": 1944292,
       "sha256": "43abb53c5e6073e2bb7a7b84b32b87ffdddbf624760c59d090b8c8eb954351ca"
+    },
+    "results/scan/case33bw/18_25/d0121a1ad0ba8cc1e009da6cc204ad9cf53881d3e5f4c488a439cb11d5f6fb69/region_f629fae70ed82ac4.npz": {
+      "bytes": 170436,
+      "sha256": "b6261397004dee9d54fcb2137921405941fd2abe83590892f7459f935ffe6509"
     }
   },
   "method_archive": {

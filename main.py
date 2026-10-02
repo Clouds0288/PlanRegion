@@ -17,7 +17,7 @@ NETWORK = Case33                  # FourBus / Case33
 DIMENSION = 3                     # 2 / 3；Case33: (18,25) / (18,25,30)
 BUDGET = 20000.                   # FourBus 建设预算；Case33 用其 switch_budget
 CASE_TIME_LIMIT = 300             # 构域总时限（墙钟，各分区并行），含初始化和记录，不含事后扫描
-WORKERS = 16                      # 并行分区进程数；分区内 OBBT 线程数为 WORKERS//分区数
+WORKERS = 16                      # 并行分区进程数；OBBT 线程数为 WORKERS//仍在计算的分区数
 SOLVER_THREADS = 1                # 每个构域求解器的线程数（分区已并行）
 REGION_TAU = .005                 # 径向精度；体积目标 ε=d·tau
 DISCOVERY_EPS = .15               # A 阶段（网架发现）的放宽体积目标 ε_A

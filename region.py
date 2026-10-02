@@ -9,9 +9,12 @@ R：方向用单纯锥 K_k=cone(u_1..u_d) 剖分。锥内三角 K^IN_k=conv(0, v
 紧化射线顶点；x̂ 原点不可行时由原点可行的网架 y 覆盖近端，K^IN_k ⊆ R^SOCP_x̂ ∪ R^SOCP_y ⊆ R^SOCP。外界：
 Q=[v_1..v_d]，c=1ᵀQ⁻¹，网架不固定的锥 MISOCP 的上界 μ_k 给出 K^OUT_k={xi∈K_k: c@xi<=μ_k}=μ_k·K^IN_k ⊇ R^SOCP∩K_k。
 每次细分体积缺口 Δ_k=(μ_k^d-1)·vol(K^IN_k) 最大的锥，ΣΔ_k<=ε·Σvol(K^IN_k) 即认证。
-CUT：A 阶段（R 的目标放宽为 ε_A）出现的每个网架，从分区盒出发做主线割平面：SP 为割多面体 N^CUT_x 的顶点评分，
-违反量 η 最大的顶点由对偶 LP 取联合割（带该网架的 OBBT 盒与包络行）；连续 patience 次割的体积缩减比例 < threshold
-即停滞，N^CUT_x ⊇ R^SOCP_x 当作该网架的可行域（外近似，不作内域认证）。之后续跑 R（A+），新出现的网架也先割。
+初始网架由中心射线 MISOCP 给出：懒惰 OBBT 至多 LAZY_ROUNDS 轮，现任仍未紧化时在已紧化的网架中取紧化中心射线最远者。
+CUT：只割可能改变 I 的网架 X*（叶锥的 x̂、覆盖网架与锥 MISOCP 解点网架）。N^CUT_x 从 conv(K^OUT) ∩ 盒出发
+（K^OUT ⊇ R^SOCP ⊇ R^SOCP_x），SP 为顶点评分，违反量 η 最大的顶点由对偶 LP 取联合割（带该网架的 OBBT 盒与包络行）；
+连续 patience 次割的体积缩减比例 < threshold 即停滞，N^CUT_x 当作该网架的可行域（外近似，不作内域认证）。一轮 CUT
+每割完一个网架求夹逼间隙，已达 ε 或降幅不足 GAP_SHARE·ε 即结束，本轮其余网架不再割。A 阶段（R 的目标放宽为 ε_A）
+后割一轮，之后续跑 R（A+），每次锥决策后先割新出现的网架。OBBT 的线程数为 workers // 仍在计算的分区数。
 结果内域 I=(K^IN ∪ N^CUT)∩K^OUT；vol(K^OUT)-vol(I)<=ε·vol(I) 即认证。
 """
 from concurrent.futures import ProcessPoolExecutor
@@ -26,12 +29,14 @@ import time
 import numpy as np
 from gurobipy import GRB
 from scipy.spatial import ConvexHull, QhullError
+from shapely import set_precision
 from shapely.errors import GEOSException
+from shapely.geometry import MultiPoint, Polygon
+from shapely.ops import unary_union
 from threadpoolctl import threadpool_limits
 
 from model import SP_TIME_LIMIT, PortPhysics, PortSubProblem, cone_misocp, port_bounds, ray_support
-from monitor import RegionTimeout, RunMonitor, _connect, _union
-from plot import union_volume
+from monitor import RegionTimeout, RunMonitor, _connect
 
 # 连续几何在公共评价箱归一化后的坐标中计算；与采样网格无关。
 GEOMETRY_TOL = 1e-8
@@ -41,6 +46,8 @@ RAY_SECONDS = 30.        # 单次射线与原点 SP 的时限上限
 CUT_SECONDS = 30.        # 单个网架一次割循环的时限上限
 PASS_SHARE = .75         # 一轮 CUT 最多用分区剩余时间的比例，其余留给径向续跑
 CUT_ACCEPTED = ('stagnated', 'exact', 'empty')   # 计入 N^CUT 的状态（empty：N^CUT_x=∅，即分区内 R^SOCP_x=∅）
+GAP_SHARE = .1           # 一轮 CUT 中某网架使夹逼间隙下降不足 GAP_SHARE·ε 时结束本轮
+LAZY_ROUNDS = 2          # 中心射线 MISOCP 至多紧化的现任网架数
 
 
 # ---- 凸多面体几何（xi 或 kW，同一坐标系内运算） -------------------------------------------------
@@ -150,9 +157,83 @@ def polytope_volume(poly):
     return float(ConvexHull(coordinates/scale).volume*np.prod(scale))
 
 
+def polygon_union(polygons):
+    """二维凸多边形（顶点表）的并集：保留不相连部分和孔洞。"""
+    return unary_union([MultiPoint(points).convex_hull for points in polygons if len(points)])
+
+
+def _clip_face(points, constant, coefficient):
+    """有序面片裁剪：constant+coefficient@point>=0，不重新求凸包。"""
+    values = (constant+points@coefficient)/np.linalg.norm(coefficient)
+    values[np.abs(values) <= 1e-11] = 0.
+    clipped = []
+    for index in range(len(points)):
+        previous = index-1
+        if values[previous]*values[index] < 0.:
+            clipped.append(points[previous]+(points[index]-points[previous])
+                           *values[previous]/(values[previous]-values[index]))
+        if values[index] >= 0.:
+            clipped.append(points[index])
+    return np.asarray(clipped).reshape(-1, 2)
+
+
+def union_volume(polytopes):
+    """三维凸多面体并集的体积（散度定理）：只积分并集暴露的边界面，重叠面和内部面不重复计入。"""
+    polytopes = [np.asarray(p) for p in polytopes if polytope_volume(p) > 1e-15]
+    equations = [halfspaces(p) for p in polytopes]
+    volume = 0.
+    for i, poly in enumerate(polytopes):
+        coordinates = np.linalg.svd(poly-poly[0], full_matrices=False)[0]
+        for simplex in ConvexHull(coordinates, qhull_options='Qx').simplices:
+            triangle = poly[simplex]
+            a, b = triangle[1:]-triangle[0]
+            normal = np.cross(a, b)
+            area = np.linalg.norm(normal)
+            if area == 0.:
+                continue
+            normal /= area
+            if normal@(triangle[0]-poly.mean(axis=0)) < 0.:
+                normal = -normal
+            offset = -normal@triangle[0]
+            basis = np.array([a/np.linalg.norm(a), np.cross(normal, a/np.linalg.norm(a))])
+            face = (triangle-triangle[0])@basis.T
+            exposed = Polygon(face)
+            for j, eq in enumerate(equations):
+                if i == j:
+                    continue
+                # 共面且同向的重叠外表面由索引较小的网架计入一次。
+                coincident = ((np.linalg.norm(eq[:, :3]-normal, axis=1) < 1e-10)
+                              & (np.abs(eq[:, 3]-offset) < 1e-10))
+                if j > i and coincident.any():
+                    continue
+                values = triangle@eq[:, :3].T+eq[:, 3]
+                if np.any(values.min(axis=0) > 1e-10):
+                    continue
+                if np.all(values <= 1e-10):
+                    exposed = Polygon()
+                    break
+                coefficients = eq[:, :3]@basis.T
+                constants = eq[:, :3]@triangle[0]+eq[:, 3]
+                parallel = np.linalg.norm(coefficients, axis=1) < 1e-10
+                if np.any(constants[parallel] > 1e-10):
+                    continue
+                overlap = face
+                for coefficient, constant in zip(coefficients[~parallel], constants[~parallel]):
+                    overlap = _clip_face(overlap, -constant, -coefficient)
+                    if not len(overlap):
+                        break
+                if len(overlap) >= 3:
+                    # 共边点统一到面内裁剪精度，避免微小共线偏差使重叠面漏扣。
+                    exposed = set_precision(exposed, 1e-11).difference(set_precision(Polygon(overlap), 1e-11))
+                    if exposed.is_empty:
+                        break
+            volume -= offset*exposed.area/3.
+    return volume
+
+
 def union_measure(polytopes, d):
     """二维面积 / 三维体积；重叠部分只计一次。"""
-    return _union(polytopes).area if d == 2 else union_volume(polytopes)
+    return polygon_union(polytopes).area if d == 2 else union_volume(polytopes)
 
 
 def register_power(power, powers, point_tol):
@@ -218,7 +299,7 @@ def sandwich(cones, sets, d, cache):
     triangles = [np.vstack([np.zeros(d), V]) for _, V, _ in cones]
     # 2. 二维：内域并集与外域并集取交
     if d == 2:
-        inner = _union([*triangles, *(vertices for _, vertices in sets)]).intersection(_union(outers))
+        inner = polygon_union([*triangles, *(vertices for _, vertices in sets)]).intersection(polygon_union(outers))
         return inner.area, sum(polytope_volume(poly) for poly in outers)
     # 3. 三维：逐锥取与该锥相交的集合，T 与各集合裁到 锥∩O∩盒 后求并集体积
     inner = outer = 0.
@@ -275,8 +356,8 @@ class Radial:
         self.switches = [s for c, s in zip(self.network.corridors, self.network.type_slices) if c.switchable]
         # 2. 方向表：初始为坐标轴；棱中点方向由相邻锥共用，射线缓存随之共用
         self.directions, self.midpoints = list(np.eye(self.d)), {}
-        # 3. 证书缓存：射线远端 / 近端（键为 (方案, 方向编号)）、原点认证、锥 MISOCP 出现过的现任方案
-        self.rays, self.nears, self.origin, self.incumbents = {}, {}, {}, set()
+        # 3. 证书缓存：射线远端 / 近端（键为 (方案, 方向编号)）与原点认证
+        self.rays, self.nears, self.origin = {}, {}, {}
         self.cones, self.next_id = [], 0
         self.deadline, self.phase = np.inf, '径向搜索'
 
@@ -305,12 +386,20 @@ class Radial:
             self.midpoints[key] = self.direction(self.directions[a]+self.directions[b])
         return self.midpoints[key]
 
+    def step(self, kind, text, **geometry):
+        """记录一步求解为 step 帧：kind、说明文字与几何（kW 幅值：点 p、折线 vertices；点所属网架 scheme），
+        回放时逐步画出。"""
+        self.monitor._emit('step', phase=self.phase, step=dict(kind=kind, text=text, **geometry))
+
     # 证书：紧化、原点认证、射线顶点与近端覆盖
     def tighten(self, x):
-        """方案首次使用前 OBBT：其后该方案的 SP、射线与锥 MISOCP 都带它的盒与包络行。"""
+        """方案首次使用前 OBBT：其后该方案的 SP、射线与锥 MISOCP 都带它的盒与包络行。线程数为
+        workers // 仍在计算的分区数，先结束的分区让出线程。"""
         if x not in self.equations.boxes:
             self.remaining(np.inf)
-            self.equations.obbt(np.asarray(x), self.bounds, self.settings.obbt_workers)
+            threads = max(1, self.settings.workers//self.monitor.running())
+            self.equations.obbt(np.asarray(x), self.bounds, threads)
+            self.step('obbt', f'OBBT 紧化网架 {self.label(x)}（{threads} 线程）：分区盒内求选中型号 P/Q/ell 与节点电压的上下界')
 
     def solved(self, solve):
         """单次射线 / SP：时限取 RAY_SECONDS 与剩余时间的较小者；不可行或数值失败返回 None，阶段到时抛出。"""
@@ -330,6 +419,8 @@ class Radial:
             answer = self.solved(lambda limit: self.oracle.solve(np.asarray(x), np.zeros(self.d), time_limit=limit,
                                                                  score_only=True))
             self.origin[x] = answer is not None and bool(answer['feasible'])
+            self.step('origin', f"零接入 SP：固定网架 {self.label(x)}、p=0，min η → "
+                      f"{'可行' if self.origin[x] else '不可行'}", p=np.zeros(self.d), scheme=self.label(x))
         return self.origin[x]
 
     def vertex(self, x, key):
@@ -341,7 +432,11 @@ class Radial:
                                                            self.bounds*u/u.max(), threads=self.settings.threads,
                                                            time_limit=limit))
             point = None if answer is None else answer['p']/self.bounds
-            self.rays[x, key] = point if point is not None and np.linalg.norm(point) >= MIN_RADIUS else None
+            self.rays[x, key] = v = point if point is not None and np.linalg.norm(point) >= MIN_RADIUS else None
+            self.step('ray', f'射线：固定网架 {self.label(x)}，max t  s.t. t·u 对该网架可行（紧化 SOCP）'
+                      +(' → 无可行顶点' if v is None else ' → 射线顶点 v'),
+                      **({} if v is None else dict(p=v*self.bounds, vertices=np.vstack([np.zeros(self.d), v*self.bounds]),
+                                                   scheme=self.label(x))))
         return self.rays[x, key]
 
     def near(self, x, key):
@@ -351,7 +446,12 @@ class Radial:
             answer = None if far is None else self.solved(
                 lambda limit: ray_support(self.equations, self.budget, np.asarray(x), far*self.bounds, np.zeros(self.d),
                                           threads=self.settings.threads, time_limit=limit))
-            self.nears[x, key] = None if answer is None else answer['p']/self.bounds
+            self.nears[x, key] = near = None if answer is None else answer['p']/self.bounds
+            if far is not None:
+                self.step('near', f'反向射线：网架 {self.label(x)} 原点不可行，从远端朝原点求可行段的近端'
+                          +(' → 无解' if near is None else ''),
+                          **({} if near is None else dict(p=near*self.bounds, vertices=np.vstack([far, near])*self.bounds,
+                                                          scheme=self.label(x))))
         return self.nears[x, key]
 
     def inner(self, x, keys, covers):
@@ -375,31 +475,56 @@ class Radial:
         return None
 
     # 外界：x 自由锥 MISOCP 与懒惰 OBBT
-    def misocp(self, objective, rows=None, exclude=()):
-        """现任方案尚未紧化时先 OBBT 再重解，使上界用到它的紧化行；分区到时返回最后一轮。"""
+    def misocp(self, objective, rows=None, exclude=(), rounds=np.inf):
+        """x 自由 MISOCP：现任网架尚未紧化时先 OBBT 再重解（至多 rounds 轮），使上界用到它的紧化行；分区到时返回最后一轮。"""
         while True:
             answer = cone_misocp(self.equations, self.budget, self.bounds, objective, rows=rows, exclude=exclude,
                                  time_limit=self.remaining(self.settings.mip_seconds),
                                  mip_gap=0. if rows is None else self.settings.mip_gap, threads=self.settings.threads)
-            if answer['x'] is not None:
-                self.incumbents.add(answer['x'])
             if (answer['status'] == GRB.INFEASIBLE or answer['x'] is None or answer['x'] in self.equations.boxes
-                    or self.monitor.clock() >= self.deadline):
+                    or rounds == 0 or self.monitor.clock() >= self.deadline):
                 return answer
+            self.step('lazy', f"懒惰 OBBT：x 自由 MISOCP 的现任网架 {self.label(answer['x'])} 尚未紧化（当前上界 "
+                              f"{answer['bound']:.4f}）→ 先紧化再重解", p=answer['point'], scheme=self.label(answer['x']))
             self.tighten(answer['x'])
+            rounds -= 1
 
     def initial(self):
-        """中心射线 MISOCP 选初始网架：胜出方案原点不可行时以 no-good 排除后重解。
-        返回 (首个胜出方案, 原点可行的胜出方案)。"""
+        """中心射线选初始网架；胜出方案原点不可行时以 no-good 排除后重解。返回 (首个胜出方案, 原点可行的胜出方案)。"""
         excluded = []
         while True:
-            answer = self.misocp(np.ones(self.d), exclude=excluded)
+            # 1. 中心射线 MISOCP（x 自由，ξ_1=…=ξ_d）给出候选，懒惰 OBBT 至多 LAZY_ROUNDS 轮
+            answer = self.misocp(np.ones(self.d), exclude=excluded, rounds=LAZY_ROUNDS)
             if answer['x'] is None:
                 self.remaining(np.inf)
                 raise RuntimeError(f'中心射线 MISOCP 没有可行网架（status={answer["status"]}）')
-            if self.origin_feasible(answer['x']):
-                return (excluded or [answer['x']])[0], answer['x']
-            excluded.append(answer['x'])
+            x, point, how = answer['x'], answer['point'], f"上界 {answer['bound']:.3f}"
+            # 2. 候选仍未紧化：在已紧化、未排除的网架中取紧化中心射线最远者（中心射线只选网架，上界不进证书）
+            if x not in self.equations.boxes:
+                x, point = self.farthest([y for y in self.equations.boxes if y not in excluded])
+                how = f"现任 {self.label(answer['x'])} 未紧化，取已紧化网架中中心射线最远者"
+            self.step('center', f"中心射线：max Σξ  s.t. ξ_1=…=ξ_d → 网架 {self.label(x)}，{how}"
+                      +(f'（已排除 {len(excluded)} 个原点不可行网架）' if excluded else ''),
+                      p=point, vertices=np.vstack([np.zeros(self.d), point]), scheme=self.label(x))
+            # 3. 原点认证：不可行则排除后重解
+            if self.origin_feasible(x):
+                return (excluded or [x])[0], x
+            excluded.append(x)
+
+    def farthest(self, schemes):
+        """紧化中心射线（固定网架的射线 SOCP，朝 bounds 方向）最远的网架与其射线点（kW）；每条射线记一步。"""
+        reach = {}
+        for y in schemes:
+            answer = self.solved(lambda limit: ray_support(self.equations, self.budget, np.asarray(y), np.zeros(self.d),
+                                                           self.bounds, threads=self.settings.threads, time_limit=limit))
+            self.step('ray', f'中心射线候选：固定网架 {self.label(y)}，max t  s.t. t·(1,…,1) 可行（紧化 SOCP）'
+                      +(' → 无解' if answer is None else f" → t={answer['ray_fraction']:.3f}"),
+                      **({} if answer is None else dict(p=answer['p'], vertices=np.vstack([np.zeros(self.d), answer['p']]),
+                                                        scheme=self.label(y))))
+            if answer is not None:
+                reach[y] = answer
+        x = max(reach, key=lambda y: reach[y]['ray_fraction'])
+        return x, reach[x]['p']
 
     def new_cone(self, keys, inner, parent=None):
         cone = Cone(self.next_id, tuple(keys), inner['x'], inner['verts'], inner['cover'])
@@ -421,13 +546,22 @@ class Radial:
             raise RuntimeError(f'初始网架 {self.label(chosen)} 在坐标轴方向没有射线顶点')
         return self.new_cone(tuple(range(self.d)), inner)
 
+    def far_face(self, cone):
+        """锥外块 K^OUT_k 的远端面 c@xi=mu_k（kW 幅值），回放中标出锥 MISOCP 的结果。"""
+        return cone.mu*cone.verts*self.bounds
+
     def solve(self, cone):
         """锥 MISOCP：锥约束 Q⁻¹xi>=0（行归一化）、分区盒，max c@xi；μ_k=ObjBound，不可行时取 1。"""
         rows = np.linalg.inv(cone.verts.T)
         answer = self.misocp(cone.c, rows/np.linalg.norm(rows, axis=1, keepdims=True))
         cone.mu = 1. if answer['status'] == GRB.INFEASIBLE else answer['bound']
         cone.final, cone.status = answer, 'bounded'
-        self.publish([cone])
+        found = ('锥内不可行' if answer['status'] == GRB.INFEASIBLE else '尚无解点' if answer['x'] is None
+                 else f"解点网架 {self.label(answer['x'])}")
+        geometry = {**({} if answer['point'] is None else dict(p=answer['point'], scheme=self.label(answer['x']))),
+                    **(dict(vertices=self.far_face(cone)) if np.isfinite(cone.mu) else {})}
+        self.publish([cone], step=dict(kind='cone', text=f'锥 {cone.id} MISOCP：max c·ξ  s.t. ξ∈K_{cone.id}，网架自由 → '
+                                                         f'μ={cone.mu:.3f}，{found}', **geometry))
 
     # 细分
     def options(self, cone):
@@ -485,7 +619,8 @@ class Radial:
             # 1. 首次运行：中心射线选初始网架，建根锥并求外界
             if not self.cones:
                 self.cones = [self.root()]
-                self.publish(self.cones)
+                self.publish(self.cones, step=dict(kind='root', text=f'根锥 K_0：内域网架 {self.label(self.cones[0].x)}，'
+                                                   '坐标轴方向的射线顶点围成 K^IN_0'))
             # 2. 续跑：先求上次时限到达时尚未求解的锥（其间沿用父锥外界）
             for cone in [c for c in self.cones if c.status == 'pending']:
                 self.solve(cone)
@@ -498,7 +633,7 @@ class Radial:
                 if not heap:
                     return 'unresolved'
                 # 4. 细分体积缺口最大的锥；角直径过小、锥数到上限或无内域证书的锥不再细分
-                _, _, cone = heapq.heappop(heap)
+                gap, _, cone = heapq.heappop(heap)
                 self.remaining(np.inf)
                 U = self.U(cone.keys)
                 diameter = max(float(np.arccos(np.clip(U[:, a]@U[:, b], -1., 1.)))
@@ -511,7 +646,9 @@ class Radial:
                 # 5. 子锥替换父锥并立即求外界
                 k = self.cones.index(cone)
                 self.cones[k:k+1] = children
-                self.publish(children, removed=[cone])
+                self.publish(children, removed=[cone], step=dict(
+                    kind='split', text=f"细分锥 {cone.id}（Δ={-gap:.3g} 为最大）→ 子锥 {'、'.join(str(c.id) for c in children)}，"
+                                       f"内域网架 {'、'.join(self.label(c.x) for c in children)}"))
                 for child in children:
                     self.solve(child)
                     heapq.heappush(heap, (-self.delta(child), child.id, child))
@@ -523,28 +660,24 @@ class Radial:
         """叶锥几何 [(U, V, 外界)]，供测度与结果使用（xi）。"""
         return [(self.U(c.keys), c.verts, c.halfspace()) for c in self.cones]
 
-    def publish(self, cones, removed=()):
-        """记录锥的变化：内域 T 与外域 O∩盒（kW 幅值），被细分的父锥置空；附 ΣΔ/ΣT 与最近一次 MISOCP 解点。"""
+    def publish(self, cones, removed=(), step=None):
+        """记录锥的变化：K^IN_k 与 K^OUT_k∩盒（kW 幅值）、x̂ 与 μ_k，被细分的父锥置空；附 ΣΔ/Σvol(K^IN)。"""
         rows = {str(c.id): None for c in removed}
         for c in cones:
             rows[str(c.id)] = dict(inner=np.vstack([np.zeros(self.d), c.verts])*self.bounds,
                                    outer=clip_box(cone_outer(self.U(c.keys), c.halfspace()))*self.bounds,
                                    scheme=self.label(c.x), mu=c.mu)
-        final = cones[-1].final
-        point = None if final is None or final['x'] is None else dict(scheme=self.label(final['x']), p=final['point'])
-        self.monitor._emit('cone', phase=self.phase, cones=rows, cone_count=len(self.cones),
-                           volume_ratio=self.volume_ratio(), global_point=point)
+        self.monitor._emit('cone', phase=self.phase, cones=rows, volume_ratio=self.volume_ratio(), step=step)
 
     def schemes(self):
-        """X*：叶锥的 x̂ 与覆盖网架、锥 MISOCP 的现任方案、已紧化与原点认证的方案；按所占锥体积从大到小。"""
+        """X*：可能改变 I 的网架。先取叶锥的 x̂（按所占锥体积从大到小），再接各叶锥的覆盖网架与锥 MISOCP 解点网架
+        （按所在锥的 Δ_k 从大到小）；只做过 OBBT 或原点测试的网架不在其中。"""
         volumes = {}
         for cone in self.cones:
             volumes[cone.x] = volumes.get(cone.x, 0.)+abs(float(np.linalg.det(cone.verts)))
-            volumes.setdefault(cone.cover, 0.)
-        for x in (*self.incumbents, *self.equations.boxes, *self.origin):
-            volumes.setdefault(tuple(int(v) for v in x), 0.)
-        volumes.pop(None, None)
-        return sorted(volumes, key=lambda x: -volumes[x])
+        others = [y for cone in sorted(self.cones, key=lambda c: -self.delta(c))
+                  for y in (cone.cover, cone.final and cone.final['x']) if y is not None]
+        return list(dict.fromkeys([*sorted(volumes, key=lambda x: -volumes[x]), *others]))
 
 
 # ---- 逐网架构域：主线割平面（CUT） ---------------------------------------------------------------
@@ -558,7 +691,9 @@ class Cutting:
 
     def __init__(self, radial):
         self.radial, self.settings, self.monitor = radial, radial.settings, radial.monitor
+        self.epsilon = radial.d*self.settings.tau
         self.cuts, self.networks, self.count = [], {}, 0   # 共享割 α+βᵀu+δᵀx>=0；方案 → 网架状态；割序号
+        self.declined, self.measures = set(), {}           # 某轮因间隙降幅不足而不再割的网架；sandwich 逐锥测度缓存
 
     def clip(self, vertices, x, cuts):
         bounds, d = self.radial.bounds, self.radial.d
@@ -567,33 +702,47 @@ class Cutting:
         return vertices
 
     def row(self, x):
-        """网架面板的一行（kW 幅值）：外域 N^CUT_x；停滞或精确时 N^CUT_x 也计入 I。"""
+        """网架面板的一行（kW 幅值）：N^CUT_x 与状态；状态在 CUT_ACCEPTED 中时 N^CUT_x 计入 I。"""
         state, radial = self.networks[x], self.radial
-        vertices = state['vertices']*radial.bounds
         return dict(x=x, choice=radial.network.decode_plan(np.asarray(x)),
-                    cost=float(radial.network.cost_offset+radial.network.cost@np.asarray(x)), outer=vertices,
-                    inner=vertices if state['status'] in CUT_ACCEPTED else np.empty((0, radial.d)),
-                    status=state['status'])
+                    cost=float(radial.network.cost_offset+radial.network.cost@np.asarray(x)),
+                    outer=state['vertices']*radial.bounds, status=state['status'])
 
     def sets(self):
         """计入 N^CUT 的 N^CUT_x：[(版本键, 顶点)]（xi）。"""
         return [((x, state['version']), state['vertices']) for x, state in self.networks.items()
                 if state['status'] in CUT_ACCEPTED and len(state['vertices']) > self.radial.d]
 
+    def gap(self):
+        """当前夹逼间隙 vol(K^OUT)/vol(I)-1；I 为空时为 inf。"""
+        inner, outer = sandwich(self.radial.geometry(), self.sets(), self.radial.d, self.measures)
+        return outer/inner-1. if inner > 0. else np.inf
+
     def run(self, schemes):
-        """一轮 CUT：未割过或上轮未及处理的网架按锥体积排队；本轮最多用剩余时间的 PASS_SHARE，
-        每个网架不超过 CUT_SECONDS；超过本轮时限仍未开始的网架记 skipped，下一轮重试。"""
-        radial = self.radial
-        start = self.monitor.clock()
-        end = start+PASS_SHARE*max(radial.deadline-start, 0.)
-        for x in schemes:
-            if x in self.networks and self.networks[x]['status'] != 'skipped':
-                continue
-            if self.monitor.clock() >= end:
+        """一轮 CUT：间隙已达 ε 时不割；否则按 X* 的次序割未割过的网架。本轮最多用剩余时间的 PASS_SHARE，每个网架不超过
+        CUT_SECONDS；超过本轮时限仍未开始的网架记 skipped，下一轮重试。"""
+        radial, monitor = self.radial, self.monitor
+        before = self.gap()
+        if before <= self.epsilon:
+            return
+        end = monitor.clock()+PASS_SHARE*max(radial.deadline-monitor.clock(), 0.)
+        queue = [x for x in schemes
+                 if x not in self.declined and (x not in self.networks or self.networks[x]['status'] == 'skipped')]
+        for k, x in enumerate(queue):
+            if monitor.clock() >= end:
                 self.networks[x] = dict(vertices=box_vertices(radial.d), status='skipped', version=0)
                 continue
             radial.tighten(x)
-            self.cut(x, min(CUT_SECONDS, end-self.monitor.clock()))
+            self.cut(x, min(CUT_SECONDS, end-monitor.clock()))
+            # 每割完一个网架求间隙：已达 ε 或降幅不足 GAP_SHARE·ε 即结束本轮，本轮其余网架之后不再割
+            after = self.gap()
+            if after <= self.epsilon or before-after < GAP_SHARE*self.epsilon:
+                self.declined.update(queue[k+1:])
+                reason = '已达 ε' if after <= self.epsilon else f'降幅不足 {GAP_SHARE:g}ε'
+                radial.step('check', f'CUT 本轮结束：割完网架 {radial.label(x)} 后间隙 {before:.2%} → {after:.2%}，'
+                                     f'{reason}；本轮其余 {len(queue)-k-1} 个网架不再割')
+                return
+            before = after
 
     def cut(self, x, limit):
         """网架 x 的割平面循环。"""
@@ -607,9 +756,12 @@ class Cutting:
                 raise CutSlice()
             return radial.remaining(min(rest, SP_TIME_LIMIT['socp']))
 
-        # 1. N^CUT_x 初值：分区盒被已有联合割裁剪；先记录初值，回放时第一刀也有割前的 N^CUT_x
-        state = self.networks[x] = dict(vertices=self.clip(box_vertices(d), x, self.cuts), status='slice', version=0)
-        monitor._emit('network', phase='网架切割', active_scheme=label, schemes={label: self.row(x)})
+        # 1. N^CUT_x 初值：conv(K^OUT) ∩ 盒（K^OUT ⊇ R^SOCP ⊇ R^SOCP_x）被已有联合割裁剪；先记录初值
+        start = polytope_vertices(np.vstack([clip_box(cone_outer(U, halfspace)) for U, _, halfspace in radial.geometry()]))
+        state = self.networks[x] = dict(vertices=self.clip(start, x, self.cuts), status='slice', version=0)
+        monitor._emit('network', phase='网架切割', active_scheme=label, schemes={label: self.row(x)},
+                      step=dict(kind='network', text=f'CUT 网架 {label}：N^CUT_x 从 conv(K^OUT) ∩ 盒出发，'
+                                                    f'先被已有 {len(self.cuts)} 刀共享割裁剪'))
         cache, powers, applied, failed, history, fresh = {}, [], set(), set(), [], []
 
         def score(index):
@@ -625,6 +777,11 @@ class Cutting:
                 except RuntimeError:
                     failed.add(index)
                     return 'failed'
+                eta, feasible = cache[index]['eta'], cache[index]['feasible']
+                monitor._emit('point', phase='网架切割', active_scheme=label,
+                              step=dict(kind='sp', p=powers[index], scheme=label, feasible=feasible,
+                                        text=f"SP：固定网架 {label} 与 N^CUT_x 的一个顶点，min η → "
+                                             f"η={eta:.3g}（{'可行' if feasible else '待割'}）"))
             return 'feasible' if cache[index]['feasible'] else 'pending'
 
         try:
@@ -657,9 +814,10 @@ class Cutting:
                 self.count += 1
                 small = next((k for k, ratio in enumerate(reversed(history)) if ratio >= settings.threshold), len(history))
                 monitor._emit('cut', phase='网架切割', active_scheme=label, schemes={label: self.row(x)},
-                              cut_history={str(self.count): dict(cut=cut, scheme=label)}, area_ratio=history[-1],
-                              small_cuts=small, patience=settings.patience, eta=cache[index]['eta'],
-                              sp_point=dict(scheme=label, p=powers[index]))
+                              cut_history={str(self.count): dict(cut=cut, scheme=label)},
+                              step=dict(kind='cut', p=powers[index], scheme=label,
+                                        text=f"取割：η 最大的顶点（η={cache[index]['eta']:.3g}）→ 对偶 LP 得联合割 "
+                                             f"#{self.count}，割掉 {history[-1]:.1%}，连续小割 {small}/{settings.patience}"))
                 # 4. 连续 patience 次割的体积缩减比例 < threshold 即停滞
                 if stagnated(history, settings.threshold, settings.patience):
                     state['status'] = 'stagnated'
@@ -674,7 +832,8 @@ class Cutting:
                 other['vertices'], other['version'] = self.clip(other['vertices'], y, fresh), other['version']+1
                 rows[radial.label(y)] = self.row(y)
         rows[label] = self.row(x)
-        monitor._emit('network', phase='网架切割', active_scheme=None, schemes=rows)
+        monitor._emit('network', phase='网架切割', active_scheme=None, schemes=rows,
+                      step=dict(kind='network_end', text=f"网架 {label} 停止：{state['status']}，本网架 {len(fresh)} 刀"))
 
 
 # ---- 分区与全局 ---------------------------------------------------------------------------------
@@ -685,13 +844,14 @@ def build_partition(network, sign, budget, monitor, settings):
     end = start+monitor.time_limit
     radial = Radial(network, sign, budget, monitor, settings)
     cutting = Cutting(radial)
-    epsilon, d, cache = radial.d*settings.tau, radial.d, {}
+    epsilon, d = cutting.epsilon, radial.d
     monitor._emit('phase_start', phase='径向搜索', status='running', cones={}, schemes={}, cut_history={})
 
     def certified():
         """夹逼判据：vol(K^OUT)-vol(I)<=ε·vol(I)，I=(K^IN ∪ N^CUT)∩K^OUT。"""
-        inner, outer = sandwich(radial.geometry(), cutting.sets(), d, cache)
-        return inner > 0. and outer-inner <= epsilon*inner
+        gap = cutting.gap()
+        radial.step('check', f"判据：vol(K^OUT)/vol(I)−1 = {gap:.2%}，ε = {epsilon:.1%} → {'认证' if gap <= epsilon else '未满足'}")
+        return gap <= epsilon
 
     # 2. A：径向全局搜索到放宽目标 ε_A，时限为分区时限的 share_A
     radial.phase, radial.deadline = '径向搜索 A', start+settings.discovery_share*(end-start)
@@ -711,7 +871,7 @@ def build_partition(network, sign, budget, monitor, settings):
         status = 'time_limit'
 
     # 5. 汇总：I 为各 K^IN_k 与按锥裁到 K^OUT_k 的 N^CUT_x，外域为 K^OUT；尚无锥时外域为分区盒（kW 幅值）
-    inner, outer = sandwich(radial.geometry(), cutting.sets(), d, cache)
+    gap = cutting.gap()
     rows = dict(inner=[], outer=[] if radial.cones else [box_vertices(d)])
     for U, V, halfspace in radial.geometry():
         rows['inner'] += [np.vstack([np.zeros(d), V]),
@@ -720,12 +880,14 @@ def build_partition(network, sign, budget, monitor, settings):
     statuses = [state['status'] for state in cutting.networks.values()]
     result = dict(sign=list(sign), status=status, certified=status == 'certified',
                   how='radial' if radial.volume_ratio() <= epsilon else 'cut', seconds=monitor.clock()-start,
-                  gap=outer/inner-1. if inner > 0. else None, volume_ratio=radial.volume_ratio(),
+                  gap=gap if np.isfinite(gap) else None, volume_ratio=radial.volume_ratio(),
                   cones=len(radial.cones), networks=len(statuses), accepted=sum(s in CUT_ACCEPTED for s in statuses),
                   cuts=cutting.count, inner=[r*radial.bounds for r in rows['inner']],
                   outer=[r*radial.bounds for r in rows['outer']])
     monitor._emit('partition_end', phase='分区完成' if result['certified'] else '分区停止', status=status,
-                  active_scheme=None)
+                  active_scheme=None, step=dict(kind='end', text=f"分区结束：{status}，{result['cones']} 个锥、"
+                                                                f"{result['cuts']} 刀，间隙 {result['gap']:.2%}"
+                                                if result['gap'] is not None else f'分区结束：{status}'))
     return result
 
 
@@ -753,7 +915,7 @@ def build_region(network, *, budget, monitor, seconds, workers, settings):
                   cones={}, schemes={}, cut_history={}, status='running')
     # 2. 子进程池：每个分区一个任务；并发数不足时后启动的分区得到剩余时间按并发比例的份额
     concurrency = min(workers, len(signs))
-    settings.obbt_workers = max(1, workers//len(signs))
+    settings.workers = workers
     end = time.time()+seconds
     channel = monitor.share()
     queue, results = list(zip(signs, labels)), {}
@@ -767,10 +929,12 @@ def build_region(network, *, budget, monitor, seconds, workers, settings):
             now = time.time()
             share = min(1., concurrency/(len(queue)+len(futures)+1))
             futures[label] = pool.submit(_partition, network, sign, budget, now+max(end-now, 0.)*share, settings)
+            channel[4].value += 1
 
         while queue and len(futures) < concurrency:
             submit()
-        # 3. 转发子进程事件，直到全部分区发来结束标记；中断时通知子进程停止并读空队列（子进程退出前要送完事件）
+        # 3. 转发子进程事件，直到全部分区发来结束标记；仍在计算的分区数供子进程分配 OBBT 线程；
+        #    中断时通知子进程停止并读空队列（子进程退出前要送完事件）
         try:
             while futures:
                 label, patch = channel[0].get()
@@ -778,6 +942,7 @@ def build_region(network, *, budget, monitor, seconds, workers, settings):
                     monitor.forward(label, patch)
                     continue
                 results[label] = futures.pop(label).result()
+                channel[4].value -= 1
                 if queue:
                     submit()
         except BaseException:

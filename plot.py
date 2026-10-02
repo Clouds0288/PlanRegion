@@ -1,75 +1,158 @@
-"""主线三维并集测度：只积分暴露面，保持重叠和内部空隙。"""
+"""绘图基元：回放窗口各面板的配色与步骤样式，二维几何、三维凸域、锥远端面片、体素表面与联合割截线的绘制。
+只画图，不做构域计算；几何并集等计算在 region.py。"""
+from functools import lru_cache
+from itertools import product
+
 import numpy as np
 
-
-def _clip_face(points, constant, coefficient):
-    """有序面片裁剪：constant+coefficient@point>=0，不重新求凸包。"""
-    values = (constant+points@coefficient)/np.linalg.norm(coefficient)
-    values[np.abs(values) <= 1e-11] = 0.
-    clipped = []
-    for index in range(len(points)):
-        previous = index-1
-        if values[previous]*values[index] < 0.:
-            clipped.append(points[previous]+(points[index]-points[previous])
-                           *values[previous]/(values[previous]-values[index]))
-        if values[index] >= 0.:
-            clipped.append(points[index])
-    return np.asarray(clipped).reshape(-1, 2)
+INNER, OUTER, GLOBAL, SP = '#397f85', '#a9b9c4', '#cc3838', '#ef8a23'
+REFERENCE = '#c6dbef'   # 对比面板中参考可行的格
+CUT, RAY, NETWORK = '#8055a4', '#b8860b', '#555555'
+STEP_STYLE = {   # 步骤几何：标记、颜色、主图短标签（完整说明在步骤栏）
+    'center': ('D', GLOBAL, 'max Σξ'), 'origin': ('o', NETWORK, 'SP  p=0'), 'ray': ('o', RAY, 'max t'),
+    'near': ('s', RAY, '反向 max t'), 'cone': ('D', GLOBAL, 'max c·ξ → μ'), 'lazy': ('P', GLOBAL, '现任未紧化 → OBBT'),
+    'sp': ('x', SP, 'min η'), 'cut': ('X', CUT, '取割')}
 
 
-def union_volume(polytopes):
-    """散度定理：只积分并集暴露的边界面，重叠面和内部面不重复计入。"""
+def cut_segment(cut, x, bounds, axis_lower=None):
+    """alpha + beta @ p + delta @ x = 0 在二维显示框中的截线。"""
+    cut, x, bounds = np.asarray(cut), np.asarray(x), np.asarray(bounds)
+    lower = np.zeros(2) if axis_lower is None else np.asarray(axis_lower)
+    beta, constant = cut[1:3], cut[0]+cut[3:]@x
+    points = []
+    for fixed in (0, 1):
+        free = 1-fixed
+        if beta[free] == 0.:
+            continue
+        for edge in (lower[fixed], bounds[fixed]):
+            value = -(constant+beta[fixed]*edge)/beta[free]
+            tolerance = 1e-9*(bounds[free]-lower[free])
+            if lower[free]-tolerance <= value <= bounds[free]+tolerance:
+                point = np.zeros(2)
+                point[fixed], point[free] = edge, np.clip(value, lower[free], bounds[free])
+                if not any(np.allclose(point, old, rtol=1e-9, atol=1e-9) for old in points):
+                    points.append(point)
+    return np.asarray(points).reshape(-1, 2)
+
+
+def cut_polygon(cut, x, bounds, axis_lower=None):
+    """三维联合割平面与显示盒十二条棱的交点，保留实际 kW 坐标。"""
+    cut, bounds = np.asarray(cut), np.asarray(bounds)
+    lower = np.zeros(3) if axis_lower is None else np.asarray(axis_lower)
+    beta, constant = cut[1:4], cut[0]+cut[4:]@x
+    points = []
+    for free in range(3):
+        if beta[free] == 0.:
+            continue
+        fixed = [i for i in range(3) if i != free]
+        for corner in product((0., 1.), repeat=2):
+            point = np.zeros(3)
+            point[fixed] = lower[fixed]+np.asarray(corner)*(bounds-lower)[fixed]
+            point[free] = -(constant+beta@point)/beta[free]
+            tolerance = 1e-9*(bounds[free]-lower[free])
+            if lower[free]-tolerance <= point[free] <= bounds[free]+tolerance:
+                points.append(point)
+    return np.unique(np.asarray(points).reshape(-1, 3), axis=0)
+
+
+@lru_cache(maxsize=8192)
+def hull_geometry(data, scale):
+    """一个凸域的显示几何 (面, 棱, 点)，按顶点字节缓存：回放各帧重复出现的同一凸域只算一次凸包。"""
     from scipy.spatial import ConvexHull
-    from shapely import set_precision
-    from shapely.geometry import Polygon
-    from region import polytope_volume, halfspaces
-    polytopes = [np.asarray(p) for p in polytopes if polytope_volume(p) > 1e-15]
-    equations = [halfspaces(p) for p in polytopes]
-    volume = 0.
-    for i, poly in enumerate(polytopes):
-        coordinates = np.linalg.svd(poly-poly[0], full_matrices=False)[0]
-        for simplex in ConvexHull(coordinates, qhull_options='Qx').simplices:
-            triangle = poly[simplex]
-            a, b = triangle[1:]-triangle[0]
-            normal = np.cross(a, b)
-            area = np.linalg.norm(normal)
-            if area == 0.:
-                continue
-            normal /= area
-            if normal@(triangle[0]-poly.mean(axis=0)) < 0.:
-                normal = -normal
-            offset = -normal@triangle[0]
-            basis = np.array([a/np.linalg.norm(a), np.cross(normal, a/np.linalg.norm(a))])
-            face = (triangle-triangle[0])@basis.T
-            exposed = Polygon(face)
-            for j, eq in enumerate(equations):
-                if i == j:
-                    continue
-                # 共面且同向的重叠外表面由索引较小的网架计入一次。
-                coincident = ((np.linalg.norm(eq[:, :3]-normal, axis=1) < 1e-10)
-                              & (np.abs(eq[:, 3]-offset) < 1e-10))
-                if j > i and coincident.any():
-                    continue
-                values = triangle@eq[:, :3].T+eq[:, 3]
-                if np.any(values.min(axis=0) > 1e-10):
-                    continue
-                if np.all(values <= 1e-10):
-                    exposed = Polygon()
-                    break
-                coefficients = eq[:, :3]@basis.T
-                constants = eq[:, :3]@triangle[0]+eq[:, 3]
-                parallel = np.linalg.norm(coefficients, axis=1) < 1e-10
-                if np.any(constants[parallel] > 1e-10):
-                    continue
-                overlap = face
-                for coefficient, constant in zip(coefficients[~parallel], constants[~parallel]):
-                    overlap = _clip_face(overlap, -constant, -coefficient)
-                    if not len(overlap):
-                        break
-                if len(overlap) >= 3:
-                    # 共边点统一到面内裁剪精度，避免微小共线偏差使重叠面漏扣。
-                    exposed = set_precision(exposed, 1e-11).difference(set_precision(Polygon(overlap), 1e-11))
-                    if exposed.is_empty:
-                        break
-            volume -= offset*exposed.area/3.
-    return volume
+    points = np.frombuffer(data).reshape(-1, 3)
+    # 1. 仿射维数：点、线段、平面多边形或三维凸体
+    delta = (points-points[0])/np.asarray(scale)
+    rank = np.linalg.matrix_rank(delta, tol=1e-10)
+    coordinates = delta@np.linalg.svd(delta, full_matrices=False)[2][:rank].T
+    if rank == 0:
+        return (), (), (points[0],)
+    if rank == 1:
+        return (), (points[[coordinates[:, 0].argmin(), coordinates[:, 0].argmax()]],), ()
+    # 2. 凸包只用于显示：QJ 对近退化的细锥域也给出凸包，扰动远小于识别真实棱的面方程阈值
+    hull = ConvexHull(coordinates/np.linalg.norm(coordinates, axis=0), qhull_options='QJ')
+    if rank == 2:
+        face = points[hull.vertices]
+        return (face,), tuple(np.stack([face, np.roll(face, -1, axis=0)], axis=1)), ()
+    # 3. 三维凸体：三角面全部填充，只画相邻面方程不同的真实棱
+    edges = tuple(points[np.intersect1d(hull.simplices[i], hull.simplices[j])]
+                  for i, neighbors in enumerate(hull.neighbors) for j in neighbors
+                  if j > i and np.linalg.norm(hull.equations[i]-hull.equations[j]) > 1e-7)
+    return tuple(points[hull.simplices]), edges, ()
+
+
+def draw_3d(ax, polytopes, bounds, *, color, fill=False, alpha=1., linestyle='-', linewidth=.8, gid=None):
+    """凸域的面与真实棱：全部凸域合成一个面集合与一个棱集合一次添加（三维每添加一个集合都会重算坐标范围）。"""
+    from mpl_toolkits.mplot3d.art3d import Poly3DCollection, Line3DCollection
+    faces, edges, dots = [], [], []
+    scale = tuple(float(b) for b in np.asarray(bounds, float))
+    for points in polytopes:
+        points = np.asarray(points, float).reshape(-1, 3)
+        if len(points):
+            geometry = hull_geometry(points.tobytes(), scale)
+            faces.extend(geometry[0])
+            edges.extend(geometry[1])
+            dots.extend(geometry[2])
+    if fill and faces:
+        ax.add_collection3d(Poly3DCollection(faces, facecolors=color, edgecolors='none', alpha=alpha, gid=gid))
+    if edges:
+        ax.add_collection3d(Line3DCollection(edges, colors=color, linewidths=linewidth, linestyles=linestyle,
+                                             alpha=min(1., 3*alpha) if fill else alpha, gid=gid))
+    if dots:
+        ax.scatter(*np.transpose(dots), color=color, s=14, gid=gid)
+
+
+def voxel_faces(states, bounds):
+    """扫描可行体素的六邻接外表面，不插值、不构造跨体素凸包。"""
+    truth = np.asarray(states) == 1
+    padded = np.pad(truth, 1)
+    step = np.asarray(bounds)/np.asarray(truth.shape)
+    faces = []
+    for axis in range(3):
+        fixed = [i for i in range(3) if i != axis]
+        for side in (-1, 1):
+            neighbors = np.roll(padded, -side, axis=axis)[1:-1, 1:-1, 1:-1]
+            starts = np.argwhere(truth & ~neighbors)
+            corners = np.zeros((4, 3))
+            corners[:, axis] = int(side == 1)
+            corners[:, fixed] = [(0, 0), (1, 0), (1, 1), (0, 1)]
+            faces.append((starts[:, None, :]+corners)*step)
+    return np.concatenate(faces)
+
+
+def cap(points):
+    """锥体远端的面片：去掉原点，其余顶点按绕形心的角度排序（三维一次性绘制）。"""
+    return _cap_geometry(np.asarray(points, float).tobytes())
+
+
+@lru_cache(maxsize=8192)
+def _cap_geometry(data):
+    points = np.frombuffer(data).reshape(-1, 3)
+    points = points[np.linalg.norm(points, axis=1) > 1e-9]
+    center = points.mean(axis=0)
+    basis = np.linalg.svd(np.eye(3)-np.outer(center, center)/(center@center))[0][:, :2]
+    return points[np.argsort(np.arctan2(*((points-center)@basis).T[::-1]))]
+
+
+def draw_geometry(ax, geometry, *, color, fill=False, alpha=1., linestyle='-', linewidth=1.):
+    """二维 shapely 几何（多边形并集、线、点）：保留不相连部分和孔洞。"""
+    from matplotlib.path import Path as MplPath
+    from matplotlib.patches import PathPatch
+    if geometry.is_empty:
+        return
+    if geometry.geom_type in ('MultiPolygon', 'GeometryCollection', 'MultiLineString', 'MultiPoint'):
+        for part in geometry.geoms:
+            draw_geometry(ax, part, color=color, fill=fill, alpha=alpha, linestyle=linestyle, linewidth=linewidth)
+    elif geometry.geom_type == 'Polygon':
+        from shapely.geometry.polygon import orient
+        poly = orient(geometry, sign=1.)
+        paths = []
+        for ring in [poly.exterior, *poly.interiors]:
+            points = np.asarray(ring.coords)
+            codes = [MplPath.MOVETO]+[MplPath.LINETO]*(len(points)-2)+[MplPath.CLOSEPOLY]
+            paths.append(MplPath(points, codes))
+        ax.add_patch(PathPatch(MplPath.make_compound_path(*paths), facecolor=color if fill else 'none', edgecolor=color,
+                               alpha=alpha, linewidth=linewidth, linestyle=linestyle))
+    else:
+        points = np.asarray(geometry.coords)
+        ax.plot(points[:, 0], points[:, 1], color=color, linewidth=linewidth,
+                marker='.' if len(points) == 1 else None, linestyle=linestyle, alpha=alpha)

@@ -9,7 +9,8 @@ import main
 from Network.case33bw import Case33, LOAD_NODES
 from main import recording_path, SCAN_DIVISIONS
 from region import polytope_volume, union_measure
-from monitor import COMPARISONS, NativeWindow, RunMonitor, _voxel_faces
+from monitor import COMPARISONS, NativeWindow, RunMonitor
+from plot import cut_polygon, voxel_faces
 from tests.planning_checks import recorded_monitor
 
 
@@ -135,18 +136,17 @@ def test_three_dimensional_metrics_count_cells_and_declared_denominators():
 def test_voxel_surface_keeps_disconnected_regions_and_physical_scale():
     states = -np.ones((3, 3, 3), dtype=int)
     states[0, 0, 0] = states[2, 2, 2] = 1
-    faces = _voxel_faces(states, [3., 6., 9.])
+    faces = voxel_faces(states, [3., 6., 9.])
     assert faces.shape == (12, 4, 3)
     np.testing.assert_array_equal(faces.min(axis=(0, 1)), [0., 0., 0.])
     np.testing.assert_array_equal(faces.max(axis=(0, 1)), [3., 6., 9.])
     assert not any(np.all((face.mean(axis=0) > [1., 2., 3.]) & (face.mean(axis=0) < [2., 4., 6.])) for face in faces)
-    assert _voxel_faces(np.ones((2, 2, 2)), [2., 2., 2.]).shape == (24, 4, 3)
+    assert voxel_faces(np.ones((2, 2, 2)), [2., 2., 2.]).shape == (24, 4, 3)
 
 
 def test_three_dimensional_replay_tracks_cones_cuts_and_validation(tmp_path):
-    from monitor import _cut_polygon
     monitor, x, cut = recorded_monitor(3, tmp_path/'three.json.gz')
-    polygon = _cut_polygon(cut, x, np.full(3, 100.))
+    polygon = cut_polygon(cut, x, np.full(3, 100.))
     np.testing.assert_allclose(polygon.sum(axis=1), 150., atol=1e-9)
     assert len(polygon) == 6
     cut_index = next(i for i, item in enumerate(monitor.history) if item['patch']['event'] == 'cut')

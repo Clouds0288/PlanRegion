@@ -8,12 +8,12 @@
   "budget": 7,
   "shape": [
     161,
-    167
+    170
   ],
-  "cells": 26887,
+  "cells": 27370,
   "axis_lower_kw": [
     -6351.0,
-    -4723.9
+    -4873.6
   ],
   "bounds_kw": [
     724.9500000000007,
@@ -21,7 +21,7 @@
   ],
   "power_unit": "kW",
   "ac_identity": "d0121a1ad0ba8cc1e009da6cc204ad9cf53881d3e5f4c488a439cb11d5f6fb69",
-  "ac_cache": "results/scan/case33bw/18_25/d0121a1ad0ba8cc1e009da6cc204ad9cf53881d3e5f4c488a439cb11d5f6fb69/region_737610b09f58fa3c.npz",
+  "ac_cache": "results/scan/case33bw/18_25/d0121a1ad0ba8cc1e009da6cc204ad9cf53881d3e5f4c488a439cb11d5f6fb69/region_f629fae70ed82ac4.npz",
   "current_limit_a": [
     199.99999999999997,
     199.99999999999997,
@@ -67,42 +67,42 @@
   "ac_undecided": 0,
   "result_status": "certified",
   "result_certified": true,
-  "reused_points": 26887,
+  "reused_points": 27370,
   "computed_points": 0,
   "metrics": {
     "inner": {
-      "mr_percent": 0.02450379808870375,
-      "fr_percent": 0.9588542298822673,
-      "missed_cells": 4,
-      "extra_cells": 158,
+      "mr_percent": 0.030629747610879686,
+      "fr_percent": 0.9468892261001517,
+      "missed_cells": 5,
+      "extra_cells": 156,
       "reference_cells": 16324,
-      "computed_cells": 16478
+      "computed_cells": 16475
     },
     "outer": {
       "mr_percent": 0.0,
-      "fr_percent": 1.5440289505428226,
+      "fr_percent": 1.3595987672971177,
       "missed_cells": 0,
-      "extra_cells": 256,
+      "extra_cells": 225,
       "reference_cells": 16324,
-      "computed_cells": 16580
+      "computed_cells": 16549
     }
   },
   "comparisons": {
     "result_ac": {
-      "mr_percent": 0.02450379808870375,
-      "fr_percent": 0.9588542298822673,
-      "missed_cells": 4,
-      "extra_cells": 158,
+      "mr_percent": 0.030629747610879686,
+      "fr_percent": 0.9468892261001517,
+      "missed_cells": 5,
+      "extra_cells": 156,
       "reference_cells": 16324,
-      "computed_cells": 16478
+      "computed_cells": 16475
     },
     "result_socp": {
-      "mr_percent": 12.414196775395094,
-      "fr_percent": 0.10923655783468868,
-      "missed_cells": 2333,
-      "extra_cells": 18,
+      "mr_percent": 12.41951790560315,
+      "fr_percent": 0.09711684370257967,
+      "missed_cells": 2334,
+      "extra_cells": 16,
       "reference_cells": 18793,
-      "computed_cells": 16478
+      "computed_cells": 16475
     },
     "socp_ac": {
       "mr_percent": 0.0,
