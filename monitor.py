@@ -374,7 +374,8 @@ def _draw_3d(ax, polytopes, bounds, *, color, fill=False, alpha=1., linestyle='-
             ends = points[[coordinates[:, 0].argmin(), coordinates[:, 0].argmax()]]
             ax.plot(*ends.T, color=color, lw=linewidth, ls=linestyle, gid=gid)
             continue
-        hull = ConvexHull(coordinates/np.linalg.norm(coordinates, axis=0), qhull_options='Qx')
+        # 只用于显示：QJ 对近退化的细锥域也给出凸包，扰动远小于下方识别真实棱的面方程阈值
+        hull = ConvexHull(coordinates/np.linalg.norm(coordinates, axis=0), qhull_options='QJ')
         if rank == 2:
             face = points[hull.vertices]
             faces = [face]
