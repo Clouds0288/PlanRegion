@@ -4,6 +4,7 @@
 符号分区在子进程中计算：子进程的 RunMonitor 经队列发送增量帧，主进程加分区前缀、乘符号后并入同一时间轴。
 二维/三维共用外包络、过程标记及回放控制，只在几何绘制处区分维数。
 """
+from functools import lru_cache
 from pathlib import Path
 from threading import Condition, Event, Thread
 from time import perf_counter
@@ -15,6 +16,7 @@ import numpy as np
 
 COMPARISONS = {'result_ac': '实验结果 — AC', 'result_socp': '实验结果 — SOCP', 'socp_ac': 'SOCP — AC'}
 MERGED = ('schemes', 'cones', 'cut_history')   # 按键增量合并的状态；锥被细分时其键置 None
+FRAME_STRIDE = 64   # 回放状态快照间隔（帧）：任一帧的状态从最近的快照向后合并
 _CHANNEL = None   # 子进程：(事件队列, 暂停, 单步, 取消)，由进程池初始化函数 _connect 设置
 
 
@@ -98,18 +100,13 @@ class RunMonitor:
         self.started = self._clock()
         self.time_limit = np.inf
         self.state, self.history = {}, []
+        self.snapshots = [{}]         # snapshots[k]：合并前 k·FRAME_STRIDE 帧后的状态
         self.validation_state = {}
         self.result = self.error = None
         self.busy = False
 
     def clock(self):
         return self._clock()-self.paused_seconds
-
-    def remaining(self, limit):
-        remaining = self.time_limit-(self.clock()-self.started)
-        if remaining <= 0.:
-            raise RegionTimeout(f'构域超过 {self.time_limit:g} 秒')
-        return min(limit, remaining)
 
     def timing(self):
         return dict(total_seconds=self.clock()-self.started)
@@ -183,41 +180,46 @@ class RunMonitor:
             self.state.update(values)
 
     def validation(self, reference, result, *, region_key='inner'):
+        """逐格 FR/MR：配对参考的 AC 与 SOCP 标签 1/-1/0 为可行/已证不可行/未决；未决格不计入对应参考，另计格数。"""
         from region import covered
-        states = np.asarray(reference['states'])
-        if not np.isin(states, [-1, 1]).all():
-            raise ValueError('Cannot publish metrics for an incomplete AC reference')
+        # 1. 格心与两种参考
+        states, socp = np.asarray(reference['states']), np.asarray(reference['socp_states'])
         indices = np.indices(states.shape).reshape(states.ndim, -1).T
         lower = np.asarray(reference.get('axis_lower', np.zeros(states.ndim)))
         points = lower+(indices+.5)*(np.asarray(reference['bounds'])-lower)/np.array(states.shape)
-        truth = states.ravel() == 1
+        known, truth = states.ravel() != 0, states.ravel() == 1
+        # 2. 内域（主指标）与外包络相对 AC
         metrics, masks = {}, {}
         for key in (key for key in ('inner', 'outer') if key in result):
             inside = covered(points, result[key])
-            metrics[key] = comparison_metrics(inside, truth)
+            metrics[key] = comparison_metrics(inside[known], truth[known])
             masks[key] = inside.reshape(states.shape)
-        validation = dict(axis_lower=lower, bounds=reference['bounds'], states=states, region_key=region_key,
+        # 3. 三组对比：计算域—AC、计算域—SOCP、SOCP—AC（区分误差来自松弛还是模型）
+        both = (socp != 0) & (states != 0)
+        comparisons = dict(result_ac=metrics[region_key],
+                           result_socp=comparison_metrics(masks[region_key][socp != 0], socp[socp != 0] == 1),
+                           socp_ac=comparison_metrics((socp == 1)[both], (states == 1)[both]))
+        validation = dict(axis_lower=lower, bounds=reference['bounds'], states=states, socp_states=socp,
+                          computed_states=masks[region_key], region_key=region_key,
                           scan_seconds=reference.get('scan_seconds'),
                           method=reference.get('method', 'legacy_reference'),
                           ac_identity=reference.get('metadata', {}).get('identity'),
                           cache_path=reference.get('cache_path'),
                           reused_points=reference.get('reused_points'), computed_points=reference.get('computed_points'),
-                          metrics=metrics, **metrics[region_key])
-        if 'socp_states' in reference:
-            socp = np.asarray(reference['socp_states'])
-            if not np.isin(socp, [-1, 1]).all():
-                raise ValueError('Cannot publish metrics for an incomplete SOCP reference')
-            validation.update(socp_states=socp, computed_states=masks[region_key],
-                comparisons=dict(result_ac=metrics[region_key],
-                    result_socp=comparison_metrics(masks[region_key], socp == 1),
-                    socp_ac=comparison_metrics(socp == 1, states == 1)))
+                          undecided_cells=int(np.count_nonzero(~known)),
+                          socp_undecided_cells=int(np.count_nonzero(socp == 0)),
+                          metrics=metrics, comparisons=comparisons, **metrics[region_key])
         self._validation_update(phase='完成', status='completed', validation=validation)
 
     def frame(self, index):
+        """第 index 帧的状态：从最近的快照向后合并，途经步长的整数倍时补存快照（_merge 不原地修改，浅拷贝即可）。"""
         with self.condition:
-            state = {}
-            for item in self.history[:index+1]:
-                _merge(state, item['patch'])
+            k = min((index+1)//FRAME_STRIDE, len(self.snapshots)-1)
+            state = dict(self.snapshots[k])
+            for position in range(k*FRAME_STRIDE, index+1):
+                _merge(state, self.history[position]['patch'])
+                if (position+1) % FRAME_STRIDE == 0 and (position+1)//FRAME_STRIDE == len(self.snapshots):
+                    self.snapshots.append(dict(state))
             return state
 
     def control(self, action):
@@ -256,18 +258,9 @@ class RunMonitor:
     def load_recording(self, path):
         with gzip.open(path, 'rt', encoding='utf-8') as stream:
             data = json.load(stream)
-        if data['version'] not in (3, 4):
-            raise ValueError('只支持原生窗口的 version=3/4 回放')
-        self.history = data['history']
-        self.validation_state = data.get('validation_state', {})
-        if data['version'] == 3:
-            # 旧回放只有几何，没有割系数；仅分离校验，不猜测或重建缺失割。
-            self.history = []
-            for item in data['history']:
-                if item['patch'].get('event') in ('scan', 'completed'):
-                    self.validation_state.update({k: v for k, v in item['patch'].items() if k != 'event'})
-                else:
-                    self.history.append(item)
+        if data['version'] != 4:
+            raise ValueError('只支持 version=4 回放')
+        self.history, self.validation_state, self.snapshots = data['history'], data['validation_state'], [{}]
         self.state = self.frame(len(self.history)-1)
         self.state.update(self.validation_state)
 
@@ -310,6 +303,7 @@ class RunMonitor:
 
 # 原生界面与绘图均在此文件中；主线无需管理窗口、计时器或帧播放。
 INNER, OUTER, GLOBAL, SP = '#397f85', '#a9b9c4', '#cc3838', '#ef8a23'
+REFERENCE = '#c6dbef'   # 对比面板中参考可行的格
 CUT = '#8055a4'
 
 
@@ -355,43 +349,50 @@ def _cut_polygon(cut, x, bounds, axis_lower=None):
     return np.unique(np.asarray(points).reshape(-1, 3), axis=0)
 
 
-def _draw_3d(ax, polytopes, bounds, *, color, fill=False, alpha=1., linestyle='-', linewidth=.8, gid=None):
-    """逐凸域画面和真实棱；点、线、面均保留，不跨网架填充凸包。"""
+@lru_cache(maxsize=8192)
+def _hull_geometry(data, scale):
+    """一个凸域的显示几何 (面, 棱, 点)，按顶点字节缓存：回放各帧重复出现的同一凸域只算一次凸包。"""
     from scipy.spatial import ConvexHull
+    points = np.frombuffer(data).reshape(-1, 3)
+    # 1. 仿射维数：点、线段、平面多边形或三维凸体
+    delta = (points-points[0])/np.asarray(scale)
+    rank = np.linalg.matrix_rank(delta, tol=1e-10)
+    coordinates = delta@np.linalg.svd(delta, full_matrices=False)[2][:rank].T
+    if rank == 0:
+        return (), (), (points[0],)
+    if rank == 1:
+        return (), (points[[coordinates[:, 0].argmin(), coordinates[:, 0].argmax()]],), ()
+    # 2. 凸包只用于显示：QJ 对近退化的细锥域也给出凸包，扰动远小于识别真实棱的面方程阈值
+    hull = ConvexHull(coordinates/np.linalg.norm(coordinates, axis=0), qhull_options='QJ')
+    if rank == 2:
+        face = points[hull.vertices]
+        return (face,), tuple(np.stack([face, np.roll(face, -1, axis=0)], axis=1)), ()
+    # 3. 三维凸体：三角面全部填充，只画相邻面方程不同的真实棱
+    edges = tuple(points[np.intersect1d(hull.simplices[i], hull.simplices[j])]
+                  for i, neighbors in enumerate(hull.neighbors) for j in neighbors
+                  if j > i and np.linalg.norm(hull.equations[i]-hull.equations[j]) > 1e-7)
+    return tuple(points[hull.simplices]), edges, ()
+
+
+def _draw_3d(ax, polytopes, bounds, *, color, fill=False, alpha=1., linestyle='-', linewidth=.8, gid=None):
+    """凸域的面与真实棱：全部凸域合成一个面集合与一个棱集合一次添加（三维每添加一个集合都会重算坐标范围）。"""
     from mpl_toolkits.mplot3d.art3d import Poly3DCollection, Line3DCollection
+    faces, edges, dots = [], [], []
+    scale = tuple(float(b) for b in np.asarray(bounds, float))
     for points in polytopes:
-        points = np.asarray(points).reshape(-1, 3)
-        if not len(points):
-            continue
-        delta = (points-points[0])/bounds
-        rank = np.linalg.matrix_rank(delta, tol=1e-10)
-        basis = np.linalg.svd(delta, full_matrices=False)[2][:rank]
-        coordinates = delta@basis.T
-        if rank == 0:
-            ax.scatter(*points[0], color=color, s=14, gid=gid)
-            continue
-        if rank == 1:
-            ends = points[[coordinates[:, 0].argmin(), coordinates[:, 0].argmax()]]
-            ax.plot(*ends.T, color=color, lw=linewidth, ls=linestyle, gid=gid)
-            continue
-        # 只用于显示：QJ 对近退化的细锥域也给出凸包，扰动远小于下方识别真实棱的面方程阈值
-        hull = ConvexHull(coordinates/np.linalg.norm(coordinates, axis=0), qhull_options='QJ')
-        if rank == 2:
-            face = points[hull.vertices]
-            faces = [face]
-            edges = np.stack([face, np.roll(face, -1, axis=0)], axis=1)
-        else:
-            faces = points[hull.simplices]
-            edges = []
-            for i, neighbors in enumerate(hull.neighbors):
-                for j in neighbors:
-                    if j > i and np.linalg.norm(hull.equations[i]-hull.equations[j]) > 1e-7:
-                        edge = np.intersect1d(hull.simplices[i], hull.simplices[j])
-                        edges.append(points[edge])
-        if fill:
-            ax.add_collection3d(Poly3DCollection(faces, facecolors=color, edgecolors='none', alpha=alpha, gid=gid))
-        ax.add_collection3d(Line3DCollection(edges, colors=color, linewidths=linewidth,
-                            linestyles=linestyle, alpha=min(1., 3*alpha) if fill else alpha, gid=gid))
+        points = np.asarray(points, float).reshape(-1, 3)
+        if len(points):
+            geometry = _hull_geometry(points.tobytes(), scale)
+            faces.extend(geometry[0])
+            edges.extend(geometry[1])
+            dots.extend(geometry[2])
+    if fill and faces:
+        ax.add_collection3d(Poly3DCollection(faces, facecolors=color, edgecolors='none', alpha=alpha, gid=gid))
+    if edges:
+        ax.add_collection3d(Line3DCollection(edges, colors=color, linewidths=linewidth, linestyles=linestyle,
+                                             alpha=min(1., 3*alpha) if fill else alpha, gid=gid))
+    if dots:
+        ax.scatter(*np.transpose(dots), color=color, s=14, gid=gid)
 
 
 def _voxel_faces(states, bounds):
@@ -414,7 +415,13 @@ def _voxel_faces(states, bounds):
 
 def _cap(points):
     """锥体远端的面片：去掉原点，其余顶点按绕形心的角度排序（三维一次性绘制）。"""
-    points = np.asarray(points)
+    points = np.asarray(points, float)
+    return _cap_geometry(points.tobytes())
+
+
+@lru_cache(maxsize=8192)
+def _cap_geometry(data):
+    points = np.frombuffer(data).reshape(-1, 3)
     points = points[np.linalg.norm(points, axis=1) > 1e-9]
     center = points.mean(axis=0)
     basis = np.linalg.svd(np.eye(3)-np.outer(center, center)/(center@center))[0][:, :2]
@@ -474,7 +481,7 @@ class NativeWindow:
         self.index, self.last_drawn, self.live, self.playing = 0, -1, True, False
         self.last_validation = None
         self.setting_slider = False
-        self.scheme_views = {}
+        self.scheme_views, self.view_signatures = {}, {}   # 网架面板；各面板上次绘制的内容签名
         self.overview = None
         self.scheme_page, self.focus_scheme = 0, None
         self.status = tk.StringVar(value='初始化')
@@ -621,10 +628,10 @@ class NativeWindow:
                 if self.index == total-1:
                     self.playing = False
             self.show()
-        self.root.after(140 if self.playing else 80, self.tick)
+        self.root.after(30 if self.playing else 80, self.tick)   # 播放时只受绘制速度限制
 
     def refresh_extent(self):
-        self.last_drawn, self.last_validation = -1, None
+        self.last_drawn, self.last_validation, self.view_signatures = -1, None, {}
         self.show()
 
     @staticmethod
@@ -654,15 +661,6 @@ class NativeWindow:
             return polygons
         sign = np.array([1 if s == '+' else -1 for s in partition])
         return [p for p in polygons if len(p) and np.all(np.asarray(p)*sign >= -1e-8)]
-
-    def _frame_view(self):
-        """只读当前帧及之前的事件，重建该帧状态。"""
-        state = {}
-        with self.monitor.condition:
-            history = self.monitor.history[:self.index+1]
-        for item in history:
-            _merge(state, item['patch'])
-        return state
 
     def _view_limits(self, state, *, scheme=None, validation=False):
         """范围固定于分区盒（校验图取扫描与结果的范围）；过程点、割和锥不触发坐标缩放。"""
@@ -719,20 +717,18 @@ class NativeWindow:
         return ax
 
     def _markers(self, ax, state, scheme=None, *, partition=None, size_scale=1.):
-        """过程图层：锥 MISOCP 的解点（红菱）与 SP 评分点（橙圆，不可行为叉）；标记不参与视口计算。"""
+        """过程图层：锥 MISOCP 的解点（红菱）与取割的 SP 顶点（橙叉，η 最大）；标记不参与视口计算。"""
         from matplotlib.lines import Line2D
         handles = []
         if scheme is not None:
             partition = scheme.split(':')[0]
         for key, color, marker, label in (('global_point', GLOBAL, 'D', '锥 MISOCP 解点'),
-                                         ('sp_point', SP, 'o', 'SP 评分点')):
+                                         ('sp_point', SP, 'x', '取割的 SP 顶点')):
             point = state.get(key)
             if not point or (scheme is not None and point['scheme'] != scheme):
                 continue
             if partition and np.any(np.asarray(point['p'])*np.array([1 if s == '+' else -1 for s in partition]) < -1e-8):
                 continue
-            if key == 'sp_point' and state.get('feasible') is False:
-                marker, label = 'x', 'SP 不可行点'
             ax.scatter(*np.asarray(point['p']).reshape(-1, len(state['bounds'])).T, c=color, marker=marker,
                        s=40*size_scale, zorder=10, gid=key)
             handles.append(Line2D([], [], color=color, marker=marker, ls='none', label=label))
@@ -745,7 +741,7 @@ class NativeWindow:
         if self.index == self.last_drawn:
             return
         self.last_drawn = self.index
-        state = self._frame_view()
+        state = self.monitor.frame(self.index)
         focus = state.get('active_scheme')
         if focus and focus != self.focus_scheme:
             self.focus_scheme = focus
@@ -784,10 +780,8 @@ class NativeWindow:
             detail = f" · 叶锥 {state['cone_count']} · ΣΔ/ΣT = {state['volume_ratio']:.4g}"
         elif phase == '网架切割' and state.get('active_scheme'):
             detail = f" · 网架 {state['active_scheme']}"
-            if state.get('event') == 'point':
-                detail += f" · η={state['eta']:.3g} · {'可行' if state['feasible'] else '不可行'}"
-            elif state.get('event') == 'cut':
-                detail += (f" · 切割{measure} {100*state['area_ratio']:.3f}% · 连续小割 "
+            if state.get('event') == 'cut':
+                detail += (f" · η={state['eta']:.3g} · 切割{measure} {100*state['area_ratio']:.3f}% · 连续小割 "
                            f"{state['small_cuts']}/{state['patience']}")
         if state.get('error'):
             detail = ' · '+state['error']
@@ -882,25 +876,29 @@ class NativeWindow:
         else:
             _draw(ax, self._removed(state, scheme), color=CUT, fill=True, alpha=.22)
 
-    def _regions(self, ax, state, partition, *, linewidth=1.):
-        """外包络 O_R∩盒 与内域：二维为并集（内域再与外包络取交），三维为各锥远端面片与网架内域。"""
+    def _regions(self, ax, state, partition, *, linewidth=1., detail=True):
+        """外包络 O_R∩盒 与内域：二维为并集（内域再与外包络取交），三维为各锥远端面片与网架内域。
+        detail=False（总览）只画外包络。"""
         d = len(state['bounds'])
         outer = self._in_partition(self._outer_polygons(state), partition)
-        inner = self._in_partition(self._inner_polygons(state), partition)
         if d == 2:
             hull = _union(outer)
             _draw(ax, hull, color=OUTER, fill=True, alpha=.10)
             _draw(ax, hull, color=OUTER, linestyle='--', linewidth=1.3*linewidth)
-            _draw(ax, _union(inner).intersection(hull), color=INNER, fill=True, alpha=.38, linewidth=.8*linewidth)
+            if detail:
+                inner = self._in_partition(self._inner_polygons(state), partition)
+                _draw(ax, _union(inner).intersection(hull), color=INNER, fill=True, alpha=.38, linewidth=.8*linewidth)
             return
         from mpl_toolkits.mplot3d.art3d import Poly3DCollection
         cones = [row for key, row in state.get('cones', {}).items()
                  if row and (not partition or key.startswith(partition+':'))]
-        for key, color, alpha in (('outer', OUTER, .12), ('inner', INNER, .30)):
+        for key, color, alpha in (('outer', OUTER, .12), ('inner', INNER, .30))[:2 if detail else 1]:
             caps = [_cap(row[key]) for row in cones]
             if caps:
                 ax.add_collection3d(Poly3DCollection(caps, facecolors=color, edgecolors=color, linewidths=.2*linewidth,
                                                      alpha=alpha, gid=f'cone-{key}'))
+        if not detail:
+            return
         sets = [row['inner'] for key, row in state.get('schemes', {}).items()
                 if len(row['inner']) and (not partition or key.startswith(partition+':'))]
         _draw_3d(ax, sets, state['bounds'], color=INNER, fill=True, alpha=.10, linewidth=.4*linewidth, gid='network-inner')
@@ -943,15 +941,14 @@ class NativeWindow:
             ax.set_proj_type('ortho')
             ax.view_init(24, -55)
             ax.set_box_aspect((1., 1., .8))
-        self._regions(ax, state, None, linewidth=.5)
+        self._regions(ax, state, None, linewidth=.5, detail=False)
         intervals = [detail.get_xlim(), detail.get_ylim()]
         if d == 3:
             intervals.append(detail.get_zlim())
         box = np.array(list(product(*intervals)))
         self._draw_polygons(ax, [box], state, color='#427cac', linewidth=1.1, gid='overview-viewport')
-        self._markers(ax, state, size_scale=.25)
         write = ax.text2D if d == 3 else ax.text
-        write(.5, 1.10, '全部分区\n蓝框：主图范围', transform=ax.transAxes, ha='center', va='bottom', fontsize=7)
+        write(.5, 1.10, '全部分区外包络\n蓝框：主图范围', transform=ax.transAxes, ha='center', va='bottom', fontsize=7)
         ax.set_xticks([])
         ax.set_yticks([])
         if d == 3:
@@ -974,9 +971,11 @@ class NativeWindow:
         for index, key in enumerate(visible):
             row = schemes[key]
             if key not in self.scheme_views:
+                self.view_signatures.pop(key, None)
                 if len(self.scheme_views) == 4:
                     reusable = next(old for old in self.scheme_views if old not in visible)
                     self.scheme_views[key] = self.scheme_views.pop(reusable)
+                    self.view_signatures.pop(reusable, None)
                 else:
                     frame = ttk.LabelFrame(self.scheme_frame, text=key)
                     fig = Figure(figsize=(3., 3.0), dpi=100)
@@ -987,6 +986,15 @@ class NativeWindow:
                     self.scheme_views[key] = frame, ax, canvas
             frame, ax, canvas = self.scheme_views[key]
             frame.grid(row=index//2, column=index%2, sticky='nsew', padx=3, pady=3)
+            # 内容签名：网架行、同分区最新的割、本网架的标记与是否当前网架都未变时不重画
+            prefix = key.split(':')[0]+':'
+            latest = next((k for k in reversed(state.get('cut_history', {})) if k.startswith(prefix)), None)
+            marks = tuple(id(state.get(name)) if state.get(name) and state[name]['scheme'] == key else None
+                          for name in ('global_point', 'sp_point'))
+            signature = (id(row), latest, state.get('event') == 'cut', key == state.get('active_scheme'), marks)
+            if self.view_signatures.get(key) == signature:
+                continue
+            self.view_signatures[key] = signature
             active = ' · 当前认证' if key == state.get('active_scheme') else ''
             frame.configure(text=f"{key} · {row['cost']:g} {state.get('cost_unit', '')}{active}")
             ax = self._axes(ax, state, scheme=key)
@@ -1007,9 +1015,7 @@ class NativeWindow:
             canvas.draw_idle()
 
     def _draw_validation(self, state):
-        from matplotlib.lines import Line2D
         ax = self.axes['C'] = self._axes(self.axes['C'], state, validation=True)
-        d = len(state['bounds'])
         validation = state.get('validation')
         if validation is None:
             progress = state.get('scan_progress')
@@ -1017,72 +1023,51 @@ class NativeWindow:
                        f'AC / SOCP 扫描  {progress[0]} / {progress[1]}  ({100*progress[0]/progress[1]:.1f}%)')
             if state.get('error'):
                 message = ('校验未完成' if progress is not None else '构域未完成')+'\n'+state['error']
-            write = ax.text2D if d == 3 else ax.text
+            write = ax.text2D if len(state['bounds']) == 3 else ax.text
             write(.5, .55, message, transform=ax.transAxes, ha='center', color='#777777')
-        elif 'comparisons' in validation:
-            self._draw_comparison(ax, validation)
-        elif d == 3:
-            self._draw_validation_3d(ax, state)
         else:
-            states = np.asarray(validation['states'])
-            bounds, shape = np.asarray(validation['bounds']), states.shape
-            lower = np.asarray(validation.get('axis_lower', np.zeros(2)))
-            centers = [a+(np.arange(n)+.5)*(b-a)/n for a, b, n in zip(lower, bounds, shape)]
-            # 参考域按真实扫描格显示；曲线为算法的连续多边形，不平滑扫描结果。
-            from matplotlib.colors import ListedColormap
-            ax.pcolormesh(np.linspace(lower[0], bounds[0], shape[0]+1), np.linspace(lower[1], bounds[1], shape[1]+1),
-                          (states.T == 1).astype(int), cmap=ListedColormap(['white', '#d5e3ea']),
-                          vmin=0, vmax=1, shading='flat', rasterized=True)
-            key = validation.get('region_key', 'inner')
-            predicted = _union([row['vertices'] for row in state['result'][key]])
-            _draw(ax, predicted, color=INNER, linewidth=1.5)
-            if key == 'inner' and 'outer' in validation.get('metrics', {}):
-                _draw(ax, _union([row['vertices'] for row in state['result']['outer']]),
-                      color=OUTER, linestyle='--', linewidth=1.)
-            if min(shape) >= 2:
-                ax.contour(*centers, (states.T == 1).astype(float), levels=[.5], colors=['#526c80'], linewidths=.7)
-            fmt = lambda value: '—' if value is None else f'{value:.3f}%'
-            title = f"遗漏 {fmt(validation['mr_percent'])}    多余 {fmt(validation['fr_percent'])}    · {shape[0]}×{shape[1]} 网格"
-            if key == 'inner' and 'outer' in validation.get('metrics', {}):
-                outer = validation['metrics']['outer']
-                title = f"G′：{title}\nG：遗漏 {fmt(outer['mr_percent'])}    多余 {fmt(outer['fr_percent'])}"
-            ax.set_title(title, fontsize=9)
-            kind = 'AC' if validation.get('method', '').startswith('ac_') else '历史'
-            handles = [Line2D([], [], color='#526c80', label=f'{kind} 扫描参考'),
-                       Line2D([], [], color=INNER, label='认证内域 G′' if key == 'inner' else '联合割外域并集')]
-            if key == 'inner' and 'outer' in validation.get('metrics', {}):
-                handles.append(Line2D([], [], color=OUTER, ls='--', label='外包络 G'))
-            ax.legend(handles=handles, loc='upper right', frameon=False, fontsize=8)
+            self._draw_comparison(ax, validation)
         self.canvases['C'].draw_idle()
 
     def _draw_comparison(self, ax, validation):
+        """逐格对比：参考可行格为浅色（三维画其表面），遗漏格红色、多余格橙色；参考未决的格不参与。"""
         from matplotlib.colors import ListedColormap
+        from matplotlib.lines import Line2D
         from matplotlib.patches import Patch
         from mpl_toolkits.mplot3d.art3d import Poly3DCollection
+        # 1. 选定对比的计算域与参考域
         selected = next(key for key, label in COMPARISONS.items() if label == self.comparison_mode.get())
         ac, socp, result = (np.asarray(validation[key]) for key in ('states', 'socp_states', 'computed_states'))
-        computed, reference = {'result_ac': (result, ac == 1), 'result_socp': (result, socp == 1),
-                               'socp_ac': (socp == 1, ac == 1)}[selected]
-        classes = np.zeros(ac.shape, np.int8)
-        classes[computed & reference] = 1
-        classes[computed & ~reference] = 2
-        classes[~computed & reference] = 3
-        colors, labels = ['#377eb8', '#ff9d2e', '#e34a33'], ['共同可行', '多余', '遗漏']
+        computed, reference, known = {'result_ac': (result, ac == 1, ac != 0),
+                                      'result_socp': (result, socp == 1, socp != 0),
+                                      'socp_ac': (socp == 1, ac == 1, (socp != 0) & (ac != 0))}[selected]
+        missed, extra = known & reference & ~computed, known & computed & ~reference
+        # 2. 二维：格子着色；三维：参考域表面与遗漏/多余格心
         lower, upper = np.asarray(validation['axis_lower']), np.asarray(validation['bounds'])
         if ac.ndim == 2:
+            classes = np.where(missed, 3, np.where(extra, 2, np.where(known & reference, 1, 0)))
             ax.pcolormesh(*(np.linspace(a, b, n+1) for a, b, n in zip(lower, upper, ac.shape)), classes.T,
-                cmap=ListedColormap(['white', *colors]), vmin=0, vmax=3, shading='flat', rasterized=True)
+                          cmap=ListedColormap(['white', REFERENCE, SP, GLOBAL]), vmin=0, vmax=3, shading='flat',
+                          rasterized=True)
+            handles = [Patch(facecolor=REFERENCE, label='参考可行'), Patch(facecolor=GLOBAL, label='遗漏'),
+                       Patch(facecolor=SP, label='多余')]
         else:
-            for value, color in enumerate(colors, 1):
-                faces = lower+_voxel_faces(classes == value, upper-lower)
-                ax.add_collection3d(Poly3DCollection(faces, facecolors=color, edgecolors='none',
-                    alpha=.18 if value == 1 else .75, gid=f'comparison-{value}'))
+            step = (upper-lower)/np.array(ac.shape)
+            ax.add_collection3d(Poly3DCollection(lower+_voxel_faces(known & reference, upper-lower),
+                                                 facecolors=REFERENCE, edgecolors='none', alpha=.12, gid='reference'))
+            for cells, color, gid in ((missed, GLOBAL, 'missed-cells'), (extra, SP, 'extra-cells')):
+                points = lower+(np.argwhere(cells)+.5)*step
+                ax.scatter(*points.T, color=color, s=5, marker='.', depthshade=False, gid=gid)
+            handles = [Patch(facecolor=REFERENCE, label='参考可行（表面）'),
+                       Line2D([], [], color=GLOBAL, marker='.', ls='none', label='遗漏'),
+                       Line2D([], [], color=SP, marker='.', ls='none', label='多余')]
+        # 3. 三组指标与本组的遗漏/多余格数
         fmt = lambda value: '—' if value is None else f'{value:.3f}%'
         self.comparison_text.set('\n'.join(f'{label}：遗漏 {fmt(validation["comparisons"][key]["mr_percent"])}'
             f'    多余 {fmt(validation["comparisons"][key]["fr_percent"])}' for key, label in COMPARISONS.items()))
-        ax.set_title(COMPARISONS[selected]+' · '+'×'.join(map(str, ac.shape))+' 网格', fontsize=9)
-        ax.legend(handles=[Patch(facecolor=color, label=label) for color, label in zip(colors, labels)],
-                  loc='upper right', frameon=False, fontsize=8)
+        ax.set_title(f"{COMPARISONS[selected]} · 遗漏 {int(missed.sum())} 格 · 多余 {int(extra.sum())} 格 · "
+                     +'×'.join(map(str, ac.shape))+' 网格', fontsize=9)
+        ax.legend(handles=handles, loc='upper right', frameon=False, fontsize=8)
 
     def _removed_3d(self, state, scheme=None):
         """当前割在各网架旧 Nx 中实际切掉的部分，仅用于本帧显示。"""
@@ -1097,37 +1082,6 @@ class NativeWindow:
         return [clip_polytope(np.asarray(before[key]['outer'])/bounds,
                              -cut[0]-cut[4:]@before[key]['x'], -cut[1:4]*bounds)*bounds
                 for key in keys if key in before and np.array_equal(before[key].get('sign'), latest.get('sign'))]
-
-    def _draw_validation_3d(self, ax, state):
-        from matplotlib.lines import Line2D
-        from mpl_toolkits.mplot3d.art3d import Poly3DCollection
-        from region import covered
-        validation, result = state['validation'], state['result']
-        states, bounds = np.asarray(validation['states']), np.asarray(validation['bounds'])
-        lower = np.asarray(validation.get('axis_lower', np.zeros(3)))
-        ax.set_position([.03, .22, .80, .60])
-        ax.add_collection3d(Poly3DCollection(lower+_voxel_faces(states, bounds-lower), facecolors='#7e9bae',
-                                            edgecolors='none', alpha=.14, gid='scan-reference'))
-        _draw_3d(ax, [row['vertices'] for row in result['outer']], bounds-lower, color=OUTER,
-                 linestyle='--', alpha=.75)
-        _draw_3d(ax, [row['vertices'] for row in result['inner']], bounds-lower, color=INNER,
-                 fill=True, alpha=.06, linewidth=.3)
-        points = lower+(np.indices(states.shape).reshape(3, -1).T+.5)*(bounds-lower)/np.array(states.shape)
-        inside = covered(points, result['inner'])
-        missed = points[(states.ravel() == 1) & ~inside]
-        ax.scatter(*missed.T, color=GLOBAL, s=7, marker='.', depthshade=False, gid='missed-cells')
-        fmt = lambda value: '—' if value is None else f'{value:.3f}%'
-        labels = []
-        for key, symbol in (('inner', "G'"), ('outer', 'G')):
-            metrics = validation['metrics'][key]
-            labels.append(f"{symbol}：遗漏 {fmt(metrics['mr_percent'])} · 多余 {fmt(metrics['fr_percent'])}")
-        ax.set_title('\n'.join(labels)+'  · '+'×'.join(map(str, states.shape))+' 网格', fontsize=8, pad=8)
-        kind = 'AC' if validation.get('method', '').startswith('ac_') else '历史'
-        ax.legend(handles=[Line2D([], [], color='#7e9bae', label=f'{kind} 扫描'),
-                           Line2D([], [], color=INNER, label="$G'$"),
-                           Line2D([], [], color=OUTER, ls='--', label='$G$'),
-                           Line2D([], [], color=GLOBAL, marker='.', ls='none', label='G′ 遗漏点')],
-                  loc='lower left', bbox_to_anchor=(-.1, -.27), ncol=4, frameon=False, fontsize=8)
 
 
 class SynchronizedReplay:

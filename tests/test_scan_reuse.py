@@ -40,7 +40,7 @@ def test_archived_reference_resolves_cache_after_changing_working_directory(tmp_
             validation_state=dict(validation=dict(method=vertify.AC_CACHE_METHOD, cache_path=str(stored)))), stream)
     lower, upper = np.zeros(2), np.ones(2)
     result = dict(inner=[], outer=[], axis_lower=lower, axis_bounds=upper)
-    reference = dict(axis_lower=lower, bounds=upper, states=np.ones((1, 1)))
+    reference = dict(axis_lower=lower, bounds=upper, states=np.ones((1, 1)), socp_states=np.ones((1, 1)))
     with patch('main.build_region', return_value=result), \
          patch('main.reference_box', return_value=(lower, upper)), \
          patch('main.scan_ac_reference', return_value=reference), \

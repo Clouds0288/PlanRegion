@@ -109,7 +109,7 @@ def test_failed_run_saves_history_and_reraises(tmp_path):
 def test_metrics_use_their_declared_denominators():
     monitor = RunMonitor()
     # 2x2 中，真值有 3 个点，算法覆盖左列 2 个点：重叠 1、多余 1、遗漏 2。
-    reference = dict(bounds=np.array([2., 2.]), states=np.array([[1, -1], [1, 1]]))
+    reference = dict(bounds=np.array([2., 2.]), states=np.array([[1, -1], [1, 1]]), socp_states=np.ones((2, 2)))
     result = dict(inner=[dict(vertices=np.array([[0., 0.], [1., 0.], [1., 2.], [0., 2.]]))])
     monitor.validation(reference, result)
     metrics = monitor.state['validation']
@@ -119,7 +119,7 @@ def test_metrics_use_their_declared_denominators():
 
 def test_empty_metrics_do_not_claim_zero_error():
     monitor = RunMonitor()
-    monitor.validation(dict(bounds=np.ones(2), states=-np.ones((2, 2))), dict(inner=[]))
+    monitor.validation(dict(bounds=np.ones(2), states=-np.ones((2, 2)), socp_states=-np.ones((2, 2))), dict(inner=[]))
     assert monitor.state['validation']['mr_percent'] is None
     assert monitor.state['validation']['fr_percent'] is None
 

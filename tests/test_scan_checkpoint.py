@@ -42,11 +42,10 @@ def test_unresolved_global_solve_is_saved_as_unknown(tmp_path):
     with patch('vertify.signed_ac_witness', return_value=dict(feasible=np.array([False]), residual=np.array([np.inf]))), \
          patch('vertify.ac_interval_possible', return_value=np.array([True])), \
          patch('vertify.MasterProblem.solve', side_effect=TimeoutError('deliberate timeout')):
-        with pytest.raises(TimeoutError, match='deliberate timeout'):
-            vertify.scan_ac_reference(network, 7, grid, path, workers=1)
+        answer = vertify.scan_ac_reference(network, 7, grid, path, workers=1)   # 超时的点保持未决，扫描继续
     saved = vertify.load_scan(next(path.glob('region_*.npz')))
-    assert saved['states'][0, 0] == 0
-    assert saved['socp_states'][0, 0] == 0
+    assert answer['states'][0, 0] == saved['states'][0, 0] == 0
+    assert answer['socp_states'][0, 0] == saved['socp_states'][0, 0] == 0
 
 
 def test_completed_ac_is_reused_when_only_socp_is_missing(tmp_path):

@@ -114,7 +114,8 @@ class SignedPartitionTests(unittest.TestCase):
 
     def test_signed_metrics_and_three_dimensional_geometry(self):
         square = np.array([[-2., -2.], [0., -2.], [0., 0.], [-2., 0.]])
-        reference = dict(axis_lower=[-2., -2.], bounds=[2., 2.], states=[[1, -1], [-1, -1]])
+        reference = dict(axis_lower=[-2., -2.], bounds=[2., 2.], states=[[1, -1], [-1, -1]],
+                         socp_states=[[1, -1], [-1, -1]])
         result = dict(inner=[dict(vertices=square)], outer=[dict(vertices=square)])
         monitor = RunMonitor()
         monitor.validation(reference, result)

@@ -10,7 +10,6 @@ from scipy.spatial import QhullError
 import main
 import region
 from model import MasterProblem
-from vertify import ACPowerFlow
 
 
 @pytest.mark.parametrize('status,violation,message', [
@@ -28,19 +27,23 @@ def test_mp_rejects_bad_solver_result_after_one_solve(status, violation, message
     problem.model.optimize.assert_called_once()
 
 
+def test_mp_quality_gate_follows_the_given_tolerance():
+    problem = object.__new__(MasterProblem)
+    problem.equations = None
+    problem.model = SimpleNamespace(Params=SimpleNamespace(), optimize=Mock(), ModelName='MP probe',
+                                    Status=GRB.OPTIMAL, SolCount=1, MaxVio=5e-8)
+    with pytest.raises(RuntimeError, match='MaxVio=5e-08 > 1e-08'):
+        problem.solve()
+    with pytest.raises(AttributeError, match='ObjBound'):   # 扫描门槛 1e-6：通过质量检查，继续读取目标界
+        problem.solve(tolerance=1e-6)
+
+
 def test_qhull_failure_is_not_retried_in_other_coordinates():
     points = np.array([[0.,0.,0.], [1.,0.,0.], [0.,1.,0.], [0.,0.,1.]])
     with patch('region.ConvexHull', side_effect=QhullError('hull probe')) as hull:
         with pytest.raises(QhullError, match='hull probe'):
             region.polytope_volume(points)
     hull.assert_called_once()
-
-
-def test_ac_nonconvergence_does_not_start_global_solver():
-    with patch('vertify.AC_ITERATIONS', 0), patch.object(ACPowerFlow, 'global_status') as global_solver:
-        with pytest.raises(RuntimeError, match='did not converge'):
-            ACPowerFlow(main.FourBus().tree(main.FourBus().encode_plan(main.FourBus().initial_plan))).classify(np.zeros(3))
-    global_solver.assert_not_called()
 
 
 def test_main_records_failure_and_does_not_publish_result(tmp_path):

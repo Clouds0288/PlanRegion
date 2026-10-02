@@ -46,12 +46,12 @@ def test_three_comparison_modes_switch_colors_and_show_six_metrics(dimension):
             window.canvases['C'].draw()
             axis = window.axes['C']
             assert label in axis.get_title()
-            assert [item.get_text() for item in axis.get_legend().get_texts()] == ['共同可行', '多余', '遗漏']
+            assert [item.get_text() for item in axis.get_legend().get_texts()][1:] == ['遗漏', '多余']
             assert window.comparison_text.get().count('遗漏') == window.comparison_text.get().count('多余') == 3
             if dimension == 2:
                 meshes.append(np.asarray(axis.collections[0].get_array()).copy())
             else:
-                assert {item.get_gid() for item in axis.collections} == {'comparison-1', 'comparison-2', 'comparison-3'}
+                assert {item.get_gid() for item in axis.collections} == {'reference', 'missed-cells', 'extra-cells'}
         if dimension == 2:
             for i in range(3):
                 for j in range(i):
@@ -121,7 +121,7 @@ def test_three_dimensional_metrics_count_cells_and_declared_denominators():
     truth = np.ones((2, 2, 2), dtype=int)
     truth[0, 0, 0] = -1
     result = dict(inner=[dict(vertices=CUBE*[1., 2., 2.])], outer=[dict(vertices=CUBE*2.)])
-    monitor.validation(dict(bounds=np.full(3, 2.), states=truth, scan_seconds=1.), result)
+    monitor.validation(dict(bounds=np.full(3, 2.), states=truth, socp_states=truth, scan_seconds=1.), result)
     metrics = monitor.state['validation']['metrics']
     assert metrics['inner'] == dict(mr_percent=400/7, fr_percent=25., missed_cells=4,
                                   extra_cells=1, reference_cells=7, computed_cells=4)
@@ -149,7 +149,8 @@ def test_three_dimensional_replay_tracks_cones_cuts_and_validation(tmp_path):
     assert len(polygon) == 6
     cut_index = next(i for i, item in enumerate(monitor.history) if item['patch']['event'] == 'cut')
     result = finished(monitor, 3)
-    monitor.validation(dict(axis_lower=-np.full(3, 100.), bounds=np.zeros(3), states=np.ones((2,)*3)), result)
+    monitor.validation(dict(axis_lower=-np.full(3, 100.), bounds=np.zeros(3), states=np.ones((2,)*3),
+                            socp_states=np.ones((2,)*3)), result)
     monitor.save()
     restored = RunMonitor()
     restored.load_recording(monitor.output)
@@ -165,7 +166,7 @@ def test_three_dimensional_replay_tracks_cones_cuts_and_validation(tmp_path):
         assert not any(item.get_gid() == 'cut----:1----:1' for item in window.scheme_views['---:1'][1].collections)
         window.seek(0)
         assert not window.scheme_views['---:1'][0].winfo_manager()
-        assert any(item.get_gid() == 'scan-reference' for item in window.axes['C'].collections)
+        assert any(item.get_gid() == 'reference' for item in window.axes['C'].collections)
         for canvas in window.canvases.values():
             canvas.draw()
         for _, _, canvas in window.scheme_views.values():
@@ -181,14 +182,15 @@ def test_ac_panel_renders_rectangular_grid_and_single_row(shape):
     states = np.ones(shape, dtype=np.int8)
     states.flat[0] = -1
     bounds = 10.*np.arange(1, len(shape)+1)
-    monitor.validation(dict(axis_lower=-bounds, bounds=bounds, states=states, method='ac_grid_v3'), result)
+    monitor.validation(dict(axis_lower=-bounds, bounds=bounds, states=states, socp_states=states,
+                            method='ac_socp_grid_v4'), result)
     window = NativeWindow(monitor)
     try:
         window.root.withdraw()
         window.show()
         window.canvases['C'].draw()
-        assert '×'.join(map(str, shape)) in window.axes['C'].get_title()
-        assert any('AC' in label.get_text() for label in window.axes['C'].get_legend().get_texts())
+        title = window.axes['C'].get_title()
+        assert '×'.join(map(str, shape)) in title and 'AC' in title
         if len(shape) == 2:
             coordinates = window.axes['C'].collections[0].get_coordinates()
             np.testing.assert_allclose(coordinates.max(axis=(0, 1)), bounds)

@@ -137,7 +137,7 @@ def nodal_voltages(network, power, start):
 def validate_power_flow(network):
     """六个工况：支路递推与 Gurobi 节点 AC 方程对照。"""
     from vertify import ACPowerFlow
-    reference = ACPowerFlow(network, threads=1)
+    reference = ACPowerFlow(network)
     maximum_difference = 0.
     for scale in (1., 0., .5, 1.2, 1.5, 2.):
         power = scale*network.network.original_p[network.network.selected]

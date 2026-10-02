@@ -62,9 +62,13 @@ def test_rectangular_export_coordinates_and_miss_denominators(tmp_path):
         np.testing.assert_array_equal(saved['ac_states'], csv['ac_state'])
 
 
-def test_unknown_ac_points_cannot_publish_completed_metrics():
-    with pytest.raises(ValueError, match='incomplete AC reference'):
-        RunMonitor().validation(dict(bounds=[1., 1.], states=[[0]]), dict(inner=[]))
+def test_unknown_ac_points_are_excluded_and_counted():
+    monitor = RunMonitor()
+    monitor.validation(dict(bounds=[2., 1.], states=[[0], [1]], socp_states=[[0], [1]]),
+                       dict(inner=[dict(vertices=[[1., 0.], [2., 0.], [2., 1.], [1., 1.]])]))
+    validation = monitor.state['validation']
+    assert validation['undecided_cells'] == validation['socp_undecided_cells'] == 1
+    assert validation['mr_percent'] == validation['fr_percent'] == 0.   # 只按已决的一格计算
 
 
 def test_three_dimensional_serial_parallel_and_full_ac_agree(tmp_path):

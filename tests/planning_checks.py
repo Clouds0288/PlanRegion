@@ -5,8 +5,8 @@ import numpy as np
 
 
 def recorded_monitor(d, output=None):
-    """合成回放（不调用求解器）：分区 '-'*d 的根锥求界；网架 '1' 的 N_x 从分区盒出发评分一次、加割 Σu<=150 后
-    停滞；根锥沿 e1,e2 的棱中点二分。各帧以子进程的幅值 kW 送入 forward。返回 (monitor, x, cut)。"""
+    """合成回放（不调用求解器）：分区 '-'*d 的根锥求界；网架 '1' 的 N_x 从分区盒出发，加割 Σu<=150 后停滞；
+    根锥沿 e1,e2 的棱中点二分。各帧以子进程的幅值 kW 送入 forward。返回 (monitor, x, cut)。"""
     from monitor import RunMonitor
     from Network.four_bus_five_corridor import FourBus
     from region import clip_polytope
@@ -31,11 +31,10 @@ def recorded_monitor(d, output=None):
     for patch in (dict(event='phase_start', phase='径向搜索 A', status='running', cones={}, schemes={}, cut_history={}),
                   dict(event='cone', phase='径向搜索 A', cones={'0': cone(np.eye(d))}, cone_count=1, volume_ratio=.44,
                        global_point=dict(scheme='1', p=np.full(d, 30.))),
-                  dict(event='point', phase='网架切割', active_scheme='1', eta=.5, feasible=False, sp_point=point,
-                       schemes={'1': row('slice', box)}),
+                  dict(event='network', phase='网架切割', active_scheme='1', schemes={'1': row('slice', box)}),
                   dict(event='cut', phase='网架切割', active_scheme='1', schemes={'1': row('slice')},
                        cut_history={'1': dict(cut=cut, scheme='1')}, area_ratio=.25, small_cuts=0, patience=3,
-                       sp_point=point),
+                       eta=.5, sp_point=point),
                   dict(event='network', phase='网架切割', active_scheme=None, schemes={'1': row('stagnated')}),
                   dict(event='cone', phase='径向续跑 A+', cones={'0': None, '1': cone(halves[0]), '2': cone(halves[1])},
                        cone_count=2, volume_ratio=.44, global_point=None)):

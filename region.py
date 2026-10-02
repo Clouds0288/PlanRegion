@@ -623,8 +623,6 @@ class Cutting:
                 except RuntimeError:
                     failed.add(index)
                     return 'failed'
-                monitor._emit('point', phase='网架切割', active_scheme=label, eta=cache[index]['eta'],
-                              feasible=cache[index]['feasible'], sp_point=dict(scheme=label, p=powers[index]))
             return 'feasible' if cache[index]['feasible'] else 'pending'
 
         try:
@@ -658,7 +656,7 @@ class Cutting:
                 small = next((k for k, ratio in enumerate(reversed(history)) if ratio >= settings.threshold), len(history))
                 monitor._emit('cut', phase='网架切割', active_scheme=label, schemes={label: self.row(x)},
                               cut_history={str(self.count): dict(cut=cut, scheme=label)}, area_ratio=history[-1],
-                              small_cuts=small, patience=settings.patience,
+                              small_cuts=small, patience=settings.patience, eta=cache[index]['eta'],
                               sp_point=dict(scheme=label, p=powers[index]))
                 # 4. 连续 patience 次割的体积缩减比例 < threshold 即停滞
                 if stagnated(history, settings.threshold, settings.patience):

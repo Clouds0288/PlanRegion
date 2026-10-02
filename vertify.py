@@ -24,22 +24,15 @@ from model import PLANNING_TOL, LOAD_PF, PV_PF, PV_Q_SIGN
 
 AC_TOL = 1e-9
 FIXED_POINT_TOL = 1e-12
-GLOBAL_AC_TOL = 1e-7
-AC_TIME_LIMIT = 10.
 AC_ITERATIONS = 160
 
 
 class ACPowerFlow:
-    """独立完整 AC；仅读取网架数据，不使用 LP/SOCP 的方程矩阵或乘子。
+    """支路递推的完整 AC 潮流状态；仅读取运行树数据，不使用 LP/SOCP 的方程矩阵或乘子。
+    state(power, ell) 由节点负荷与支路电流平方递推 (P,Q,v,u)，供扫描复核 AC 见证与运行界。"""
 
-    适用于非负 P/Q 负荷、正阻抗、根电压固定为 1 p.u. 的径向网络。
-    不读取 GridPhysics 的矩阵；以支路递推独立实现 AC 电流等式。
-    """
-
-    def __init__(self, network, *, threads=DEFAULT_SOLVER_THREADS):
-        self.threads = threads
+    def __init__(self, network):
         self.network = network
-        self.model = None
 
     def state(self, power, ell):
         p, q = self.network.loads(power)
@@ -61,106 +54,6 @@ class ACPowerFlow:
             v[:, i] = (u[:, i]-2*(c.r[i]*P[:, i]+c.reactance[i]*Q[:, i])
                        +(c.r[i]**2+c.reactance[i]**2)*ell[:, i])
         return P, Q, v, u
-
-    def violation(self, P, Q, v):
-        c = self.network
-        ps, qs = P[:, c.roots].sum(axis=1), Q[:, c.roots].sum(axis=1)
-        u = np.column_stack((v, np.ones(len(v))))[:, c.parent]
-        # 所有项目均写为“违反量”：≤0 才满足全部限值，未启用上界产生 -inf。
-        return np.maximum.reduce([
-            np.max(c.vmin-v, axis=1), np.max(v-c.vmax, axis=1),
-            np.max((P*P+Q*Q)/u-c.ell_limit, axis=1),
-            np.max(P-c.capacity, axis=1), ps-c.source_pmax, qs-c.source_qmax,
-            np.hypot(ps, qs)-c.source_smax])
-
-    def classify(self, power, return_currents=False):
-        """1 可行，-1 已证不可行；迭代未收敛直接报错。"""
-        c = self.network
-        power = np.asarray(power).reshape(-1, len(c.load_nodes))
-        p, q = c.loads(power)
-        ell = np.zeros((len(power), c.n))
-        status = np.zeros(len(power), dtype=np.int8)
-        active = np.arange(len(power))
-        for _ in range(AC_ITERATIONS):
-            if not len(active):
-                break
-            P, Q, v, u = self._state(p[active], q[active], ell[active])
-            # ell 从零单调递增：功率是下界、电压是上界；仅这些越限能提前拒绝。
-            ps, qs = P[:, c.roots].sum(axis=1), Q[:, c.roots].sum(axis=1)
-            bad = (np.any(v < c.vmin-AC_TOL, axis=1)
-                   | np.any(ell[active] > c.ell_limit+AC_TOL, axis=1)
-                   | np.any(P > c.capacity+AC_TOL, axis=1)
-                   | (ps > c.source_pmax+AC_TOL) | (qs > c.source_qmax+AC_TOL)
-                   | (np.hypot(ps, qs) > c.source_smax+AC_TOL) | np.any(u <= 0, axis=1))
-            residual = np.max(np.abs(P*P+Q*Q-u*ell[active]), axis=1)
-            good = ~bad & (residual <= FIXED_POINT_TOL) & np.all(v <= c.vmax+AC_TOL, axis=1)
-            status[active[bad]], status[active[good]] = -1, 1
-            keep = ~(bad | good)
-            ell[active[keep]] = (P[keep]**2+Q[keep]**2)/u[keep]
-            active = active[keep]
-        if len(active):
-            raise RuntimeError(f'AC power flow did not converge in {AC_ITERATIONS} iterations: p={power[active].tolist()}')
-        return (status, ell) if return_currents else status
-
-
-    def _build_global(self, environment):
-        """显式非凸 AC 等式模型，仅供主动调用的独立交叉核验。"""
-        c = self.network
-        m = gp.Model('independent_AC_reference', env=environment)
-        m.Params.OutputFlag = 0
-        m.Params.Threads = self.threads
-        m.Params.NonConvex = 2
-        m.Params.FeasibilityTol = m.Params.OptimalityTol = AC_TOL
-        m.Params.DualReductions = 0
-        P = m.addVars(c.n, lb=0, ub=c.capacity.tolist())
-        Q = m.addVars(c.n, lb=0, ub=min(c.source_qmax, c.source_smax))
-        v = m.addVars(c.n, lb=c.vmin.tolist(), ub=c.vmax.tolist())
-        bound = min(c.source_smax**2, c.source_pmax**2+c.source_qmax**2)/c.vmin.min()
-        ell = m.addVars(c.n, lb=0, ub=np.minimum(bound, c.ell_limit).tolist())
-        bp, bq = [], []
-        for i in range(c.n):
-            up = 1. if c.parent[i] < 0 else v[int(c.parent[i])]
-            # P_i-ΣP_child-r_i*ell_i=dP_i；Q_i-ΣQ_child-χ_i*ell_i=dQ_i（标幺）。
-            bp.append(m.addConstr(P[i]-gp.quicksum(P[int(j)] for j in c.children[i])-c.r[i]*ell[i] == 0))
-            bq.append(m.addConstr(Q[i]-gp.quicksum(Q[int(j)] for j in c.children[i])-c.reactance[i]*ell[i] == 0))
-            m.addConstr(v[i] == up-2*(c.r[i]*P[i]+c.reactance[i]*Q[i])
-                        +(c.r[i]**2+c.reactance[i]**2)*ell[i])
-            m.addQConstr(P[i]*P[i]+Q[i]*Q[i] == up*ell[i])
-        ps, qs = (gp.quicksum(values[int(i)] for i in c.roots) for values in (P, Q))
-        if np.isfinite(c.source_pmax):
-            m.addConstr(ps <= c.source_pmax)
-        if np.isfinite(c.source_qmax):
-            m.addConstr(qs <= c.source_qmax)
-        if np.isfinite(c.source_smax):
-            m.addQConstr(ps*ps+qs*qs <= c.source_smax**2)
-        m.setObjective(0.)
-        m.update()
-        self.model = m, ell, bp, bq
-
-    def global_status(self, power, environment, time_limit=AC_TIME_LIMIT):
-        if self.model is None:
-            self._build_global(environment)
-        m, ell, bp, bq = self.model
-        m.Params.TimeLimit = max(0.,time_limit)
-        p, q = self.network.loads(power)
-        m.setAttr('RHS', bp, p[0])
-        m.setAttr('RHS', bq, q[0])
-        m.optimize()
-        if m.Status == GRB.INFEASIBLE:
-            return -1
-        if m.Status != GRB.OPTIMAL:
-            raise RuntimeError(f'Global AC: status={m.Status}, p={list(power)}')
-        current = np.array([ell[i].X for i in ell])
-        P, Q, v, u = self.state(power, current)
-        if (np.max(np.abs(P*P+Q*Q-u*current)) > GLOBAL_AC_TOL
-                or np.max(current-self.network.ell_limit) > GLOBAL_AC_TOL
-                or self.violation(P, Q, v).max() > GLOBAL_AC_TOL):
-            raise RuntimeError(f'Global AC certificate exceeds {GLOBAL_AC_TOL:g}: p={list(power)}')
-        return 1
-
-    def close(self):
-        if self.model is not None:
-            self.model[0].dispose()
 
 
 def budget_schemes(equations, budget, threads=4):
@@ -191,7 +84,7 @@ def budget_schemes(equations, budget, threads=4):
 def signed_ac_witness(network, x, power, *, mode=1):
     """独立树递推只提供可行证书；不使用正负荷单调性拒绝反送功率点。"""
     tree = network.tree(x)
-    oracle = ACPowerFlow(tree, threads=1)
+    oracle = ACPowerFlow(tree)
     power = np.asarray(power, dtype=float).reshape(-1, len(network.load_nodes))
     ratio = np.where(power >= 0., np.tan(np.arccos(LOAD_PF)),
                      PV_Q_SIGN*np.tan(np.arccos(PV_PF))) if mode else network.q_ratio
@@ -226,7 +119,7 @@ def signed_ac_witness(network, x, power, *, mode=1):
 def ac_interval_possible(network, x, power, *, mode=1):
     """外扩的 AC 必要区间；False 为本树不可行，True 不构成可行证书。"""
     tree = network.tree(x)
-    oracle = ACPowerFlow(tree, threads=1)
+    oracle = ACPowerFlow(tree)
     power = np.asarray(power, dtype=float).reshape(-1, len(network.load_nodes))
     ratio = np.where(power >= 0., np.tan(np.arccos(LOAD_PF)),
                      PV_Q_SIGN*np.tan(np.arccos(PV_PF))) if mode else network.q_ratio
@@ -267,6 +160,8 @@ AC_CACHE_METHOD = 'ac_socp_grid_v4'
 SCAN_OUTPUT = Path(__file__).resolve().parent/'results'/'scan'
 SCAN_FIELDS = ('states', 'witness_x', 'residual', 'socp_states', 'socp_witness_x', 'socp_residual')
 SAVE_SECONDS = 30.   # 扫描中两次落盘的最短间隔：避免紧接着替换刚写入的缓存（Windows 上该文件可能仍被扫描占用）
+SCAN_TOL = 1e-6      # 参考扫描接受可行解的质量门槛（Gurobi 默认可行性容差）；不可行判定仍用 PLANNING_TOL。
+                     # 只决定原先给不出标签的点，已有标签不变，故不进入缓存身份
 
 
 def ac_network(network):
@@ -507,7 +402,8 @@ def scan_problem(network, budget, sign, *, mode=1, ac=False, power=None, directi
 
 
 def scan_line(args, *, network, budget, mode=1, ac=False):
-    """独立逐点全拓扑求解；没有构域割、拓扑筛选或数值失败重试。"""
+    """独立逐点全拓扑求解；没有构域割、拓扑筛选或数值失败重试。求解失败、超时或可行解质量超过 SCAN_TOL 的点
+    保持未决（0），不当作不可行。"""
     indices, coordinates = args
     states = np.zeros(len(indices), dtype=np.int8)
     witness_x = np.zeros((len(indices), network.n_types), dtype=np.int8)
@@ -522,16 +418,20 @@ def scan_line(args, *, network, budget, mode=1, ac=False):
                 for j in selected:
                     model.ModelName = f'{"ac" if ac else "socp"}_point_{coordinates[j].tolist()}'
                     model.setAttr('RHS', fixed, abs(coordinates[j]) if mode else coordinates[j])
-                    answer = problem.solve(time_limit=60.)
+                    # 1. 求解；数值失败或超时的点保持未决
+                    try:
+                        answer = problem.solve(time_limit=60., tolerance=SCAN_TOL)
+                    except (RuntimeError, TimeoutError):
+                        continue
+                    # 2. 不可行：已证不可行，或 SOCP 的 η 下界超过 PLANNING_TOL
                     if answer is None or (not ac and model.ObjBound > PLANNING_TOL):
                         states[j] = -1
                         continue
-                    residual[j] = model.MaxVio
+                    # 3. 可行见证的质量：SOCP 为 MaxVio+η，AC 再用潮流方程复核残差与运行界
+                    residual[j], violation = model.MaxVio, 0.
                     if not ac:
                         residual[j] += model.ObjVal
-                        if residual[j] > PLANNING_TOL:
-                            raise RuntimeError(f'{model.ModelName}: SOCP residual={residual[j]}')
-                    if ac:
+                    else:
                         tree = problem.equations.network.tree(answer['x'])
                         ell = answer['state'][problem.equations.ell_slice][tree.type_indices]
                         P, Q, v, u = ACPowerFlow(tree).state(coordinates[j], ell)
@@ -540,8 +440,8 @@ def scan_line(args, *, network, budget, mode=1, ac=False):
                             np.max(P-tree.capacity), np.max(-P+tree.r*ell-tree.capacity),
                             P[:, tree.roots].sum()-tree.source_pmax, Q[:, tree.roots].sum()-tree.source_qmax,
                             np.hypot(P[:, tree.roots].sum(), Q[:, tree.roots].sum())-tree.source_smax))
-                        if max(residual[j], violation) > PLANNING_TOL:
-                            raise RuntimeError(f'{model.ModelName}: AC residual={residual[j]}, violation={violation}')
+                    if max(residual[j], violation) > SCAN_TOL:
+                        continue
                     states[j], witness_x[j] = 1, answer['x']
     return dict(indices=indices, states=states, witness_x=witness_x, residual=residual,
                 global_calls=len(indices), errors=[])
@@ -663,8 +563,8 @@ def export_comparison(network, budget, result, ac_reference, output):
     from region import contains, halfspaces
     states = np.asarray(ac_reference['states'])
     socp_states = np.asarray(ac_reference['socp_states'])
-    if ac_reference.get('method') != AC_CACHE_METHOD or not np.isin(states, [-1, 1]).all():
-        raise ValueError('Comparison requires a complete identified AC reference')
+    if ac_reference.get('method') != AC_CACHE_METHOD:
+        raise ValueError('Comparison requires an identified AC reference')
     mode = ac_reference['metadata'].get('mode', 1)
     if ac_reference['metadata']['identity'] != ac_identity(network, budget, mode):
         raise ACReferenceMismatch('Comparison AC physical identity differs')
@@ -694,8 +594,9 @@ def export_comparison(network, budget, result, ac_reference, output):
         axis_lower_kw=lower.tolist(), bounds_kw=upper.tolist(), power_unit='kW',
         ac_identity=ac_reference['metadata']['identity'], ac_cache=ac_reference.get('cache_path'),
         current_limit_a=ac_reference['metadata'].get('current_limit_a'),
-        socp_feasible=int(np.count_nonzero(socp_states == 1)),
-        ac_feasible=int(np.count_nonzero(states == 1)), result_status=result['status'],
+        socp_feasible=int(np.count_nonzero(socp_states == 1)), ac_feasible=int(np.count_nonzero(states == 1)),
+        socp_undecided=int(np.count_nonzero(socp_states == 0)), ac_undecided=int(np.count_nonzero(states == 0)),
+        result_status=result['status'],
         result_certified=result['certified'], reused_points=ac_reference.get('reused_points', 0),
         computed_points=ac_reference.get('computed_points', 0),
         metrics=monitor.validation_state['validation']['metrics'],

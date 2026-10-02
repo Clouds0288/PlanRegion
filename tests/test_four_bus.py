@@ -5,7 +5,6 @@ from gurobipy import GRB  # 只接受明确的全局不可行或最优证书。
 from threadpoolctl import threadpool_limits  # 与正式流程使用相同数值线程数。
 from Network.four_bus_five_corridor import FourBus  # 原始基础算例。
 from model import GridPhysics, MasterProblem, SubProblem
-from vertify import ACPowerFlow
 from tests.reference import dispatch_support  # 独立固定网架的消元方程。
 
 PLANS = (
@@ -73,16 +72,6 @@ class FourBusTests(unittest.TestCase):  # 不生成建设组合表，审核代�
                 direct.model.Params.TimeLimit = 20.  # 仅限制测试的审核时间。
                 direct.model.optimize()  # 全局下界检查，未靠抽样宣称有效。
                 self.assertGreaterEqual(direct.model.ObjBound,-1e-7)  # 不能误切任何合法树上的可行点。
-
-    def test_independent_ac_on_reconfigured_trees(self):  # 独立 AC 必须读取选中树，而非一直使用原始拓扑。
-        c = FourBus()  # 仅共享物理配置。
-        for choice in PLANS:
-            oracle = ACPowerFlow(c.tree(c.encode_plan(choice)), threads=1)  # 直接把当前树交给独立模型。
-            try:  # 非凸求解器按需创建并及时释放。
-                for power in ([3.,4.,5.],[50.,50.,50.]):  # 确保可行与不可行均被核验。
-                    self.assertEqual(int(oracle.classify(power)[0]),oracle.global_status(power,None))  # 不动点与显式 AC 等式一致。
-            finally:  # 无论测试是否通过都释放资源。
-                oracle.close()  # 不影响后续 case33 测试。
 
 
 if __name__=='__main__':  # 支持单独运行基础网架回归。

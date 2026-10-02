@@ -330,8 +330,8 @@ class MasterProblem:
         """要求至少一个型号选择不同，排除指定建设方案。"""
         self.model.addConstr((1-2*x)@self.x >= 1-x.sum())
 
-    def solve(self, time_limit=MP_TIME_LIMIT, *, incumbent=None, start=None, radial_gap_kw=1e-3):
-        """直接求 MP1/MP2；初始解、目标间隙及运行证书在此处理，不调用 SP。"""
+    def solve(self, time_limit=MP_TIME_LIMIT, *, incumbent=None, start=None, radial_gap_kw=1e-3, tolerance=PLANNING_TOL):
+        """直接求 MP1/MP2；初始解、目标间隙及运行证书在此处理，不调用 SP。解的 MaxVio 超过 tolerance 即报错。"""
         # 1. 设置初始解、时限并求解
         model, equations = self.model, self.equations
         if incumbent is not None:
@@ -348,8 +348,8 @@ class MasterProblem:
             raise TimeoutError(f'{model.ModelName}: time limit')
         if model.Status not in (GRB.OPTIMAL, GRB.USER_OBJ_LIMIT) or not model.SolCount:
             raise RuntimeError(f'{model.ModelName}: status={model.Status}, SolCount={model.SolCount}')
-        if model.MaxVio > PLANNING_TOL:
-            raise RuntimeError(f'{model.ModelName}: MaxVio={model.MaxVio:g} > {PLANNING_TOL:g}')
+        if model.MaxVio > tolerance:
+            raise RuntimeError(f'{model.ModelName}: MaxVio={model.MaxVio:g} > {tolerance:g}')
         bound = model.ObjBound*self.objective_scale
 
         # 3. 提取选型、负荷和目标值：投资用原费用单位，负荷用 kW

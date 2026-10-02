@@ -139,10 +139,6 @@ class Network:
                                  shape=(self.n, self.n_corridors))
 
     @cached_property
-    def incidence(self):
-        return self.receiving-self.sending
-
-    @cached_property
     def E(self):
         return sparse.csr_matrix((np.ones(len(self.selected)), (self.selected, np.arange(len(self.selected)))),
                                  shape=(self.n, len(self.selected)))
@@ -321,22 +317,3 @@ class OperatingTree:
 
     def loads(self, power):
         return tuple(values[:, self.node_indices] for values in self.network.loads(power))
-
-    def ppc(self, power=None):
-        """MATPOWER 数据供独立节点导纳潮流验证；内部节点统一编号 0..n。"""
-        net = self.network
-        power = net.original_p[net.selected] if power is None else power
-        p, q = self.loads(power)
-        bus = np.zeros((self.n+1, 13))
-        bus[:, 0], bus[:, 1] = np.arange(self.n+1), 1
-        bus[0, 1] = 3
-        bus[1:, 2], bus[1:, 3] = p[0]*net.base/1000, q[0]*net.base/1000
-        bus[:, 6:8], bus[:, 9:11], bus[:, 11:13] = 1., [net.voltage_kv, 1.], 1.
-        bus[1:, 11], bus[1:, 12] = np.sqrt(self.vmax), np.sqrt(self.vmin)
-        gen = np.zeros((1, 21))
-        gen[0, [0, 3, 4, 5, 6, 7, 8]] = [0, net.source_qmax*net.base/1000,
-            -net.source_qmax*net.base/1000, 1., net.base/1000, 1., net.source_pmax*net.base/1000]
-        branch = np.zeros((self.n, 13))
-        branch[:, 0], branch[:, 1] = self.parent+1, np.arange(1, self.n+1)
-        branch[:, 2], branch[:, 3], branch[:, 10:13] = self.r, self.reactance, [1., -360., 360.]
-        return dict(version='2', baseMVA=net.base/1000, bus=bus, gen=gen, branch=branch)

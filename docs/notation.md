@@ -31,7 +31,7 @@ Case33 保留原 MATPOWER 线路与背景负荷，仅七条开关可变；相对
 
 ## 拓扑与运行状态
 
-`receiving/sending/incidence` 形状 `(n,m)`，`incidence=receiving-sending`，流入为正。`E` 为 `(n,d)` 的负荷嵌入矩阵。`active_nodes` 是接入二元变量，`MasterProblem.__init__.f` 是连通虚拟流，与电功率无关。拓扑约束为每走廊至多一型号、边两端接入、`Gf=a`、`-n*z<=f<=n*z`、边数等于接入非根节点数。
+`receiving/sending` 形状 `(n,m)`，receiving-sending 为关联矩阵，流入为正。`E` 为 `(n,d)` 的负荷嵌入矩阵。`active_nodes` 是接入二元变量，`MasterProblem.__init__.f` 是连通虚拟流，与电功率无关。拓扑约束为每走廊至多一型号、边两端接入、`Gf=a`、`-n*z<=f<=n*z`、边数等于接入非根节点数。
 
 外部 `plan/choice/fixed_plan` 为“走廊 ID → 型号 ID 或 None”字典，通过 `encode_plan/decode_plan` 转换；`start` 是型号向量，`incumbent` 是带证书的答案字典。运行树只保存实际接入节点，`node_indices/type_indices` 回指全图，`parent/children/order/roots` 使用树局部索引；`D` 汇总下游节点。`direction=±1` 区分根向和参考方向。反向支路必须计损耗：`P=-P_tree+r*ell`，`Q=-Q_tree+reactance*ell`。
 
@@ -121,9 +121,9 @@ SP 固定 x,p 后最小化非负 `eta`（求解器名 violation），只允许�
 
 ## 独立扫描、结果与回放
 
-`vertify.py` 是独立 AC/SOCP 扫描入口。`ac_network` 复制完整配置，不删除限流。`budget_schemes` 仅供小算例独立 AC 参考的拓扑审计，构域不调用它。AC 单树只提供可行见证；全拓扑必要条件排除或完整 AC 不可行证书才给负标签。迭代失败、超时和未知均不可当作不可行。
+`vertify.py` 是独立 AC/SOCP 扫描入口。`ac_network` 复制完整配置，不删除限流。`budget_schemes` 仅供小算例独立 AC 参考的拓扑审计，构域不调用它。AC 单树只提供可行见证；全拓扑必要条件排除或完整 AC 不可行证书才给负标签。迭代失败、超时和未知均不可当作不可行：`scan_line` 中求解失败、超时或可行解质量超过 `SCAN_TOL` 的点保持未决（0），扫描继续。`SCAN_TOL`（1e-6，Gurobi 默认可行性容差）是扫描接受可行解的质量门槛：SOCP 为 MaxVio+η，AC 另用潮流方程复核残差与运行界（`MasterProblem.solve.tolerance` 传入同一门槛）；不可行判定（η 的下界超过 PLANNING_TOL、已证不可行）不变。它只决定原先给不出标签的点，已有标签不变，故不进入缓存身份。
 
-`ACPowerFlow` 接收运行树，state(power,ell) 返回 `(P,Q,v,u)`，均为 `(batch,n_tree)`，v/u 为受端/送端电压平方。内部 `_state.p/q` 是节点标幺负荷；AC 残差为 `P²+Q²-u*ell`。`global_status` 供独立交叉检查。
+`ACPowerFlow` 接收运行树，state(power,ell) 返回 `(P,Q,v,u)`，均为 `(batch,n_tree)`，v/u 为受端/送端电压平方。内部 `_state.p/q` 是节点标幺负荷；AC 残差为 `P²+Q²-u*ell`。
 
 `AC_CACHE_METHOD=ac_socp_grid_v4`，`ac_identity` 包含物理参数、ell_limit、模式、功率因数、有序节点和预算，不含构域 tau、时间和线程。`reference_box` 用同配置完整 SOCP 的方向全局上界覆盖两种参考。`scan_problem/scan_line` 逐点独立求解；SOCP 固定点使用 eta 目标，接受与排除依赖原门槛；AC 不读取 SOCP 标签。`main.run` 的扫描框为 reference_box 与结果外域范围的并。
 
@@ -133,14 +133,14 @@ SP 固定 x,p 后最小化非负 `eta`（求解器名 violation），只允许�
 | `origin / step / start` | kW 原点/步长、整数起始索引；点为 `origin+(start+index+0.5)*step` |
 | `states / witness_x / residual` | AC 标签、型号见证、残差；形状分别 `(n1,...,nd)`、`(n1,...,nd,t)`、`(n1,...,nd)` |
 | `socp_states / socp_witness_x / socp_residual` | 同坐标 SOCP 的独立结果，形状同上 |
-| `1 / -1 / 0` | 可行 / 已证不可行 / 未决；未决时不发布完整误差率 |
+| `1 / -1 / 0` | 可行 / 已证不可行 / 未决；未决格不计入对应参考的误差率，另计格数 |
 | `cache_path` | 实际 NPZ 路径；归档记录可使用相对项目根目录的路径 |
 
 `scan_path` 给出 `results/scan/<网络>/<节点>/<身份>/`，`region_path` 由 origin/step/start/shape 生成区域摘要。扩界保留格点，部分覆盖只补算缺点；AC/SOCP 分别补零标签。`import_ac_reference` 仅接受同版本同身份数据。`force_rescan` 先备份；主进程每 `SAVE_SECONDS` 至多原子落盘一次，结束或中断时必落盘，独占锁避免并发覆盖。
 
-比较使用最终 inner 作为计算域，另保留 outer 指标。`comparison_metrics` 的 MR=`missed/reference`、FR=`extra/computed`，百分数，空分母 None；同时保留 missed_cells/extra_cells/reference_cells/computed_cells。`comparisons` 键为 result_ac/result_socp/socp_ac。导出版本 paired_scan_v2，NPZ 的 power 为 `(N,d)` kW，ac_states/socp_states/inner/outer 对应同坐标；CSV 标签列为 ac_state/socp_state。网格误差不是连续体积证明。RCUT 的内域含 N_x 外近似，相对 AC 的 FR 是外侧估计误差。
+`RunMonitor.validation` 只接受配对的 AC/SOCP 参考：比较使用最终 inner 作为计算域，另保留 outer 指标；未决格不计入，`RunMonitor.validation:undecided_cells / socp_undecided_cells` 为 AC/SOCP 未决格数，`RunMonitor.validation:computed_states` 为内域在格心上的掩码。`comparison_metrics` 的 MR=`missed/reference`、FR=`extra/computed`，百分数，空分母 None；同时保留 missed_cells/extra_cells/reference_cells/computed_cells。`comparisons` 键为 result_ac/result_socp/socp_ac。导出版本 paired_scan_v2，NPZ 的 power 为 `(N,d)` kW，ac_states/socp_states/inner/outer 对应同坐标；CSV 标签列为 ac_state/socp_state。网格误差不是连续体积证明。RCUT 的内域含 N_x 外近似，相对 AC 的 FR 是外侧估计误差。
 
-回放 version=4：history 保存增量过程，validation_state 保存最终扫描；version=3 兼容读取。子进程事件为 phase_start、cone、point、cut、network、partition_end，主进程另有 start、region_end。`MERGED` 中的 schemes/cones/cut_history 按键增量合并，键带分区前缀 `<分区>:`（如 `+-:3`），坐标在 `signed_values` 中乘 sign：
+回放 version=4：history 保存增量过程，validation_state 保存最终扫描。子进程事件为 phase_start、cone、cut、network、partition_end，主进程另有 start、region_end；N_x 顶点的 SP 评分不单独成帧，取割顶点的 η 记在 cut 帧。`RunMonitor.frame` 从每 `FRAME_STRIDE` 帧一份的快照 `RunMonitor.snapshots` 向后合并。`MERGED` 中的 schemes/cones/cut_history 按键增量合并，键带分区前缀 `<分区>:`（如 `+-:3`），坐标在 `signed_values` 中乘 sign：
 
 | 状态 | 行内容 |
 |---|---|
@@ -148,11 +148,11 @@ SP 固定 x,p 后最小化非负 `eta`（求解器名 violation），只允许�
 | `schemes` | `Cutting.row:x / choice / cost / outer / inner / status` 与 sign：outer 为 N_x，计入内域时 inner=N_x，否则为空 |
 | `cut_history` | 割 `cut`（布局同联合割，beta 已乘 sign）、来源网架 `scheme`、`sign` |
 
-`cone` 帧另有 cone_count、volume_ratio 与 global_point（锥 MISOCP 的解点）；`point` 帧有 eta、feasible 与 sp_point；`cut` 帧有 area_ratio、small_cuts、patience。仅当前帧之前的锥、网架、割与点出现在过程图；最终扫描独立显示。result 包含 status/certified/inner/outer/partitions/timing，分区证书在 partition_end；数值未决和时限未完不能改成 certified。JSON 非有限值为 null，仅预算 null 可按 inf 解释。
+`cone` 帧另有 cone_count、volume_ratio 与 global_point（锥 MISOCP 的解点）；`cut` 帧有 eta、area_ratio、small_cuts、patience 与 sp_point（取割的 SP 顶点）。校验面板是逐格对比：参考可行格为浅色（三维画其表面），遗漏格红色、多余格橙色，可在计算域—AC、计算域—SOCP、SOCP—AC 之间切换。仅当前帧之前的锥、网架、割与点出现在过程图；最终扫描独立显示。result 包含 status/certified/inner/outer/partitions/timing，分区证书在 partition_end；数值未决和时限未完不能改成 certified。JSON 非有限值为 null，仅预算 null 可按 inf 解释。
 
 ## 方法归档
 
-方法对照实验的精选运行归档在 `results/methods/<算例>/<方法>/workers_<w>/run_<r>/`（summary.json、metrics.json、timeline.csv、solves.csv.gz、snapshots/final.json.gz），登记于 `results/manifest.json` 的 `method_archive`、`runs`、`files`；各方法的代码版本由 tag `method-<方法>-v1` 固定，归档整体为 `results-methods-v1`。主线分支 main 为方法 RCUT（与分支 method-RCUT 同源）；方法 RB 的主线实现在分支 method-RB。
+方法对照实验的精选运行归档在 `results/methods/<算例>/<方法>/workers_<w>/run_<r>/`（summary.json、metrics.json、timeline.csv、solves.csv.gz、snapshots/final.json.gz），登记于 `results/manifest.json` 的 `method_archive`、`runs`、`files`；本分支只保留 RCUT 的运行（阈值 1% 与 0.5%、2% 敏感性），R、H、RB、RCUT2 的运行与汇总报告在 tag `results-methods-v1`；各方法的代码版本由 tag `method-<方法>-v1` 固定。主线分支 main 为方法 RCUT（与分支 method-RCUT 同源）；方法 RB 的主线实现在分支 method-RB。
 
 ## 容差与默认设置
 
@@ -161,7 +161,7 @@ SP 固定 x,p 后最小化非负 `eta`（求解器名 violation），只允许�
 | `PLANNING_TOL / GEOMETRY_TOL` | 各 1e-8；物理残差/归一化几何门槛，语义独立 |
 | `OBBT_ROUNDS / OBBT_PAD / ENVELOPE_MARGIN / OBBT_CONV_TOL` | 2 / 1e-6 标幺 / 1e-4 标幺² / 1e-8 |
 | `CONE_CONV_TOL` | 1e-6；锥 MISOCP 的 barrier 收敛容差 |
-| `AC_TOL / FIXED_POINT_TOL / GLOBAL_AC_TOL` | 1e-9 / 1e-12 / 1e-7 |
+| `AC_TOL / FIXED_POINT_TOL / SCAN_TOL` | 1e-9 / 1e-12 / 1e-6；SCAN_TOL 只用于参考扫描接受可行解 |
 | `REGION_TAU` | 0.005；体积目标 ε=d·tau，不是物理容差 |
 | `NETWORK / DIMENSION / mode` | Case33 / 3 / 1 |
 | `CASE_TIME_LIMIT / WORKERS / SOLVER_THREADS` | 300 秒 / 16 / 1；总时限不含事后扫描 |
@@ -172,8 +172,17 @@ SP 固定 x,p 后最小化非负 `eta`（求解器名 violation），只允许�
 | `CUT_THRESHOLD / CUT_PATIENCE / POINT_TOL` | 0.01 / 3 / 0.01 kW |
 | `CUT_SECONDS / PASS_SHARE` | 30 秒 / 0.75 |
 | `DIVISIONS / SCAN_DIVISIONS / SCAN_WORKERS / SAVE_SECONDS` | 160 / {2:160,3:80} / 20 / 30 秒；每扫描进程一个求解线程 |
+| `FRAME_STRIDE` | 64 帧；回放状态快照间隔 |
 
-单次 MP/SP/AC 的时限仍用 MP_TIME_LIMIT/SP_TIME_LIMIT/AC_TIME_LIMIT；AC_ITERATIONS 为迭代次数。不得合并不同语义的容差。数值配置变化须同步本表和结果协议。
+单次 MP/SP 的时限仍用 MP_TIME_LIMIT/SP_TIME_LIMIT，扫描单点 60 秒；AC_ITERATIONS 为 AC 见证的迭代次数。不得合并不同语义的容差。数值配置变化须同步本表和结果协议。
+
+## 显式迁移（2026-10-02：扫描未决、回放提速与精简）
+
+- 扫描：`scan_line` 的数值失败与超时不再中止整次扫描，该点保持未决；可行解的质量门槛由 PLANNING_TOL 放宽为 `SCAN_TOL`（`MasterProblem.solve` 增加 tolerance 参数，默认仍为 PLANNING_TOL）。Case33 三维 80³ 网格原有 5 个 SOCP 未决格，其中两格 AC 可行、SOCP 解的 MaxVio 为 4.8e-8 与 3e-7，现标为可行。
+- 校验：`RunMonitor.validation` 不再因未决格报错，未决格不计入对应参考并另计格数；参考必须含 socp_states，三组对比总会给出。`export_comparison` 不再要求 AC 标签完整，摘要增加 ac_undecided/socp_undecided。
+- 回放：只读 version=4；RCUT 的 point 事件取消，取割顶点的 η 并入 cut 帧；`RunMonitor.frame` 改为快照加增量合并；三维凸域合成一个集合绘制并缓存凸包与面片；总览只画外包络；未变化的网架面板不重画；校验面板统一为逐格对比（遗漏红、多余橙），去掉逐块绘制多边形的三维校验图。
+- 删除没有调用方的接口：`ACPowerFlow.classify`、`global_status`、`_build_global`、`violation`、`close` 与 `threads` 参数，`GLOBAL_AC_TOL`、`AC_TIME_LIMIT`（只服务于这套交叉核验，扫描不调用），`Network.incidence`、`OperatingTree.ppc`、`RunMonitor.remaining`；相应测试（tests/test_vertify.py 等）一并删除。
+- 结果：`results/methods` 只保留 RCUT 的运行，其余方法的运行与报告移入 manifest 的 retired，保存在 tag `results-methods-v1`。
 
 ## 显式迁移（2026-10-02：RCUT 成为主线）
 
@@ -205,9 +214,9 @@ SP 固定 x,p 后最小化非负 `eta`（求解器名 violation），只允许�
 
 ### vertify.py
 
-- [ACPowerFlow](../vertify.py)、[ACPowerFlow._state.p](../vertify.py)、[ACPowerFlow._state.q](../vertify.py)、[ACPowerFlow.classify](../vertify.py)
-- [AC_CACHE_METHOD](../vertify.py)、[AC_ITERATIONS](../vertify.py)、[AC_TIME_LIMIT](../vertify.py)、[AC_TOL](../vertify.py)
-- [FIXED_POINT_TOL](../vertify.py)、[GLOBAL_AC_TOL](../vertify.py)、[SCAN_FIELDS](../vertify.py)、[ac_identity](../vertify.py)
+- [ACPowerFlow](../vertify.py)、[ACPowerFlow._state.p](../vertify.py)、[ACPowerFlow._state.q](../vertify.py)、[AC_CACHE_METHOD](../vertify.py)
+- [AC_ITERATIONS](../vertify.py)、[AC_TOL](../vertify.py)、[FIXED_POINT_TOL](../vertify.py)、[SCAN_TOL](../vertify.py)
+- [SCAN_FIELDS](../vertify.py)、[ac_identity](../vertify.py)
 - [ac_interval_possible](../vertify.py)、[ac_network](../vertify.py)、[ac_scan_line](../vertify.py)、[ac_scan_line:residual](../vertify.py)
 - [ac_scan_line:witness_x](../vertify.py)、[budget_schemes](../vertify.py)、[export_comparison](../vertify.py)、[import_ac_reference](../vertify.py)
 - [reference_box](../vertify.py)、[region_path](../vertify.py)、[save_scan](../vertify.py)、[scan_ac_reference](../vertify.py)
@@ -221,6 +230,8 @@ SP 固定 x,p 后最小化非负 `eta`（求解器名 violation），只允许�
 - [RunMonitor.__init__.sign](../monitor.py)、[RunMonitor.label](../monitor.py)、[RunMonitor.channel](../monitor.py)、[RunMonitor.shared](../monitor.py)
 - [RunMonitor.share](../monitor.py)、[RunMonitor.close](../monitor.py)、[RunMonitor.forward](../monitor.py)、[RunMonitor.forward.label](../monitor.py)
 - [RunMonitor.validation](../monitor.py)、[RunMonitor.validation.region_key](../monitor.py)、[RunMonitor.validation:comparisons](../monitor.py)、[RunMonitor.validation:metrics](../monitor.py)
+- [RunMonitor.validation:undecided_cells](../monitor.py)、[RunMonitor.validation:socp_undecided_cells](../monitor.py)、[RunMonitor.validation:computed_states](../monitor.py)、[RunMonitor.snapshots](../monitor.py)
+- [RunMonitor.frame](../monitor.py)、[FRAME_STRIDE](../monitor.py)
 - [RunMonitor.validation_state](../monitor.py)、[_connect](../monitor.py)、[signed_values](../monitor.py)、[_cap](../monitor.py)
 - [_cut_polygon](../monitor.py)、[_cut_polygon.axis_lower](../monitor.py)、[_cut_segment](../monitor.py)、[_cut_segment.axis_lower](../monitor.py)
 - [_draw_3d](../monitor.py)、[_voxel_faces](../monitor.py)、[comparison_metrics](../monitor.py)、[comparison_metrics:computed_cells](../monitor.py)
@@ -240,7 +251,7 @@ SP 固定 x,p 后最小化非负 `eta`（求解器名 violation），只允许�
 - [MP_TIME_LIMIT](../model.py)、[MasterProblem.__init__.budget](../model.py)、[MasterProblem.__init__.direction](../model.py)、[MasterProblem.__init__.f](../model.py)
 - [MasterProblem.__init__.min_total](../model.py)、[MasterProblem.__init__.power](../model.py)、[MasterProblem.active_nodes](../model.py)、[MasterProblem.choices](../model.py)
 - [MasterProblem.direction](../model.py)、[MasterProblem.loads](../model.py)、[MasterProblem.operation](../model.py)、[MasterProblem.power](../model.py)
-- [MasterProblem.solve.incumbent](../model.py)、[MasterProblem.solve.radial_gap_kw](../model.py)、[MasterProblem.solve.start](../model.py)、[MasterProblem.solve:bound](../model.py)
+- [MasterProblem.solve.incumbent](../model.py)、[MasterProblem.solve.radial_gap_kw](../model.py)、[MasterProblem.solve.start](../model.py)、[MasterProblem.solve.tolerance](../model.py)、[MasterProblem.solve:bound](../model.py)
 - [MasterProblem.solve:feasible](../model.py)、[MasterProblem.solve:objective](../model.py)、[MasterProblem.solve:p](../model.py)、[MasterProblem.solve:state](../model.py)
 - [MasterProblem.solve:status](../model.py)、[MasterProblem.solve:x](../model.py)、[MasterProblem.state](../model.py)、[MasterProblem.x](../model.py)
 - [PLANNING_TOL](../model.py)、[PortPhysics.sign](../model.py)、[SP_TIME_LIMIT](../model.py)、[SubProblem._build](../model.py)
@@ -264,7 +275,7 @@ SP 固定 x,p 后最小化非负 `eta`（求解器名 violation），只允许�
 - [Network.budgets](../Network/__init__.py)、[Network.capacity](../Network/__init__.py)、[Network.corridor_types](../Network/__init__.py)、[Network.corridors](../Network/__init__.py)
 - [Network.cost](../Network/__init__.py)、[Network.cost_offset](../Network/__init__.py)、[Network.cost_unit](../Network/__init__.py)、[Network.decode_plan](../Network/__init__.py)
 - [Network.ell_limit](../Network/__init__.py)、[Network.encode_plan](../Network/__init__.py)、[Network.fixed_p](../Network/__init__.py)、[Network.fixed_q](../Network/__init__.py)
-- [Network.incidence](../Network/__init__.py)、[Network.load_nodes](../Network/__init__.py)、[Network.loads](../Network/__init__.py)、[Network.n](../Network/__init__.py)
+- [Network.load_nodes](../Network/__init__.py)、[Network.loads](../Network/__init__.py)、[Network.n](../Network/__init__.py)
 - [Network.n_corridors](../Network/__init__.py)、[Network.n_types](../Network/__init__.py)、[Network.node_index](../Network/__init__.py)、[Network.nodes](../Network/__init__.py)
 - [Network.original_p](../Network/__init__.py)、[Network.original_q](../Network/__init__.py)、[Network.power_limit](../Network/__init__.py)、[Network.q_ratio](../Network/__init__.py)
 - [Network.r](../Network/__init__.py)、[Network.reactance](../Network/__init__.py)、[Network.receivers](../Network/__init__.py)、[Network.receiving](../Network/__init__.py)
