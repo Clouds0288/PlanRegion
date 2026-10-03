@@ -26,6 +26,7 @@ results/**
 !results/survey/
 !results/survey/case33/
 !results/survey/case33/*
+results/survey/case33/*.pdf
 !results/mainline/
 !results/mainline/mode_1/
 !results/mainline/mode_1/case33_18_25.json.gz
