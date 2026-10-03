@@ -266,6 +266,11 @@ class MasterProblem:
                         name=f'fixed_branch[{corridor.id},{kind.id}]')
             if not allowed:
                 model.addConstr(z[corridor.id] == 0., name=f'road_blocked[{corridor.id}]')
+        # 段内各走廊共用首走廊的决策：逐型号取值相同
+        for section in net.sections:
+            for corridor in section[1:]:
+                for kind in equations.types[corridor]:
+                    model.addConstr(x[corridor, kind] == x[section[0], kind], name=f'section[{corridor},{kind}]')
 
         # 3. 每条走廊最多选一种型号，接通走廊的两端必须接入
         for e, (i, j) in equations.ends.items():

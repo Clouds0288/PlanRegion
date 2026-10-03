@@ -488,13 +488,18 @@ class Radial:
 
     def initial(self):
         """中心射线 MISOCP（x 自由，ξ_1=…=ξ_d）选初始网架：胜出方案原点不可行时以 no-good 排除后重解。
-        返回 (首个胜出方案, 原点可行的胜出方案)。"""
+        时限内没有现任网架时退回原点可行的现状网架（未排除过时）。返回 (首个胜出方案, 原点可行的胜出方案)。"""
         excluded = []
         while True:
             answer = self.misocp(np.ones(self.d), exclude=excluded)
             if answer['x'] is None:
                 self.remaining(np.inf)
-                raise RuntimeError(f'中心射线 MISOCP 没有可行网架（status={answer["status"]}）')
+                x = tuple(int(v) for v in self.network.encode_plan(self.network.initial_plan))
+                if x in excluded or not self.origin_feasible(x):
+                    raise RuntimeError(f'中心射线 MISOCP 没有可行网架（status={answer["status"]}），现状网架也不可用')
+                self.step('center', f"中心射线 MISOCP：时限内没有现任网架（status={answer['status']}，上界 {answer['bound']:.3f}）"
+                          f" → 退回原点可行的现状网架 {self.label(x)}", scheme=self.label(x))
+                return (excluded or [x])[0], x
             x, point = answer['x'], answer['point']
             self.step('center', f"中心射线 MISOCP：max Σξ  s.t. ξ_1=…=ξ_d，网架自由 → 网架 {self.label(x)}，"
                       f"上界 {answer['bound']:.3f}"+(f'（已排除 {len(excluded)} 个原点不可行网架）' if excluded else ''),

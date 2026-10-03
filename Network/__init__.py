@@ -68,6 +68,7 @@ class Network:
 
     cost_unit = '相对投资单位'
     budgets = (0., 1., 2., np.inf)
+    sections = ()   # 段：共用一个决策的走廊 ID 元组（组内型号表相同，MP 中各型号取值一致）；空为逐走廊决策
 
     def __post_init__(self):
         self.nodes, self.corridors, self.load_nodes = tuple(self.nodes), tuple(self.corridors), tuple(self.load_nodes)
@@ -193,6 +194,8 @@ class Network:
     def fingerprint(self):
         payload = asdict(self)
         payload['cost_unit'] = self.cost_unit
+        if self.sections:
+            payload['sections'] = self.sections   # 只在有段时写入，无段网架的指纹不变
         encoded = json.dumps(payload, sort_keys=True, default=lambda v: v.tolist(), separators=(',', ':'))
         return hashlib.sha256(encoded.encode()).hexdigest()
 

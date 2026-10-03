@@ -57,10 +57,14 @@ class ACPowerFlow:
 
 
 def budget_schemes(equations, budget, threads=4):
-    """只检查建设预算、锁定线路、道路与根向树；不以零负荷筛除合法拓扑。"""
+    """只检查建设预算、锁定线路、道路与根向树；不以零负荷筛除合法拓扑。段内走廊随段首走廊取同一选择。"""
     net = equations.network
-    options = []
+    leader = {corridor: section[0] for section in net.sections for corridor in section[1:]}
+    options, chosen = [], []
     for corridor, allowed in zip(net.corridors, net.road_allowed):
+        if corridor.id in leader:
+            continue
+        chosen.append(corridor.id)
         if not corridor.switchable:
             selected = net.initial_plan[corridor.id]
             if not allowed and selected is not None:
@@ -70,7 +74,8 @@ def budget_schemes(equations, budget, threads=4):
             options.append((None, *(kind.id for kind in corridor.types)) if allowed else (None,))
     schemes = []
     for selected in product(*options):
-        x = net.encode_plan(dict(zip((c.id for c in net.corridors), selected)))
+        plan = dict(zip(chosen, selected))
+        x = net.encode_plan({c.id: plan[leader.get(c.id, c.id)] for c in net.corridors})
         if net.cost_offset+net.cost@x > budget:
             continue
         try:
@@ -219,6 +224,8 @@ def reference_box(network, budget=None, *, mode=1, output=SCAN_OUTPUT):
 def ac_identity(network, budget, mode=1):
     network = ac_network(network)
     payload = asdict(network)
+    if network.sections:
+        payload['sections'] = network.sections   # 段改变可选网架集合；无段网架的身份不变
     # 正负模式逐点重建功率因数，构域过程中临时写入的这两个值不是 AC 条件。
     if mode:
         payload.pop('q_ratio')

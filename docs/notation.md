@@ -19,7 +19,7 @@
 | 送端有功上限 | `capacity` | p.u.，`(t,)`；不等于电流或视在功率上限 |
 | 源端限值 | `source_pmax/source_qmax/source_smax` | p.u.，含线路损耗 |
 | 独立负荷总量界 | `power_limit` | kW |
-| 预算 | `budget`，费用 `cost_offset + cost @ x` | FourBus 为元；Case33 为开合次数 |
+| 预算 | `budget`，费用 `cost_offset + cost @ x` | FourBus 为元；Case33 为开合次数；Jiangkou 为万元 |
 
 根不占 `nodes` 和 `state` 的电压元素，父节点哨兵为 -1。型号按走廊输入顺序展开，`type_slices/type_corridor` 表示型号和走廊之间的唯一映射。具名 `loads[i]` 使用真实节点 ID，数组使用 `load_nodes` 顺序。`required` 是必须接入节点掩码；`road_allowed` 限制可用走廊。
 
@@ -29,11 +29,13 @@ Case33 保留原 MATPOWER 线路与背景负荷，仅七条开关可变；相对
 
 Case33Plan（`--case case33plan`，网架名 case33bw_plan）是扩展规划算例，线路参数与背景负荷同 Case33：`Case33Plan.switches` 为可开断的既有线路 S1–S5（7-8、11-12、14-15、28-29、32-33，基态闭合，开断不计费）；`Case33Plan.candidates` 为基态不建的候选走廊 C1–C5（即原五条联络线 8-21、9-15、12-22、18-33、25-29，阻抗不变，相对建设费 4、4、4、1、1）；其余线路固定。预算为所建候选的建设费之和，`Case33Plan.plan_budget=14` 即全部候选都可建，共 87 个径向方案。两个算例共用 `_Case33bw._build`：按 MATPOWER 数据建网，`cost_offset=-c@x0` 使原始方案的费用为 0。
 
+Jiangkou（网架名 jiangkou，分支 jiangkou-test 的测试算例）是江口低压台区（0.4 kV、配变 1000 kVA 即 `source_smax=1`）的现状网架：Network/data/jiangkou.json 的 343 个节点（根 E000014，节点 ID 为原始 source_id）、342 段径向树，楼宇有功为原始峰值 ×0.6（数据字段 `load_scale`），无功按功率因数 0.95 折算。只换导线：端口 `Jiangkou.__init__.load_nodes`（楼宇编号，二维默认 `LOAD_NODES`=(B000078, B000042)）的根→端口路径上的走廊可换为载流更大的规划型号（原型号费用 0，其余为长度×单价，`YUAN` 换算为万元），按段整段换线：路径并集上原型号相同、中间不分叉的连续走廊为一段（`Network.sections`），二维为 6 段、9 个升级选项、216 个方案（13 万元内 113 个）；其余走廊固定；载流上限为额定载流 ×0.95 折成的 `ell_limit`，`capacity=inf`。`BUDGET`=13 万元为二维测试预算。`Jiangkou.__init__.reduced=True` 为等值网（网架名 jiangkou_reduced）：只保留端口路径，路径外子树按基态（端口为零、现状导线，`_flow` 精确潮流）的首段送端功率并入挂接点（含子树网损），挂接点的 `vmin` 抬高子树内相对挂接点的最大压降；挂在根上的子树保留首段并入其首节点，零负荷子树删去。等值只改 `original_p/original_q/vmin` 与节点集，各量的单位和含义不变。
+
 入口共同采用 `CURRENT_LIMIT=200` A（实验指定值，不是原数据额定值）。`Case33(current_limit=...)` 可显式传标量或 37 项数组，构造器默认 inf 保留。`ell_limit=(current_limit/I_base)**2`，`I_base=base/(sqrt(3)*voltage_kv)` A；型号及树上的 `ell_limit` 始终是标幺电流平方。主线与 AC/SOCP 参考使用同一限额。
 
 ## 拓扑与运行状态
 
-`receiving/sending` 形状 `(n,m)`，receiving-sending 为关联矩阵，流入为正。`E` 为 `(n,d)` 的负荷嵌入矩阵。`active_nodes` 是接入二元变量，`MasterProblem.__init__.f` 是连通虚拟流，与电功率无关。拓扑约束为每走廊至多一型号、边两端接入、`Gf=a`、`-n*z<=f<=n*z`、边数等于接入非根节点数。
+`receiving/sending` 形状 `(n,m)`，receiving-sending 为关联矩阵，流入为正。`E` 为 `(n,d)` 的负荷嵌入矩阵。`active_nodes` 是接入二元变量，`MasterProblem.__init__.f` 是连通虚拟流，与电功率无关。拓扑约束为每走廊至多一型号、边两端接入、`Gf=a`、`-n*z<=f<=n*z`、边数等于接入非根节点数。段 `Network.sections` 为共用一个决策的走廊 ID 元组（段内型号表相同）：MP 对段内各走廊逐型号加 `x[e,k]=x[段首,k]`，`budget_schemes` 段内随段首枚举；`fingerprint` 与 `ac_identity` 只在有段时写入段。默认无段，此时各接口的行为与身份不变。
 
 外部 `plan/choice/fixed_plan` 为“走廊 ID → 型号 ID 或 None”字典，通过 `encode_plan/decode_plan` 转换；`start` 是型号向量，`incumbent` 是带证书的答案字典。运行树只保存实际接入节点，`node_indices/type_indices` 回指全图，`parent/children/order/roots` 使用树局部索引；`D` 汇总下游节点。`direction=±1` 区分根向和参考方向。反向支路必须计损耗：`P=-P_tree+r*ell`，`Q=-Q_tree+reactance*ell`。
 
@@ -88,7 +90,7 @@ SP 固定 x,p 后最小化非负 `eta`（求解器名 violation），只允许�
 
 外界 `cone_misocp`：x 自由的完整 MP（全部选型、拓扑、预算、运行约束），在 xi 上最大化 `objective`；`rows` 给锥约束 `rows@xi>=0` 与分区盒，缺省时为中心射线 xi_1=…=xi_d 并以 no-good 排除 `exclude`。它用行生成，一次分支定界、不枚举方案：模型不预先带紧化行，每找到一个新的现任网架，若其盒约束与反向锥包络行尚不在模型中，先调用 `cone_misocp.tighten`（`Radial.incumbent`：记一步 lazy 并确保该网架已紧化，必要时 OBBT），再把这些行按汉明距离提升后以惰性约束（`GridPhysics._tighten.add` 取 `cbLazy`）加入，分支定界继续。没有行的网架为纯 SOCP，故任何终止状态下的 ObjBound 都是 **R**^SOCP 在该锥上的有效上界；达到 mip_gap 时现任网架都带行。回调中的异常（分区到时、取消）在求解结束后重新抛出。`CONE_CONV_TOL` 是它的 barrier 收敛容差。返回 `status/bound/x/point`（point 为 kW 幅值），尚无界时 bound=inf。`Radial.misocp` 即一次 `cone_misocp`：单次时限 `settings.mip_seconds`，相对间隙 `settings.mip_gap`；中心射线求解用 mip_gap=0。
 
-初始网架 `Radial.initial`：中心射线 MISOCP 的胜出网架（行生成保证已紧化）原点不可行时以 no-good 排除后重解。
+初始网架 `Radial.initial`：中心射线 MISOCP 的胜出网架（行生成保证已紧化）原点不可行时以 no-good 排除后重解；时限内没有现任网架时退回原点可行的现状网架（`initial_plan`，未被排除时），否则报错。
 
 `Radial.run(epsilon, check)` 用体积准则细分：每次取 Δ_k 最大的锥，ΣΔ_k<=ε·Σvol(K^IN_k) 或 `check()` 成立即 certified。`Radial.options` 给候选剖分：解点方向的锥坐标 λ 全部 >= `SPLIT_MARGIN` 时星形剖分；三维恰有一个 λ 偏小时在对边上按 λ 投影二分；最后总有最长棱中点二分。`Radial.split` 的子锥 x̂ 取 {父 x̂, 解的方案, 父覆盖网架} 中证书成立、半径乘积最大者。锥角直径小于 `settings.min_width`、叶锥数达到 `settings.max_cones` 或没有内域证书的锥记 unresolved，不再细分。`Cone.status` 为 pending / bounded / unresolved；`Radial.run` 返回 certified / unresolved / time_limit，可续跑，阶段时限到达抛出 RegionTimeout 后保留已得证书。`Radial.schemes` 是 X*，即可能改变 **I** 的网架：先取叶锥的 x̂（按所占锥体积从大到小），再接各叶锥的覆盖网架与锥 MISOCP 解点网架（按所在锥的 Δ_k 从大到小）；只做过 OBBT 或原点测试的网架不在其中。
 
@@ -215,6 +217,13 @@ SP 固定 x,p 后最小化非负 `eta`（求解器名 violation），只允许�
 
 单次 MP/SP 的时限仍用 MP_TIME_LIMIT/SP_TIME_LIMIT，扫描单点 60 秒；AC_ITERATIONS 为 AC 见证的迭代次数。不得合并不同语义的容差。数值配置变化须同步本表和结果协议。
 
+## 显式迁移（2026-10-03：测试算例 Jiangkou，分支 jiangkou-test）
+
+- 网架：新增 Network/data/jiangkou.json（只含现状网架，楼宇负荷为原始峰值 ×0.6）与 Network/jiangkou.py（`Jiangkou`，含等值网）；主线模块与已有算例不变。
+- 测试：新增 jiangkou_test.py（自检、OBBT 计时、参考射线、二维全网与等值网的 RCUT 对比、AC 扫描与真值对比），输出在不入库的 results/jiangkou_test/。
+- 段：新增 `Network.sections`（类属性，默认空）；`MasterProblem` 对段内走廊加逐型号相等约束，`vertify.budget_schemes` 按段枚举，`Network.fingerprint` 与 `vertify.ac_identity` 只在有段时写入段——无段算例（Case33、Case33Plan、FourBus）的约束、指纹与扫描缓存身份不变。逐走廊升级时江口的方案数以 2^60 计且大量等价，光伏分区里松弛虚假网损使每个现任网架被自身紧化行割去，行生成在等价网架间追逐，60 s 内无现任网架；按段后二维为 216 个方案。
+- 初始化：`Radial.initial` 在中心射线 MISOCP 时限内没有现任网架时，退回原点可行的现状网架（原为报错并中止整个构域）；有现任网架时流程不变。
+
 ## 显式迁移（2026-10-02：锥 MISOCP 改为行生成）
 
 - 外界：`cone_misocp` 由“懒惰 OBBT 的重解循环”（解一次、紧化现任网架、从头重解）改为一次分支定界中的行生成，增加参数 `cone_misocp.tighten`；`Radial.misocp` 不再循环，删除 `Radial.misocp.rounds`。中心射线的轮数上限 `LAZY_ROUNDS` 与 `Radial.farthest` 是为该循环的代价加的，一并删除，`Radial.initial` 回到一次 MISOCP 加原点排除。新增 `Radial.incumbent`。
@@ -282,6 +291,20 @@ SP 固定 x,p 后最小化非负 `eta`（求解器名 violation），只允许�
 - [CURRENT_LIMIT](../Network/case33bw.py)、[Case33](../Network/case33bw.py)、[Case33.__init__.current_limit](../Network/case33bw.py)、[Case33.switch_budget](../Network/case33bw.py)
 - [LOAD_NODES](../Network/case33bw.py)、[Case33Plan](../Network/case33bw.py)、[Case33Plan.switches](../Network/case33bw.py)、[Case33Plan.candidates](../Network/case33bw.py)
 - [Case33Plan.plan_budget](../Network/case33bw.py)、[_Case33bw](../Network/case33bw.py)、[_Case33bw._build](../Network/case33bw.py)、[_Case33bw._build.price](../Network/case33bw.py)
+
+### Network/jiangkou.py
+
+- [LOAD_NODES](../Network/jiangkou.py)、[BUDGET](../Network/jiangkou.py)、[YUAN](../Network/jiangkou.py)、[Jiangkou](../Network/jiangkou.py)
+- [Jiangkou.__init__.load_nodes](../Network/jiangkou.py)、[Jiangkou.__init__.reduced](../Network/jiangkou.py)、[Jiangkou.cost_unit](../Network/jiangkou.py)、[Jiangkou.budgets](../Network/jiangkou.py)
+- [_flow](../Network/jiangkou.py)、[_flow.parent](../Network/jiangkou.py)、[_flow.reactance](../Network/jiangkou.py)、[_flow.below](../Network/jiangkou.py)
+
+### jiangkou_test.py
+
+- [OUTPUT](../jiangkou_test.py)、[BUDGETS](../jiangkou_test.py)、[SECONDS](../jiangkou_test.py)、[RAYS](../jiangkou_test.py)、[RAY_GAP](../jiangkou_test.py)、[CATEGORY](../jiangkou_test.py)
+- [region_settings](../jiangkou_test.py)、[network](../jiangkou_test.py)、[plans](../jiangkou_test.py)、[breakdown](../jiangkou_test.py)、[reach](../jiangkou_test.py)
+- [check](../jiangkou_test.py)、[obbt](../jiangkou_test.py)、[rays](../jiangkou_test.py)、[region](../jiangkou_test.py)、[compare](../jiangkou_test.py)
+- [acscan](../jiangkou_test.py)、[acplot](../jiangkou_test.py)、[schemes](../jiangkou_test.py)、[level](../jiangkou_test.py)、[DIVISIONS](../jiangkou_test.py)、[SCAN](../jiangkou_test.py)
+- [ladder](../jiangkou_test.py)、[ladder_plot](../jiangkou_test.py)、[section_names](../jiangkou_test.py)、[describe](../jiangkou_test.py)、[LADDER](../jiangkou_test.py)、[LADDER_STEP](../jiangkou_test.py)、[LADDER_DIVISIONS](../jiangkou_test.py)
 
 ### vertify.py
 
@@ -355,6 +378,7 @@ SP 固定 x,p 后最小化非负 `eta`（求解器名 violation），只允许�
 - [Network.original_p](../Network/__init__.py)、[Network.original_q](../Network/__init__.py)、[Network.power_limit](../Network/__init__.py)、[Network.q_ratio](../Network/__init__.py)
 - [Network.r](../Network/__init__.py)、[Network.reactance](../Network/__init__.py)、[Network.receivers](../Network/__init__.py)、[Network.receiving](../Network/__init__.py)
 - [Network.required](../Network/__init__.py)、[Network.road_allowed](../Network/__init__.py)、[Network.root](../Network/__init__.py)、[Network.selected](../Network/__init__.py)
+- [Network.sections](../Network/__init__.py)
 - [Network.senders](../Network/__init__.py)、[Network.sending](../Network/__init__.py)、[Network.source_pmax](../Network/__init__.py)、[Network.source_qmax](../Network/__init__.py)
 - [Network.source_smax](../Network/__init__.py)、[Network.tree](../Network/__init__.py)、[Network.type_corridor](../Network/__init__.py)、[Network.type_keys](../Network/__init__.py)
 - [Network.type_slices](../Network/__init__.py)、[Network.vmax](../Network/__init__.py)、[Network.vmin](../Network/__init__.py)、[Network.voltage_kv](../Network/__init__.py)
