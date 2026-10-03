@@ -5,6 +5,7 @@ p[i] 为 kW 负荷，v[i] 为电压平方。数组仅用于结果、几何算法
 固定符号、变量名、单位和索引约定见 docs/notation.md；同义量不随重构改名。
 """
 from concurrent.futures import ThreadPoolExecutor
+from copy import copy
 from functools import cache
 from time import perf_counter
 from types import SimpleNamespace
@@ -16,9 +17,8 @@ import gurobipy as gp
 import numpy as np
 from gurobipy import GRB
 
-DEFAULT_SOLVER_THREADS = 20
 MP_TIME_LIMIT = 20.
-SP_TIME_LIMIT = {'linear': 5., 'socp': 10.}
+SP_TIME_LIMIT = 10.
 PLANNING_TOL = 1e-8
 CONE_CONV_TOL = 1e-6     # x 自由锥 MISOCP 的 barrier 收敛容差：带全部已紧化方案的提升行时更严的判据使节点松弛数值失败
 OBBT_ROUNDS = 2          # 每个方案的 OBBT 轮数
@@ -27,6 +27,14 @@ ENVELOPE_MARGIN = 1e-4   # 反向锥包络割右端裕量（标幺²）：AC 点
 OBBT_CONV_TOL = 1e-8     # OBBT 与紧化模型的 barrier 收敛容差：1e-10 时极值点和贴锥可行集上 barrier 偶发失败
 OBBT_PARAMS = ('Threads', 'FeasibilityTol', 'OptimalityTol', 'BarQCPConvTol', 'DualReductions',
                'BarHomogeneous', 'Aggregate', 'ScaleFlag')   # Model.copy 不保留参数，副本逐项复制
+LOAD_PF = .95            # 负荷节点（sign>0）的功率因数
+PV_PF = 1.               # 光伏节点（sign<0）的功率因数
+PV_Q_SIGN = 1.           # 光伏无功比 q/p 的符号
+RAY_CONE_MARGIN = 1e-6   # 射线：锥与有限电流界向内收紧的裕量，接受的远端点严格在原约束内
+
+
+class SolveFailure(RuntimeError):
+    """求解器没有给出合格的解或证书（状态异常、残差超限、割不分离）。它不是不可行的证明：调用方把该点记为未决。"""
 
 
 def new_model(name, threads):
@@ -73,11 +81,36 @@ def _extremes(model, indices):
     return ends
 
 
-class GridPhysics:
-    """保存共用电网物理参数，并向 MP/SP 模型添加运行变量与约束。"""
+def voltage_flow_bounds(network):
+    """由压降等式和电流锥推导有效界；两端电压均有限，反送也有界。"""
+    voltage = np.r_[network.vmax, 1.]
+    sending = voltage[network.senders[network.type_corridor]]
+    receiving = voltage[network.receivers[network.type_corridor]]
+    ellmax = (np.sqrt(sending)+np.sqrt(receiving))**2/(network.r**2+network.reactance**2)
+    ellmax = np.minimum(ellmax, network.ell_limit)
+    return ellmax, np.sqrt(np.maximum(sending, receiving)*ellmax)
 
-    def __init__(self, network, method):
-        self.network, self.method = network, method
+
+def port_bounds(network):
+    """|节点净功率| 不超过相邻走廊各最大两端有功界之和。"""
+    _, voltage_bound = voltage_flow_bounds(network)
+    capacity = np.minimum(network.capacity, voltage_bound)
+    return network.base*np.array([sum(capacity[block].max()
+        for c, block in zip(network.corridors, network.type_slices) if node in c.endpoints)
+        for node in network.load_nodes])
+
+
+class GridPhysics:
+    """符号分区 sign 内的电网物理：负荷节点以非负幅值 u 装配原方程，真实接入功率 p=sign*u。保存共用参数，并向
+    MP/SP 模型添加运行变量与约束。"""
+
+    def __init__(self, network, sign):
+        self.sign = np.asarray(sign)
+        network = copy(network)   # 分区的功率因数与总负荷界只写入浅副本，调用方的网络不变
+        network.q_ratio = np.where(self.sign > 0, np.tan(np.arccos(LOAD_PF)),
+                                   PV_Q_SIGN*np.tan(np.arccos(PV_PF)))
+        network.power_limit = float(port_bounds(network).sum())
+        self.network = network
         self.keys = network.type_keys
         self.types = {c.id: tuple(k.id for k in c.types) for c in network.corridors}
         self.ends = {c.id: (network.root if a < 0 else network.nodes[a], network.nodes[b])
@@ -96,32 +129,47 @@ class GridPhysics:
         self._build_variable_bounds()
 
     def _build_variable_bounds(self):
+        """运行量的全局界：电压、开断走廊的压降余量，以及各型号的有功、无功与电流平方（各走廊都可反送）。"""
         net = self.network
-        pmax = np.minimum(net.capacity, min(net.source_pmax, net.source_smax))
-        qmax = np.full(net.n_types, min(net.source_qmax, net.source_smax))
-        ellmax = np.minimum(pmax/net.r, net.ell_limit) if self.method == 'socp' else np.zeros(net.n_types)
-        reverse = net.senders[net.type_corridor] >= 0
-        self.pmax, self.qmax, self.ellmax = (dict(zip(self.keys, a)) for a in (pmax, qmax, ellmax))
-        self.pmin, self.qmin = (dict(zip(self.keys, -a*reverse)) for a in (pmax, qmax))
         self.vmin, self.vmax = (dict(zip(net.nodes, a)) for a in (net.vmin, net.vmax))
         self.vmin[net.root] = self.vmax[net.root] = 1.
         # 开断走廊两端电压可独立变化：|v_j-v_i| <= M_e。
         self.drop_max = {e: max(self.vmax[i]-self.vmin[j], self.vmax[j]-self.vmin[i]) for e, (i, j) in self.ends.items()}
+        lower_q = np.minimum(net.q_ratio*self.sign*port_bounds(net)/net.base, 0.).sum()
+        pmax = net.capacity.copy()
+        qmax = np.full(net.n_types, min(net.source_qmax, net.source_smax)-lower_q)
+        ellmax = 2*pmax/net.r
+        if not np.all(np.isfinite(net.capacity)):
+            voltage_ell, _ = voltage_flow_bounds(net)
+            ellmax = np.minimum(voltage_ell, (qmax-net.fixed_q.sum()/net.base)/net.reactance)
+            voltage = np.r_[net.vmax, 1.]
+            end_voltage = np.maximum(voltage[net.senders[net.type_corridor]],
+                                     voltage[net.receivers[net.type_corridor]])
+            pmax = np.minimum(pmax, np.sqrt(end_voltage*ellmax))
+            qmax = np.minimum(qmax, pmax)
+        ellmax = np.minimum(ellmax, net.ell_limit)
+        self.pmax, self.qmax, self.ellmax = (dict(zip(self.keys, a)) for a in (pmax, qmax, ellmax))
+        self.pmin, self.qmin = dict(zip(self.keys, -pmax)), dict(zip(self.keys, -qmax))
         drop = list(self.drop_max.values())
-        self.y_lb_global = np.r_[-pmax*reverse, -qmax*reverse, np.zeros(net.n_types+net.n+2*net.n_corridors)]
+        self.y_lb_global = np.r_[-pmax, -qmax, np.zeros(net.n_types+net.n+2*net.n_corridors)]
         self.y_ub_global = np.r_[pmax, qmax, ellmax, net.vmax, drop, drop]
 
-    def obbt(self, x, bounds, workers):
-        """固定方案 x 的 OBBT：OBBT_ROUNDS 轮，每轮在已有盒与包络下求各运行量的 min/max，外扩 OBBT_PAD 后
-        与上一轮（首轮为全局界）取交；未证得最优的端点保留原界。独立功率在 [0, bounds] kW 内自由。"""
-        scheme = tuple(int(v) for v in x)
-        if scheme in self.boxes:
-            return
+    def new_model(self, name, threads):
+        """本分区的 Gurobi 模型：模块函数 new_model 的通用参数之外，一律用齐次化障碍法、不聚合，Case33 另开缩放；
+        首次建模即采用同一数值设置，不作失败后的参数切换。"""
+        model = new_model(name, threads)
+        model.Params.BarHomogeneous, model.Params.Aggregate = 1, 0
+        model.Params.ScaleFlag = 1 if self.network.case33_numerics else 0
+        return model
+
+    def obbt(self, scheme, bounds, workers):
+        """固定方案 scheme（型号 0/1 元组）的 OBBT：OBBT_ROUNDS 轮，每轮在已有盒与包络下求各运行量的 min/max，
+        外扩 OBBT_PAD 后与上一轮（首轮为全局界）取交；未证得最优的端点保留原界。独立功率在 [0, bounds] kW 内自由。"""
         net = self.network
         names = [(name, key) for key, bit in zip(self.keys, scheme) if bit for name in ('P', 'Q', 'ell')]
         names += [('v', i) for i in net.nodes]
         for _ in range(OBBT_ROUNDS):
-            with new_model('obbt', 1) as model:
+            with self.new_model('obbt', 1) as model:
                 model.Params.BarQCPConvTol = OBBT_CONV_TOL
                 power = model.addVars(net.load_nodes, ub=dict(zip(net.load_nodes, bounds)), name='p_kw')
                 operation = self.add_operation(model, dict(zip(self.keys, scheme)), power, scheme=scheme)
@@ -165,8 +213,13 @@ class GridPhysics:
                          (-(ql+qu), operation.Q[key], self._limits('Q', key))], a*b-pl*pu-ql*qu+ENVELOPE_MARGIN)
 
     def add_operation(self, model, x, p, eta=0., scheme=None):
-        """MP 用 eta=0；SP 只放松功率平衡与压降等式，容量、电压界和锥保持原式；已紧化的 scheme 追加其紧化行。"""
+        """MP 用 eta=0；SP 只放松功率平衡与压降等式（η 取分区上界），容量、电压界和锥保持原式。p 为负荷节点的非负
+        幅值，真实接入功率为 sign*p；已紧化的 scheme 追加其紧化行。"""
         net = self.network
+        if isinstance(eta, gp.Var):
+            eta.UB = float(max(np.max(np.abs(net.fixed_p)), np.max(np.abs(net.fixed_q)),
+                np.max(np.maximum(1., np.abs(net.q_ratio))*port_bounds(net)))/net.base)
+        p = {i: int(s)*p[i] for i, s in zip(net.load_nodes, self.sign)}   # 真实接入功率
         P = model.addVars(self.keys, lb=self.pmin, ub=self.pmax, name='P')
         Q = model.addVars(self.keys, lb=self.qmin, ub=self.qmax, name='Q')
         ell = model.addVars(self.keys, ub=self.ellmax, name='ell')
@@ -199,7 +252,7 @@ class GridPhysics:
             # 节点电压平方下限；上限已在变量声明中给出。
             model.addConstr(v[i] >= self.vmin[i], name=f'voltage_min[{i}]')
 
-        cones = []
+        cones, current_cones = [], []
         for e, (i, j) in self.ends.items():
             # 支路压降：v_j-v_i + 2(rP+χQ) - (r²+χ²)ell = s⁺-s⁻。
             drop = v[j]-v[i]+gp.quicksum(
@@ -210,20 +263,22 @@ class GridPhysics:
             model.addConstr(plus[e] <= self.drop_max[e]*(1-z[e]), name=f'drop_plus_bound[{e}]')
             model.addConstr(minus[e] <= self.drop_max[e]*(1-z[e]), name=f'drop_minus_bound[{e}]')
             for k in self.types[e]:
-                # 未选型号 P=Q=ell=0；非根走廊允许参考方向的反向潮流。
+                # 未选型号 P=Q=ell=0；各走廊都允许参考方向的反向潮流。
                 for flow, lower, upper, name in ((P, self.pmin, self.pmax, 'P'),
                                                   (Q, self.qmin, self.qmax, 'Q')):
                     model.addConstr(flow[e, k] >= lower[e, k]*x[e, k], name=f'{name}_min[{e},{k}]')
                     model.addConstr(flow[e, k] <= upper[e, k]*x[e, k], name=f'{name}_max[{e},{k}]')
                 model.addConstr(ell[e, k] <= self.ellmax[e, k]*x[e, k], name=f'current_max[{e},{k}]')
                 if i != net.root:
-                    # 反向送端功率含线路损耗；两端容量均须满足。
-                    model.addConstr(-P[e, k]+self.r[e, k]*ell[e, k] <= self.pmax[e, k]*x[e, k],name=f'reverse_P[{e},{k}]')
-                    model.addConstr(-Q[e, k]+self.reactance[e, k]*ell[e, k] <= self.qmax[e, k]*x[e, k],name=f'reverse_Q[{e},{k}]')
-                if self.method == 'socp':
-                    # 支路电流锥：P²+Q² <= v_i*ell，MP/SP 共用同一凸约束。
-                    model.addQConstr(P[e, k]**2+Q[e, k]**2 <= v[i]*ell[e, k], name=f'current_cone[{e},{k}]')
-                    cones.append((gp.LinExpr(v[i]+ell[e, k]),[gp.LinExpr(2*P[e, k]), gp.LinExpr(2*Q[e, k]), gp.LinExpr(v[i]-ell[e, k])]))
+                    # 反向送端功率含线路损耗；两端容量均须满足（根部走廊的这两行见最后）。
+                    model.addConstr(-P[e, k]+self.r[e, k]*ell[e, k] <= self.pmax[e, k]*x[e, k], name=f'reverse_P[{e},{k}]')
+                    model.addConstr(-Q[e, k]+self.reactance[e, k]*ell[e, k] <= self.qmax[e, k]*x[e, k],
+                                    name=f'reverse_Q[{e},{k}]')
+                # 支路电流锥：P²+Q² <= v_i*ell，MP/SP 共用同一凸约束；独立 AC 扫描把它改为等式。
+                current_cones.append(model.addQConstr(P[e, k]**2+Q[e, k]**2 <= v[i]*ell[e, k],
+                                                      name=f'current_cone[{e},{k}]'))
+                cones.append((gp.LinExpr(v[i]+ell[e, k]),
+                              [gp.LinExpr(2*P[e, k]), gp.LinExpr(2*Q[e, k]), gp.LinExpr(v[i]-ell[e, k])]))
 
         source_p = gp.quicksum(P[e, k] for e in self.outgoing[net.root] for k in self.types[e])
         source_q = gp.quicksum(Q[e, k] for e in self.outgoing[net.root] for k in self.types[e])
@@ -231,26 +286,31 @@ class GridPhysics:
         for flow, limit, name in ((source_p, net.source_pmax, 'source_P'), (source_q, net.source_qmax, 'source_Q')):
             if np.isfinite(limit):
                 model.addConstr(flow <= limit, name=name)
-        if self.method == 'socp' and np.isfinite(net.source_smax):
+        if np.isfinite(net.source_smax):
             model.addQConstr(source_p**2+source_q**2 <= net.source_smax**2, name='source_capacity')
             cones.append((gp.LinExpr(net.source_smax), [source_p, source_q]))
         state = gp.MVar.fromlist([*P.values(), *Q.values(), *ell.values(),
                                  *(v[i] for i in net.nodes), *plus.values(), *minus.values()])
-        operation = SimpleNamespace(P=P, Q=Q, ell=ell, v=v, plus=plus, minus=minus, state=state, cones=cones)
+        operation = SimpleNamespace(P=P, Q=Q, ell=ell, v=v, plus=plus, minus=minus, state=state, cones=cones,
+                                    current_cones=current_cones)
         if scheme is not None and tuple(scheme) in self.boxes:
-            model.Params.BarQCPConvTol = OBBT_CONV_TOL
             self._tighten(model.addConstr, x, operation, tuple(scheme))
+        # 根部走廊的反送（光伏）：送端功率同样含线路损耗。这些行排在紧化行之后，保持既有的约束顺序。
+        for e in self.outgoing[net.root]:
+            for k in self.types[e]:
+                model.addConstr(-P[e, k]+self.r[e, k]*ell[e, k] <= self.pmax[e, k]*x[e, k])
+                model.addConstr(-Q[e, k]+self.reactance[e, k]*ell[e, k] <= self.qmax[e, k]*x[e, k])
         return operation
 
 
 class MasterProblem:
-    """完整 MP：给定 power/min_total 时最小投资，否则最大化 direction@p。"""
+    """完整 MP：给定 power 时最小投资，否则最大化 direction@p。relaxed（与 power 同用）以 η 松弛功率平衡与压降等式
+    并最小化 η，即独立扫描的 SOCP 定点检验。"""
 
-    def __init__(self, equations, *, power=None, budget=np.inf,
-                 min_total=None, fixed_plan=None, direction=None, threads=DEFAULT_SOLVER_THREADS):
+    def __init__(self, equations, *, threads, power=None, budget=np.inf, direction=None, relaxed=False):
         # 1. 读取网架参数，创建求解模型
         net = equations.network
-        model = new_model('planning_'+equations.method, threads)
+        model = equations.new_model('planning', threads)
 
         # 2. 声明变量：选型 x、负荷 p、节点接入 a、虚拟连通流 f；z 为走廊接通表达式
         x = model.addVars(equations.keys, vtype=GRB.BINARY, name='x')
@@ -278,114 +338,77 @@ class MasterProblem:
         for e in equations.types:
             model.addConstr(f[e] <= net.n*z[e], name=f'connectivity_max[{e}]')
             model.addConstr(f[e] >= -net.n*z[e], name=f'connectivity_min[{e}]')  # -n*z_e <= f_e <= n*z_e：开断走廊不通流。
-        for i in net.nodes:
-            model.addConstr(gp.quicksum(f[e] for e in equations.incoming[i])-gp.quicksum(f[e] for e in equations.outgoing[i]) == a[i], name=f'connectivity_balance[{i}]')  # 每个接入节点消耗一单位虚拟流。
+        for i in net.nodes:   # 每个接入节点消耗一单位虚拟流
+            inflow = gp.quicksum(f[e] for e in equations.incoming[i])-gp.quicksum(f[e] for e in equations.outgoing[i])
+            model.addConstr(inflow == a[i], name=f'connectivity_balance[{i}]')
         model.addConstr(gp.quicksum(z.values()) == gp.quicksum(a.values()), name='tree_edges')  # 边数 = 非根接入节点数。
 
-        # 5. 限制预算和总负荷，并设置给定负荷或最低总负荷
+        # 5. 限制预算和总负荷；给定负荷时固定各节点，fixed_power 句柄供扫描逐点改写右端（kW）
         investment = net.cost_offset+gp.quicksum(equations.cost[e, k]*x[e, k] for e, k in equations.keys)
         total_power = gp.quicksum(p.values())/net.base
         model.addConstr(total_power <= net.power_limit/net.base, name='power_limit')  # 总负荷采用标幺缩放。
         if np.isfinite(budget):
             model.addConstr(investment <= budget, name='budget')  # 投资不超过预算，单位为算例费用单位。
-        if power is not None:
-            model.addConstrs((p[i] == value for i, value in zip(net.load_nodes, power)), name='fixed_power')  # 固定各节点负荷，单位 kW。
-        elif min_total is not None:
-            model.addConstr(total_power >= min_total/net.base, name='minimum_total')  # 仅限制总量，允许节点间重新分配。
+        self.fixed_power = None if power is None else model.addConstrs(
+            (p[i] == value for i, value in zip(net.load_nodes, power)), name='fixed_power')
 
-        # 6. 如给定建设方案，则固定每个走廊的型号选择
-        if fixed_plan is not None:
-            for (e, k), value in zip(equations.keys, net.encode_plan(fixed_plan)):
-                x[e, k].LB = x[e, k].UB = value
+        # 6. 完整运行变量及物理约束；relaxed 时功率平衡与压降等式以非负 η 松弛
+        eta = model.addVar(name='eta') if relaxed else 0.
+        operation = equations.add_operation(model, x, p, eta)
 
-        # 7. 所有 MP 均包含完整运行变量及物理约束；固定方案时含该方案的紧化行。
-        operation = equations.add_operation(model, x, p,
-                                            scheme=None if fixed_plan is None else net.encode_plan(fixed_plan))
-
-        # 8. MP1 最小投资；MP2 沿给定方向最大化负荷，其他负荷仍自由。
-        minimizing = power is not None or min_total is not None
+        # 7. MP1 最小投资（relaxed 时最小 η）；MP2 沿给定方向最大化负荷，其他负荷仍自由。
+        minimizing = power is not None
         self.direction = np.ones(len(net.load_nodes)) if direction is None else np.asarray(direction, dtype=float)
         objective = gp.quicksum(w*value for w, value in zip(self.direction, p.values()))/net.base
-        model.setObjective(investment if minimizing else objective, GRB.MINIMIZE if minimizing else GRB.MAXIMIZE)
+        model.setObjective(eta if relaxed else investment if minimizing else objective,
+                           GRB.MINIMIZE if minimizing else GRB.MAXIMIZE)
         self.objective_scale = 1. if minimizing else net.base
 
-        # 9. 保存变量引用；具名变量与扁平视图共享同一批 Gurobi 变量
+        # 8. 保存变量引用；具名变量与扁平视图共享同一批 Gurobi 变量
         self.equations, self.model = equations, model
-        self.choices, self.loads = x, p
+        self.loads = p
         self.x = gp.MVar.fromlist(list(x.values()))
         self.power = gp.MVar.fromlist(list(p.values()))
         self.active_nodes = gp.MVar.fromlist(list(a.values()))
         self.operation = operation
         self.state = operation.state
 
-    def use_incumbent(self, incumbent):
-        """提供已有可行解作为起点，并将其投资作为成本上界。"""
-        net = self.equations.network
-        cost = float(net.cost_offset+net.cost@incumbent['x'])
-        self.x.Start, self.power.Start = incumbent['x'], incumbent['p']
-        self.state.Start = incumbent['state']
-        self.model.addConstr(net.cost_offset+net.cost@self.x <= cost+1e-9)
-        return cost
-
     def exclude(self, x):
         """要求至少一个型号选择不同，排除指定建设方案。"""
         self.model.addConstr((1-2*x)@self.x >= 1-x.sum())
 
-    def solve(self, time_limit=MP_TIME_LIMIT, *, incumbent=None, start=None, radial_gap_kw=1e-3, tolerance=PLANNING_TOL):
-        """直接求 MP1/MP2；初始解、目标间隙及运行证书在此处理，不调用 SP。解的 MaxVio 超过 tolerance 即报错。"""
-        # 1. 设置初始解、时限并求解
-        model, equations = self.model, self.equations
-        if incumbent is not None:
-            self.use_incumbent(incumbent)
-        elif start is not None:
-            self.x.Start = start
+    def solve(self, time_limit=MP_TIME_LIMIT, *, tolerance=PLANNING_TOL):
+        """直接求 MP，不调用 SP。最优时返回选型、负荷（kW）、目标值与全局界、完整运行状态；已证不可行返回 None；
+        超时抛 TimeoutError；其他终止状态或解的 MaxVio 超过 tolerance 抛 SolveFailure。"""
+        model = self.model
         model.Params.TimeLimit = max(0., time_limit)
         model.optimize()
-
-        # 2. 判断是否有候选解，提取目标的全局界
         if model.Status == GRB.INFEASIBLE:
             return None
         if model.Status == GRB.TIME_LIMIT:
             raise TimeoutError(f'{model.ModelName}: time limit')
-        if model.Status not in (GRB.OPTIMAL, GRB.USER_OBJ_LIMIT) or not model.SolCount:
-            raise RuntimeError(f'{model.ModelName}: status={model.Status}, SolCount={model.SolCount}')
+        if model.Status != GRB.OPTIMAL or not model.SolCount:
+            raise SolveFailure(f'{model.ModelName}: status={model.Status}, SolCount={model.SolCount}')
         if model.MaxVio > tolerance:
-            raise RuntimeError(f'{model.ModelName}: MaxVio={model.MaxVio:g} > {tolerance:g}')
+            raise SolveFailure(f'{model.ModelName}: MaxVio={model.MaxVio:g} > {tolerance:g}')
         bound = model.ObjBound*self.objective_scale
-
-        # 3. 提取选型、负荷和目标值：投资用原费用单位，负荷用 kW
-        x = np.rint(self.x.X).astype(int)
-        p = self.power.X
-        objective = equations.network.cost_offset+equations.network.cost@x if model.ModelSense == GRB.MINIMIZE else self.direction@p
-
-        # 4. 原样读取完整运行证书；质量指标覆盖全部物理约束。
-        state = self.state.X
-        feasible = True
-
-        # 5. 返回候选解、目标界和认证状态
-        minimizing = model.ModelSense == GRB.MINIMIZE
-        gap = objective-bound if minimizing else bound-objective
-        tolerance = 1e-7 if minimizing else radial_gap_kw+1e-5
-        status = 'optimal' if model.Status == GRB.OPTIMAL or gap <= tolerance else 'feasible'
-        return dict(x=x, p=p, objective=float(objective), bound=bound, state=state, feasible=feasible, status=status)
+        # 投资用原费用单位，负荷用 kW；运行状态原样读取，质量指标已覆盖全部物理约束
+        x, p, net = np.rint(self.x.X).astype(int), self.power.X, self.equations.network
+        objective = net.cost_offset+net.cost@x if model.ModelSense == GRB.MINIMIZE else self.direction@p
+        return dict(x=x, p=p, objective=float(objective), bound=bound, state=self.state.X)
 
 
 class SubProblem:
-    """固定 x,p 的运行可行性 SP；锥支撑平面的 LP 对偶生成全局联合割。"""
+    """固定 x,p 的运行可行性 SP；锥支撑平面的 LP 对偶生成全局联合割。电流限额全有限的网架用 Gurobi 解 SOCP，
+    否则交给 Clarabel（solve_conic）并以原约束核验。"""
 
-    def __init__(self, equations, *, threads=DEFAULT_SOLVER_THREADS, numeric_focus=0):
-        self.equations, self.threads, self.calls = equations, threads, 0
-        self.numeric_focus = numeric_focus
-        self.cut_calls = 0
+    def __init__(self, equations, *, threads):
+        self.equations, self.threads = equations, threads
 
     def _build(self, model, x, power):
-        """评分 SOCP 与取割 LP 使用同一组变量、等式和物理约束。"""
+        """评分 SOCP 与取割 LP 使用同一组变量、等式和物理约束；已紧化方案的 SOCP 用 OBBT 的收敛容差。"""
         equations, net = self.equations, self.equations.network
-        model.Params.Aggregate = 0
-        model.Params.ScaleFlag = 0
-        model.Params.BarQCPConvTol = 1e-9
-        model.Params.BarHomogeneous = 1 if self.numeric_focus == 3 else -1
-        model.Params.NumericFocus = self.numeric_focus
+        model.Params.BarQCPConvTol = OBBT_CONV_TOL if tuple(x) in equations.boxes else 1e-9
         choice = model.addVars(equations.keys, ub=1., name='x')
         p = model.addVars(net.load_nodes, lb=-GRB.INFINITY, name='p_kw')
         # 固定参数用等式表示；求割时去掉这些等式的乘子，保留 x,p 系数。
@@ -396,13 +419,12 @@ class SubProblem:
         model.setObjective(eta)
         return choice, p, eta, operation, [*fixed_x.values(), *fixed_p.values()]
 
-    def solve(self, x, power, time_limit=None, *, score_only=False):
+    def solve(self, x, power, time_limit=SP_TIME_LIMIT, *, score_only=False):
+        if not np.isfinite(self.equations.network.ell_limit).all():
+            return self._solve_conic(x, power, time_limit, score_only)
         # 1. 固定 x、p，建立等式松弛问题
-        self.calls += 1
-        equations = self.equations
-        limit = SP_TIME_LIMIT[equations.method] if time_limit is None else time_limit
-        deadline = perf_counter()+limit
-        with new_model('planning_SP', self.threads) as model:
+        deadline = perf_counter()+time_limit
+        with self.equations.new_model('planning_SP', self.threads) as model:
             choice, p, eta, operation, fixed = self._build(model, x, power)
             # 2. 求解并检查终止状态与精度；失败直接报错。
             model.Params.TimeLimit = max(0., deadline-perf_counter())
@@ -410,15 +432,15 @@ class SubProblem:
             if model.Status == GRB.TIME_LIMIT:
                 raise TimeoutError('SP: time limit')
             if model.Status != GRB.OPTIMAL:
-                raise RuntimeError(f'SP {equations.method}: status={model.Status}, x={np.asarray(x).tolist()}, p={np.asarray(power).tolist()}')
+                raise SolveFailure(f'SP: status={model.Status}, x={np.asarray(x).tolist()}, p={np.asarray(power).tolist()}')
             if model.MaxVio > PLANNING_TOL:
-                raise RuntimeError(f'SP {equations.method}: MaxVio={model.MaxVio:g} > {PLANNING_TOL:g}, p={np.asarray(power).tolist()}')
+                raise SolveFailure(f'SP: MaxVio={model.MaxVio:g} > {PLANNING_TOL:g}, p={np.asarray(power).tolist()}')
             # 3. 保存原始最小违反量供顶点评分；不能用后续切平面 LP 的值替代。
             value = float(eta.X)
             if np.maximum(0., eta.X)+model.MaxVio <= PLANNING_TOL:
                 return dict(cut=None, state=operation.state.X, feasible=True, eta=value)
             if eta.X <= PLANNING_TOL:
-                raise RuntimeError(f'SP {equations.method}: eta={eta.X:g}, MaxVio={model.MaxVio:g}; certificate exceeds tolerance')
+                raise SolveFailure(f'SP: eta={eta.X:g}, MaxVio={model.MaxVio:g}; certificate exceeds tolerance')
             # 4. 缓存数值支撑方向；只评分时不解 LP，也不保留求解器对象。
             cone_normals = []
             for head, tail in operation.cones:
@@ -430,11 +452,30 @@ class SubProblem:
             cut = self._cut(model, operation, choice, p, fixed, x, power, cone_normals, deadline)
             return dict(cut=cut, state=None, feasible=False, eta=value)
 
-    def generate_cut(self, x, power, cone_normals, time_limit=None):
+    def _solve_conic(self, x, power, time_limit, score_only):
+        """电流限额不全有限时：同一模型交给 Clarabel 求解并以原约束核验；不可行时仍用 Gurobi 的支撑 LP 取割。"""
+        deadline = perf_counter()+time_limit
+        with self.equations.new_model('planning_SP', self.threads) as model:
+            choice, p, eta, operation, _ = self._build(model, x, power)
+            model.update()
+            fixed = {v.index: float(a) for v, a in zip([*choice.values(), *p.values()], [*x, *power])}
+            solution, violation, normals = solve_conic(model, self.equations, operation, x,
+                fixed, self.threads, deadline, 1e-10, 0.)
+            value = float(solution[eta.index])
+            if max(0., value)+violation <= PLANNING_TOL:
+                state = solution[[v.index for v in operation.state.tolist()]]
+                return dict(cut=None, state=state, feasible=True, eta=value)
+            if value <= PLANNING_TOL:
+                raise SolveFailure(f'SP: eta={value:g}, MaxVio={violation:g}; certificate exceeds tolerance')
+        if score_only:
+            return dict(cut=None, state=None, feasible=False, eta=value, cone_normals=normals)
+        cut = self.generate_cut(x, power, normals, time_limit=deadline-perf_counter())
+        return dict(cut=cut, state=None, feasible=False, eta=value)
+
+    def generate_cut(self, x, power, cone_normals, time_limit=SP_TIME_LIMIT):
         """仅对获选点解一次支撑 LP；方向来自该 x,p 已完成的 SOCP。"""
-        limit = SP_TIME_LIMIT[self.equations.method] if time_limit is None else time_limit
-        deadline = perf_counter()+limit
-        with new_model('planning_SP_cut', self.threads) as model:
+        deadline = perf_counter()+time_limit
+        with self.equations.new_model('planning_SP_cut', self.threads) as model:
             choice, p, eta, operation, fixed = self._build(model, x, power)
             return self._cut(model, operation, choice, p, fixed, x, power, cone_normals, deadline)
 
@@ -445,14 +486,13 @@ class SubProblem:
             if np.any(normal):
                 model.addConstr(head-gp.quicksum(float(a)*item for a, item in zip(normal, tail)) >= 0., name='cone_support')
         model.Params.TimeLimit = max(0., deadline-perf_counter())
-        self.cut_calls += 1
         model.optimize()
         if model.Status == GRB.TIME_LIMIT:
             raise TimeoutError('SP cut LP: time limit')
         if model.Status != GRB.OPTIMAL:
-            raise RuntimeError(f'SP cut LP: status={model.Status}, p={np.asarray(power).tolist()}')
+            raise SolveFailure(f'SP cut LP: status={model.Status}, p={np.asarray(power).tolist()}')
         if model.ObjVal <= 0. or model.MaxVio > PLANNING_TOL:
-            raise RuntimeError(f'SP cut LP: objective={model.ObjVal:g}, MaxVio={model.MaxVio:g}')
+            raise SolveFailure(f'SP cut LP: objective={model.ObjVal:g}, MaxVio={model.MaxVio:g}')
         return self._separating_cut(model, operation, choice, p, fixed, x, power)
 
     def _separating_cut(self, model, operation, choice, power_vars, fixed, x, power):
@@ -477,13 +517,13 @@ class SubProblem:
         cut /= scale
         cut[0] += 1e-10
         if not cut[0]+cut[1:1+len(power)]@power+cut[1+len(power):]@x < -1e-9:
-            raise RuntimeError(f'SP cut does not separate the candidate: x={np.asarray(x).tolist()}, p={np.asarray(power).tolist()}')
+            raise SolveFailure(f'SP cut does not separate the candidate: x={np.asarray(x).tolist()}, p={np.asarray(power).tolist()}')
         return cut
 
 
-def cone_misocp(equations, budget, bounds, objective, *, tighten, rows=None, exclude=(), time_limit, mip_gap=0.,
-                threads=DEFAULT_SOLVER_THREADS):
-    """x 自由的锥 MISOCP（行生成）：在 xi=p/bounds 上 max objective@xi，一次分支定界返回全局上界与现任解。
+def cone_misocp(equations, budget, bounds, objective, rows, *, tighten, exclude=(), time_limit, mip_gap, threads):
+    """x 自由的锥 MISOCP（行生成）：在分区盒内的锥 {xi: rows@xi>=0}（xi=p/bounds）上 max objective@xi，不选 exclude
+    中的方案；一次分支定界返回全局上界与现任解。
 
     分支定界自己选网架，不枚举方案。模型不预先带紧化行：每找到一个新的现任网架，若其盒约束与反向锥包络行尚不在模型中，
     先调用 tighten(x, 现任功率 kW, 当前上界) 确保该网架已紧化，再把这些行（按汉明距离提升，对全部 x 有效）作为惰性约束
@@ -497,16 +537,12 @@ def cone_misocp(equations, budget, bounds, objective, *, tighten, rows=None, exc
         model.Params.BarQCPConvTol = CONE_CONV_TOL
         xi = [p*(1./float(b)) for p, b in zip(problem.loads.values(), bounds)]
 
-        # 3. rows 给锥约束 rows@xi>=0 与分区盒 p<=bounds；否则为中心射线 xi_1=…=xi_d，并排除已知方案
-        if rows is None:
-            for j in range(1, len(xi)):
-                model.addConstr(xi[0]-xi[j] == 0., name=f'radial_direction[{j}]')
-            for scheme in exclude:
-                problem.exclude(np.asarray(scheme))
-        else:
-            for j, row in enumerate(rows):
-                model.addConstr(gp.quicksum(float(a)*v for a, v in zip(row, xi)) >= 0., name=f'cone[{j}]')
-            problem.power.UB = bounds
+        # 2. 锥约束 rows@xi>=0 与分区盒 p<=bounds；no-good 排除已知方案
+        for j, row in enumerate(rows):
+            model.addConstr(gp.quicksum(float(a)*v for a, v in zip(row, xi)) >= 0., name=f'cone[{j}]')
+        problem.power.UB = bounds
+        for scheme in exclude:
+            problem.exclude(np.asarray(scheme))
         model.setObjective(gp.quicksum(float(a)*v for a, v in zip(objective, xi)), GRB.MAXIMIZE)
 
         # 3. 行生成：新现任网架尚无紧化行时先紧化，再把它的行作为惰性约束加入
@@ -544,82 +580,6 @@ def cone_misocp(equations, budget, bounds, objective, *, tighten, rows=None, exc
         return dict(status=model.Status, bound=bound if abs(bound) < GRB.INFINITY else np.inf,
                     x=tuple(int(v) for v in np.rint(problem.x.X)) if found else None,
                     point=np.asarray(problem.power.X, float) if found else None)
-
-
-LOAD_PF = .95
-PV_PF = 1.
-PV_Q_SIGN = 1.
-RAY_CONE_MARGIN = 1e-6
-
-
-def voltage_flow_bounds(network):
-    """由压降等式和电流锥推导有效界；两端电压均有限，反送也有界。"""
-    voltage = np.r_[network.vmax, 1.]
-    sending = voltage[network.senders[network.type_corridor]]
-    receiving = voltage[network.receivers[network.type_corridor]]
-    ellmax = (np.sqrt(sending)+np.sqrt(receiving))**2/(network.r**2+network.reactance**2)
-    ellmax = np.minimum(ellmax, network.ell_limit)
-    return ellmax, np.sqrt(np.maximum(sending, receiving)*ellmax)
-
-
-def port_bounds(network):
-    """|节点净功率| 不超过相邻走廊各最大两端有功界之和。"""
-    _, voltage_bound = voltage_flow_bounds(network)
-    capacity = np.minimum(network.capacity, voltage_bound)
-    return network.base*np.array([sum(capacity[block].max()
-        for c, block in zip(network.corridors, network.type_slices) if node in c.endpoints)
-        for node in network.load_nodes])
-
-
-class PortPhysics(GridPhysics):
-    """固定 sign 后用非负幅值装配原方程；真实接入功率 p=sign*u。"""
-
-    def __init__(self, network, sign):
-        self.sign = np.asarray(sign)
-        network.q_ratio = np.where(self.sign > 0, np.tan(np.arccos(LOAD_PF)),
-                                   PV_Q_SIGN*np.tan(np.arccos(PV_PF)))
-        network.power_limit = float(port_bounds(network).sum())
-        super().__init__(network, 'socp')
-
-    def _build_variable_bounds(self):
-        super()._build_variable_bounds()
-        net = self.network
-        lower_q = np.minimum(net.q_ratio*self.sign*port_bounds(net)/net.base, 0.).sum()
-        pmax = net.capacity.copy()
-        qmax = np.full(net.n_types, min(net.source_qmax, net.source_smax)-lower_q)
-        ellmax = 2*pmax/net.r
-        if not np.all(np.isfinite(net.capacity)):
-            voltage_ell, _ = voltage_flow_bounds(net)
-            ellmax = np.minimum(voltage_ell, (qmax-net.fixed_q.sum()/net.base)/net.reactance)
-            voltage = np.r_[net.vmax, 1.]
-            end_voltage = np.maximum(voltage[net.senders[net.type_corridor]],
-                                     voltage[net.receivers[net.type_corridor]])
-            pmax = np.minimum(pmax, np.sqrt(end_voltage*ellmax))
-            qmax = np.minimum(qmax, pmax)
-        ellmax = np.minimum(ellmax, net.ell_limit)
-        self.pmax, self.qmax, self.ellmax = (dict(zip(self.keys, a)) for a in (pmax, qmax, ellmax))
-        self.pmin, self.qmin = dict(zip(self.keys, -pmax)), dict(zip(self.keys, -qmax))
-        self.y_lb_global = np.r_[-pmax, -qmax, np.zeros(net.n_types+net.n+2*net.n_corridors)]
-        drop = list(self.drop_max.values())
-        self.y_ub_global = np.r_[pmax, qmax, ellmax, net.vmax, drop, drop]
-
-    def add_operation(self, model, x, p, eta=0., scheme=None):
-        # 所有分区求解首次建模即采用同一数值设置，不作失败后的参数切换。
-        model.Params.BarHomogeneous, model.Params.Aggregate = 1, 0
-        model.Params.ScaleFlag = 1 if self.network.name == 'case33bw' else 0
-        if isinstance(eta, gp.Var):
-            net = self.network
-            eta.UB = float(max(np.max(np.abs(net.fixed_p)), np.max(np.abs(net.fixed_q)),
-                np.max(np.maximum(1., np.abs(net.q_ratio))*port_bounds(net)))/net.base)
-        signed = {i: int(s)*p[i] for i, s in zip(self.network.load_nodes, self.sign)}
-        operation = super().add_operation(model, x, signed, eta, scheme)
-        for e in self.outgoing[self.network.root]:
-            for k in self.types[e]:
-                model.addConstr(-operation.P[e, k]+self.r[e, k]*operation.ell[e, k]
-                                <= self.pmax[e, k]*x[e, k])
-                model.addConstr(-operation.Q[e, k]+self.reactance[e, k]*operation.ell[e, k]
-                                <= self.qmax[e, k]*x[e, k])
-        return operation
 
 
 def solve_conic(model, equations, operation, x, fixed, threads, deadline, tolerance, margin):
@@ -671,19 +631,18 @@ def solve_conic(model, equations, operation, x, fixed, threads, deadline, tolera
         cone_rows.append((a, b))
         if j < len(x) and not x[j]:
             continue  # 开断型号 P=Q=ell=0，原电流锥恒成立。
-        if j < len(x) and equations.network.name == 'case33bw':
+        scale = 1.
+        if j < len(x) and equations.network.case33_numerics:
             # 按逐线路电流界平衡电压与电流，保持原二阶锥等价。
             key = equations.keys[j]
-            cone_scale = (np.clip(1./equations.ellmax[key], 1., 100.)
-                          if np.isfinite(equations.network.ell_limit[j]) else 100.)
+            scale = np.clip(1./equations.ellmax[key], 1., 100.) if np.isfinite(equations.network.ell_limit[j]) else 100.
             v = operation.v[equations.ends[key[0]][0]]
             ell, P, Q = operation.ell[key], operation.P[key], operation.Q[key]
-            expressions = [affine(item) for item in
-                           (v+cone_scale*ell, 2*np.sqrt(cone_scale)*P, 2*np.sqrt(cone_scale)*Q, v-cone_scale*ell)]
+            expressions = [affine(item) for item in (v+scale*ell, 2*np.sqrt(scale)*P, 2*np.sqrt(scale)*Q, v-scale*ell)]
             a, b = np.array([item[0] for item in expressions]), np.array([item[1] for item in expressions])
         blocks.append(sparse.csc_matrix(-a[:, free]))
         constant = b+a@solution
-        constant[0] -= margin*(cone_scale if j < len(x) and equations.network.name == 'case33bw' else 1.)
+        constant[0] -= margin*scale
         values.append(constant)
         cones.append(clarabel.SecondOrderConeT(len(b)))
     objective, _ = affine(model.getObjective())
@@ -719,7 +678,7 @@ def solve_conic(model, equations, operation, x, fixed, threads, deadline, tolera
     if answer.status == clarabel.SolverStatus.MaxTime:
         raise TimeoutError('连续子问题达到总时限')
     if answer.status not in (clarabel.SolverStatus.Solved, clarabel.SolverStatus.AlmostSolved):
-        raise RuntimeError(f'Continuous SOCP: {answer.status}, x={list(x)}')
+        raise SolveFailure(f'Continuous SOCP: {answer.status}, x={list(x)}')
     solution[free] = offset+basis@answer.x if equal.any() else answer.x
 
     # 3. 以原始约束重新核验；锥求解器的缩放残差不直接作为物理证书。
@@ -741,44 +700,19 @@ def solve_conic(model, equations, operation, x, fixed, threads, deadline, tolera
     return solution, violation, normals
 
 
-class PortSubProblem(SubProblem):
-    def solve(self, x, power, time_limit=None, *, score_only=False):
-        if np.isfinite(self.equations.network.ell_limit).all():
-            return super().solve(x, power, time_limit, score_only=score_only)
-        self.calls += 1
-        deadline = perf_counter()+(SP_TIME_LIMIT[self.equations.method] if time_limit is None else time_limit)
-        with new_model('port_SP', self.threads) as model:
-            choice, p, eta, operation, _ = self._build(model, x, power)
-            model.update()
-            fixed = {v.index: float(a) for v, a in zip([*choice.values(), *p.values()], [*x, *power])}
-            solution, violation, normals = solve_conic(model, self.equations, operation, x,
-                fixed, self.threads, deadline, 1e-10, 0.)
-            value = float(solution[eta.index])
-            if max(0., value)+violation <= PLANNING_TOL:
-                state = solution[[v.index for v in operation.state.tolist()]]
-                return dict(cut=None, state=state, feasible=True, eta=value)
-            if value <= PLANNING_TOL:
-                raise RuntimeError(f'SP: eta={value:g}, MaxVio={violation:g}; certificate exceeds tolerance')
-        if score_only:
-            return dict(cut=None, state=None, feasible=False, eta=value, cone_normals=normals)
-        cut = self.generate_cut(x, power, normals, time_limit=deadline-perf_counter())
-        return dict(cut=cut, state=None, feasible=False, eta=value)
-
-
-def ray_support(equations, budget, x, anchor, power, *, threads, time_limit, numeric_focus=0):
-    """固定网架的近边界射线点；原约束残差达标后才收入认证域。"""
+def ray_support(equations, x, anchor, power, *, threads, time_limit):
+    """固定网架 x 从 anchor 朝 power 的紧化射线（kW）：返回可行段远端 p 与比例 ray_fraction；原约束残差达标才接受。"""
     deadline = perf_counter()+time_limit
-    with new_model('port_ray', threads) as model:
+    with equations.new_model('port_ray', threads) as model:
         choice = dict(zip(equations.keys, x))
         ray_fraction = model.addVar(ub=1., name='ray_fraction')
         p = {i: float(a)+ray_fraction*float(q-a)
              for i, a, q in zip(equations.network.load_nodes, anchor, power)}
         operation = equations.add_operation(model, choice, p, scheme=x)
-        model.setObjective(ray_fraction, gp.GRB.MAXIMIZE)
+        model.setObjective(ray_fraction, GRB.MAXIMIZE)
         solution, violation, _ = solve_conic(model, equations, operation, x, {},
             threads, deadline, 1e-9, RAY_CONE_MARGIN)
         if violation > PLANNING_TOL:
-            raise RuntimeError(f'Ray: MaxVio={violation:g}, anchor={list(anchor)}, p={list(power)}')
-        return dict(x=x.copy(), p=anchor+solution[ray_fraction.index]*(power-anchor),
-                    state=solution[[v.index for v in operation.state.tolist()]],
-                    ray_fraction=float(solution[ray_fraction.index]), feasible=True)
+            raise SolveFailure(f'Ray: MaxVio={violation:g}, anchor={list(anchor)}, p={list(power)}')
+        fraction = float(solution[ray_fraction.index])
+        return dict(p=anchor+fraction*(power-anchor), ray_fraction=fraction)

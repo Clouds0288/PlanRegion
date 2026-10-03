@@ -6,6 +6,7 @@ import numpy as np
 from Network.case33bw import Case33
 from vertify import budget_schemes
 from model import GridPhysics, MasterProblem
+from tests.planning_checks import fix_plan
 
 
 class Case33SwitchingTests(unittest.TestCase):
@@ -25,14 +26,13 @@ class Case33SwitchingTests(unittest.TestCase):
         self.assertEqual(net.tree(x).cost, 2.)
         self.assertEqual(net.tree(net.encode_plan(net.initial_plan)).cost, 0.)
         for budget in (1, 2):
-            problem = MasterProblem(GridPhysics(net, 'socp'), budget=budget,
-                                    fixed_plan=plan, power=np.zeros(2), threads=1)
+            problem = MasterProblem(GridPhysics(net, [1, 1]), budget=budget, power=np.zeros(2), threads=1)
+            fix_plan(problem, plan)
             with problem.model:
                 answer = problem.solve()
             if budget == 1:
                 self.assertIsNone(answer)
             else:
-                self.assertTrue(answer['feasible'])
                 self.assertEqual(answer['objective'], 2.)
                 self.assertAlmostEqual(answer['bound'], 2.)
 
@@ -41,7 +41,7 @@ class Case33SwitchingTests(unittest.TestCase):
         initial = net.encode_plan(net.initial_plan)
         fixed = np.array([not c.switchable for c in net.corridors])
         for budget, count in ((0, 1), (1, 1), (2, 7), (4, 12), (7, 12)):
-            schemes = budget_schemes(GridPhysics(net, 'socp'), budget, threads=1)
+            schemes = budget_schemes(net, budget)
             self.assertEqual(len(schemes), count)
             for x in schemes:
                 self.assertEqual(net.tree(x).n, 32)
@@ -53,8 +53,8 @@ class Case33SwitchingTests(unittest.TestCase):
     def test_fixed_plan_cannot_override_a_locked_line(self):
         net = Case33()
         plan = net.initial_plan | {'2-3': None, '21-8': 'existing'}
-        problem = MasterProblem(GridPhysics(net, 'socp'), fixed_plan=plan,
-                                threads=1)
+        problem = MasterProblem(GridPhysics(net, [1, 1]), threads=1)
+        fix_plan(problem, plan)
         with problem.model:
             self.assertIsNone(problem.solve())
 

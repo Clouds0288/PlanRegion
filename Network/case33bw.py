@@ -62,7 +62,7 @@ class Case33(_Case33bw):
     """唯一预算入口：相对原始状态，断开或闭合一条线路各计一次（常闭系数 -1，常开系数 +1）。"""
     switch_budget = 7
     cost_unit = '次开合变动'
-    budgets = (switch_budget,)
+    case33_numerics = True
     switchable_branches = ((21, 8), (7, 8), (22, 12), (11, 12),
                            (9, 15), (33, 18), (25, 29))
 
@@ -73,12 +73,12 @@ class Case33(_Case33bw):
 
 
 class Case33Plan(_Case33bw):
-    """扩展规划：基态与原 Case33 一致（S1–S5 闭合，C1–C5 不建）；开断 S 不计费，建设 C 计相对建设费。"""
+    """扩展规划：基态与原 Case33 一致（S1–S5 闭合，C1–C5 不建）；开断 S 不计费，建设 C 计相对建设费。
+    数值设置沿用默认（case33_numerics=False），与归档运行一致。"""
     switches = ((7, 8), (11, 12), (14, 15), (28, 29), (32, 33))                          # S1–S5
     candidates = {(8, 21): 4., (9, 15): 4., (12, 22): 4., (18, 33): 1., (25, 29): 1.}   # C1–C5：端点 → 相对建设费
     plan_budget = 14.   # 全部候选都可建：共 87 个径向方案
     cost_unit = '相对建设费'
-    budgets = (plan_budget,)
 
     def __init__(self, load_nodes=LOAD_NODES, *, current_limit=np.inf):
         prices = {**{frozenset(edge): 0 for edge in self.switches},

@@ -1,13 +1,12 @@
 """带符号 AC 独立证书与 Case33 扫描失败点的数值回归。"""
-from unittest.mock import patch
-
 import numpy as np
 from threadpoolctl import threadpool_limits
 
-from vertify import signed_ac_witness, ac_scan_line, ac_interval_possible, export_comparison
+from vertify import signed_ac_witness, scan_line, ac_interval_possible, export_comparison
 from vertify import budget_schemes
 from Network.case33bw import Case33
-from model import GridPhysics, MasterProblem, PLANNING_TOL, LOAD_PF
+from model import LOAD_PF
+from monitor import grid_comparison
 from vertify import ACPowerFlow, AC_CACHE_METHOD, ac_identity
 
 
@@ -37,19 +36,18 @@ def test_signed_witness_satisfies_independent_complex_power_balance():
 
 def test_no_signed_witness_does_not_mean_infeasible():
     network = Case33(load_nodes=(18, 25, 30))
-    schemes = budget_schemes(GridPhysics(network, 'socp'), 7, threads=1)
     power = np.array([-1000., -4000., 100.])
-    # 故意不给初步见证，让同一个可行反送点走完整 AC 等式模型。
+    # 不给初步见证，让同一个可行反送点走完整 AC 等式模型。
     with threadpool_limits(limits=1):
-        answer = ac_scan_line((np.array([0]), power[None]), network=network, budget=7, schemes=None)
-    assert answer['global_calls'] == 1 and answer['states'][0] == 1
+        answer = scan_line((np.array([0]), power[None]), network=network, budget=7, ac=True)
+    assert answer['states'][0] == 1
 
 
 
 
 def test_ac_necessary_intervals_preserve_physical_witnesses():
     network = Case33(load_nodes=(18, 25, 30))
-    schemes = budget_schemes(GridPhysics(network, 'socp'), 7, threads=1)
+    schemes = budget_schemes(network, 7)
     rng = np.random.default_rng(72)
     power = rng.uniform([-6000., -7000., -6000.], [1000., 3500., 1500.], (160, 3))
     witnesses = 0
@@ -64,12 +62,12 @@ def test_ac_necessary_intervals_preserve_physical_witnesses():
 
 def test_ac_interval_exclusion_agrees_with_global_equality():
     network = Case33(load_nodes=(18, 25, 30))
-    schemes = budget_schemes(GridPhysics(network, 'socp'), 7, threads=1)
+    schemes = budget_schemes(network, 7)
     power = np.array([-9866.61875, -10986.8375, -3058.11875])
     with threadpool_limits(limits=1):
         assert all(not ac_interval_possible(network, x, power)[0] for x in schemes)
-        answer = ac_scan_line((np.array([0]), power[None]), network=network, budget=7, schemes=None)
-    assert answer['states'][0] == -1 and answer['global_calls'] == 1
+        answer = scan_line((np.array([0]), power[None]), network=network, budget=7, ac=True)
+    assert answer['states'][0] == -1
 
 
 def test_comparison_export_preserves_coordinates_and_labels(tmp_path):
@@ -82,8 +80,8 @@ def test_comparison_export_preserves_coordinates_and_labels(tmp_path):
               socp_states=np.ones((2, 2, 2), dtype=np.int8),
               method=AC_CACHE_METHOD, metadata=dict(identity=ac_identity(network, 7)))
     ac['states'][0, 0, 1] = -1
-    summary = export_comparison(network, 7, result, ac, tmp_path)
-    with np.load(tmp_path/'comparison.npz') as saved:
+    summary = export_comparison(network, 7, result, ac, grid_comparison(ac, result), tmp_path/'run.json.gz')
+    with np.load(tmp_path/'run_comparison'/'comparison.npz') as saved:   # 导出到记录旁
         np.testing.assert_array_equal(saved['power'][1], [-.5, -.5, .5])
         assert saved['ac_states'][1] == -1 and saved['inner'][1]
         np.testing.assert_array_equal(saved['load_nodes'], [18, 25, 30])

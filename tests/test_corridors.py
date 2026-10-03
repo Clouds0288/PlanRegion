@@ -9,6 +9,7 @@ from Network import Corridor, Network, TypeParameters
 from Network.case33bw import Case33
 from Network.four_bus_five_corridor import FourBus
 from model import GridPhysics, MasterProblem, SubProblem
+from tests.planning_checks import fix_plan
 
 
 def modified(network, **changes):
@@ -20,16 +21,14 @@ def modified(network, **changes):
 
 @pytest.mark.parametrize('network', [FourBus(), Case33()])
 def test_one_index_for_types_flows_and_costs(network):
-    e = GridPhysics(network, 'socp')
+    e = GridPhysics(network, np.ones(len(network.load_nodes)))
     x = network.encode_plan(network.initial_plan)
     assert x.shape == network.r.shape == network.cost.shape == (network.n_types,)
     assert network.decode_plan(x) == network.initial_plan
     assert e.slack_slice.stop-e.slack_slice.start == 2*network.n_corridors
-    problem = MasterProblem(e, fixed_plan=network.initial_plan, threads=1)
+    problem = MasterProblem(e, threads=1)
     with problem.model:
         problem.model.update()
-        np.testing.assert_array_equal(problem.x.LB, x)
-        np.testing.assert_array_equal(problem.x.UB, x)
         assert problem.x.shape == (network.n_types,)
         for corridor in network.corridors:
             row = problem.model.getRow(problem.model.getConstrByName(f'one_type[{corridor.id}]'))
@@ -46,7 +45,7 @@ def test_fixed_single_types_still_count_investment():
                       for c in net.corridors if c.initial_active)
     net = modified(net, corridors=corridors)
     for budget, feasible in ((20., False), (21., True)):
-        problem = MasterProblem(GridPhysics(net, 'linear'), budget=budget, power=[3., 4., 5.], threads=1)
+        problem = MasterProblem(GridPhysics(net, [1, 1, 1]), budget=budget, power=[3., 4., 5.], threads=1)
         with problem.model:
             answer = problem.solve()
         assert (answer is not None) == feasible
@@ -64,8 +63,7 @@ def optional_network():
         required=[True, True, False, False], source_smax=1.)
 
 
-@pytest.mark.parametrize('method', ['linear', 'socp'])
-def test_optional_nodes_follow_selected_paths(method):
+def test_optional_nodes_follow_selected_paths():
     net = optional_network()
     for active, node_count in (((0, 1), 2), ((0, 2, 3), 3)):
         plan = {c.id: 'line' if int(c.id) in active else None for c in net.corridors}
@@ -73,26 +71,25 @@ def test_optional_nodes_follow_selected_paths(method):
         tree = net.tree(x)
         assert tree.n == node_count
         assert 4 not in tree.nodes
-        e = GridPhysics(net, method)
-        problem = MasterProblem(e, fixed_plan=plan, power=[10., 10.], threads=1)
+        e = GridPhysics(net, [1, 1])
+        problem = MasterProblem(e, power=[10., 10.], threads=1)
+        fix_plan(problem, plan)
         with problem.model:
-            answer = problem.solve()
+            assert problem.solve() is not None
             np.testing.assert_array_equal(problem.active_nodes.X > .5, np.isin(net.nodes, tree.nodes))
-        assert answer['feasible']
         assert SubProblem(e, threads=1).solve(x, np.array([10., 10.]))['feasible']
     missing = net.initial_plan | {'1': None}
     with pytest.raises(ValueError, match='required'):
         net.tree(net.encode_plan(missing))
-    problem = MasterProblem(GridPhysics(net, method), fixed_plan=missing,
-                            power=np.zeros(2), threads=1)
+    problem = MasterProblem(GridPhysics(net, [1, 1]), power=np.zeros(2), threads=1)
+    fix_plan(problem, missing)
     with problem.model:
         assert problem.solve() is None
 
 
-@pytest.mark.parametrize('method', ['linear', 'socp'])
-def test_joint_cut_is_valid_with_optional_nodes(method):
+def test_joint_cut_is_valid_with_optional_nodes():
     net = optional_network()
-    e = GridPhysics(net, method)
+    e = GridPhysics(net, [1, 1])
     x, power = net.encode_plan(net.initial_plan), np.array([80., 80.])
     cut = SubProblem(e, threads=1).solve(x, power)['cut']
     assert cut is not None and cut[0]+cut[1:3]@power+cut[3:]@x < -1e-9

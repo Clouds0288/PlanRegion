@@ -7,28 +7,27 @@ import pytest
 
 from Network.four_bus_five_corridor import FourBus
 from model import PLANNING_TOL, GridPhysics, MasterProblem, SubProblem
-from tests.planning_checks import margin
+from tests.planning_checks import finite_limits, fix_plan, margin
 
 
-@pytest.mark.parametrize('method', ['linear', 'socp'])
-def test_mp_and_query_keep_the_solver_power_and_state(method):
+def test_mp_and_query_keep_the_solver_power_and_state():
     network = FourBus()
-    equations = GridPhysics(network, method)
+    equations = GridPhysics(network, [1, 1, 1])
     solve = MasterProblem.solve
     captured = []
 
     def record(problem, *args, **kwargs):
         answer = solve(problem, *args, **kwargs)
-        assert answer['feasible']
         captured.append((problem.power.X.copy(), problem.state.X.copy(), answer['objective']))
         np.testing.assert_array_equal(answer['state'], problem.state.X)
         return answer
 
     with patch.object(MasterProblem, 'solve', new=record), \
          patch.object(SubProblem, 'solve', side_effect=AssertionError('redundant SP')):
-        problem = MasterProblem(equations, fixed_plan=network.initial_plan, threads=1)
+        problem = MasterProblem(equations, threads=1)
+        fix_plan(problem, network.initial_plan)
         with problem.model:
-            answer = problem.solve(radial_gap_kw=1.)
+            answer = problem.solve()
     assert len(captured) == 1 and answer['p'].sum() > 1.
     np.testing.assert_array_equal(answer['p'], captured[0][0])
     np.testing.assert_array_equal(answer['state'], captured[0][1])
@@ -38,8 +37,8 @@ def test_mp_and_query_keep_the_solver_power_and_state(method):
 
 @pytest.mark.parametrize('feasible', [True, False])
 def test_sp_uses_eta_and_keeps_the_existing_dual_cut_path(feasible):
-    network = FourBus()
-    equations = GridPhysics(network, 'socp')
+    network = finite_limits(FourBus())   # 有限电流限额：SP 走 Gurobi 路径
+    equations = GridPhysics(network, [1, 1, 1])
     if feasible:
         plan = {'01': 'H', '12': None, '13': None, '02': 'L', '23': 'M'}
         power = np.array([47.47692657884853, 14.400743716323246, 7.840840158490067])
@@ -81,15 +80,15 @@ def test_sp_uses_eta_and_keeps_the_existing_dual_cut_path(feasible):
 
 
 def test_sp_timeout_without_solution_stays_unknown():
-    network = FourBus()
-    equations = GridPhysics(network, 'socp')
+    network = finite_limits(FourBus())   # 有限电流限额：SP 走 Gurobi 路径
+    equations = GridPhysics(network, [1, 1, 1])
     with pytest.raises(TimeoutError, match='time limit'):
         SubProblem(equations, threads=1).solve(network.encode_plan(network.initial_plan), np.zeros(3), time_limit=0.)
 
 
 def test_positive_eta_without_a_valid_cut_stays_unknown():
     network = FourBus()
-    equations = GridPhysics(network, 'socp')
+    equations = GridPhysics(network, [1, 1, 1])
     with patch.object(SubProblem, '_separating_cut', side_effect=RuntimeError('Invalid separating cut')) as separate:
         with pytest.raises(RuntimeError, match='Invalid separating cut'):
             SubProblem(equations, threads=1).solve(
@@ -102,7 +101,7 @@ def test_positive_eta_without_a_valid_cut_stays_unknown():
     ([0,1,0,1,0,0,0,1,0,0,0,0,0,0,0], [0.,22.413542764447403,17.558865929406192], True),
 ])
 def test_socp_new_vertex_path_needs_no_numeric_retry(x, power, feasible):
-    equations = GridPhysics(FourBus(), 'socp')
+    equations = GridPhysics(finite_limits(FourBus()), [1, 1, 1])   # SP 走 Gurobi 路径
     optimize, calls = gp.Model.optimize, []
     def solve(model, *args, **kwargs):
         model.update()

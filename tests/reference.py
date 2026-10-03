@@ -47,7 +47,7 @@ def _dispatch_equations(network):  # 构造固定方案的 P/Q/v 消元式。
         relax.append(np.array([1.,0.,0.,0.]))  # eta 只扩张锥轴。
     sizes = [len(block) for block in constants[1:]]  # 源端锥及支路锥的维数。
     return SimpleNamespace(c=np.concatenate(constants),F=np.vstack(powers),G=np.vstack(currents),  # 拼接固定方案的完整消元矩阵。
-                           linear_c=linear_c,linear_F=linear_F,linear_count=linear_count,  # 保留 LP 子集供解析判定。
+                           linear_count=linear_count,  # 非负锥（线性约束）的行数。
                            sizes=sizes,relax=np.concatenate(relax))  # 返回锥维数及 phase I 松弛方向。
 
 
@@ -80,16 +80,12 @@ def _solve(objective, matrix, rhs, cones):
         return SimpleNamespace(x=variables.X, obj_val=model.ObjVal, obj_val_dual=model.ObjVal)
 
 
-def dispatch_support(network, method, normal):
-    """独立消元模型的支撑值，物理方程不读取正式 MP/SP。"""
+def dispatch_support(network, normal):
+    """独立消元模型（SOCP）的支撑值，物理方程不读取正式 MP/SP。"""
     equations = _dispatch_equations(network)
     n = len(network.load_nodes)
-    if method == 'linear':
-        constant, matrix = equations.linear_c, equations.linear_F
-        cones = [('linear', len(constant))]
-    else:
-        constant, matrix = equations.c, np.c_[equations.F, equations.G]
-        cones = [('linear', equations.linear_count)]+[('soc', size) for size in equations.sizes]
+    constant, matrix = equations.c, np.c_[equations.F, equations.G]
+    cones = [('linear', equations.linear_count)]+[('soc', size) for size in equations.sizes]
     dimension = matrix.shape[1]
     limits = np.zeros((n+1, dimension))
     limits[:n, :n] = np.eye(n)

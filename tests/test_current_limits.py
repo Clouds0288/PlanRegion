@@ -1,27 +1,23 @@
 """电流单位、松弛与独立 AC 的限额一致性、缓存身份回归。"""
-from unittest.mock import patch
-
 import numpy as np
 import pytest
-from threadpoolctl import threadpool_limits
 
 from Network.case33bw import Case33
 from vertify import ac_interval_possible, signed_ac_witness
-from model import GridPhysics, PortPhysics, PortSubProblem
-from vertify import budget_schemes
+from model import GridPhysics, SubProblem
 
 
-def test_mainline_and_scans_keep_all_branch_current_limits():
+def test_mainline_and_scans_keep_all_branch_current_limits(tmp_path):
     import main
-    from vertify import ac_network, scan_problem
-    with patch('main.run') as run:
-        main.main('case33', dimension=2)
-    network = run.call_args.args[0]
+    from tests.planning_checks import mainline_stubs
+    from vertify import scan_problem
+    with mainline_stubs() as calls:
+        main.main('case33', 2, show=False, output=tmp_path)
+    network = calls.build.call_args.args[0]
     amperes = np.sqrt(network.ell_limit)*network.base/(np.sqrt(3)*network.voltage_kv)
     np.testing.assert_allclose(amperes, np.full(37, 200.))
     limits = np.arange(180., 217.)
     varied = Case33(current_limit=limits)
-    np.testing.assert_array_equal(ac_network(varied).ell_limit, varied.ell_limit)
     for ac in (False, True):
         problem = scan_problem(varied, 7, [-1, 1], ac=ac, power=[0., 0.])
         with problem.model as model:
@@ -38,10 +34,10 @@ def test_mainline_and_scans_keep_all_branch_current_limits():
 def test_200a_boundary_sp_preserves_original_certificate_tolerance(power):
     from tests.planning_checks import margin
     network = Case33(current_limit=200.)
-    equations = PortPhysics(network, [1, -1])
+    equations = GridPhysics(network, [1, -1])
     x = np.array([1, 1, 1, 1, 1, 1, 0, 1, 1, 1, 0, 1, 1, 1, 1, 1, 1, 1, 1,
                   1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 0, 1, 0, 0])
-    answer = PortSubProblem(equations, threads=1).solve(x, np.array(power))
+    answer = SubProblem(equations, threads=1).solve(x, np.array(power))
     if answer['feasible']:
         assert margin(equations, x, np.array(power)*[1, -1], answer['state']) >= -1e-8
     else:
@@ -72,7 +68,7 @@ def test_amperes_convert_to_squared_per_unit_in_models_and_tree():
         np.testing.assert_allclose(network.ell_limit, expected, rtol=1e-14)
         tree = network.tree(network.encode_plan(network.initial_plan))
         np.testing.assert_allclose(tree.ell_limit, expected, rtol=1e-14)
-        for equations in (GridPhysics(network, 'socp'), PortPhysics(network, [-1, -1])):
+        for equations in (GridPhysics(network, [1, 1]), GridPhysics(network, [-1, -1])):
             assert max(equations.ellmax.values()) <= expected*(1+1e-14)
     assert np.isinf(Case33().ell_limit).all()
     for value in (0., -210., np.nan):

@@ -8,6 +8,7 @@ from threadpoolctl import threadpool_limits
 
 from Network.four_bus_five_corridor import FourBus
 from model import GridPhysics, MasterProblem, SubProblem
+from tests.planning_checks import fix_plan
 from tests.reference import dispatch_support
 from tests.test_corridors import modified
 
@@ -21,21 +22,18 @@ def single_thread():
         yield
 
 
-@pytest.mark.parametrize('method', ['linear', 'socp'])
-def test_reference_orientation_does_not_change_physics(method):
+def test_reference_orientation_does_not_change_physics():
     network = FourBus()
     flipped = FourBus()
     flipped = modified(flipped, corridors=tuple(replace(c, endpoints=c.endpoints[::-1])
                                                 for c in flipped.corridors))
     answers = []
     for net in (network, flipped):
-        equations = GridPhysics(net, method)
-        problem = MasterProblem(equations, fixed_plan=REVERSE_PLAN,
-                                power=[3., 4., 5.], threads=1)
+        equations = GridPhysics(net, [1, 1, 1])
+        problem = MasterProblem(equations, power=[3., 4., 5.], threads=1)
+        fix_plan(problem, REVERSE_PLAN)
         with problem.model:
             answer = problem.solve()
-        assert answer['status'] == 'optimal'
-        assert answer['feasible']
         assert answer['objective'] == network.tree(network.encode_plan(REVERSE_PLAN)).cost
         assert equations.network.decode_plan(answer['x']) == REVERSE_PLAN
         answers.append((equations, answer))
@@ -49,13 +47,13 @@ def test_reference_orientation_does_not_change_physics(method):
 def test_reverse_sending_capacity_includes_losses():
     network = FourBus()
     network.vmin = np.full(network.n, .5)
-    equations = GridPhysics(network, 'socp')
-    problem = MasterProblem(equations, fixed_plan=REVERSE_PLAN, threads=1)
+    equations = GridPhysics(network, [1, 1, 1])
+    problem = MasterProblem(equations, threads=1)
+    fix_plan(problem, REVERSE_PLAN)
     problem.power.UB = [network.power_limit, 0., 0.]
     with problem.model:
         answer = problem.solve()
-    reference = dispatch_support(network.tree(network.encode_plan(REVERSE_PLAN)), 'socp', [1., 0., 0.])
-    assert answer['status'] == 'optimal'
+    reference = dispatch_support(network.tree(network.encode_plan(REVERSE_PLAN)), [1., 0., 0.])
     assert abs(answer['objective']-reference['value']) < .002
     k = network.type_keys.index(('12', 'L'))
     p = answer['state'][equations.P_slice][k]
@@ -66,33 +64,31 @@ def test_reverse_sending_capacity_includes_losses():
     assert -p < capacity-1e-4
 
 
-@pytest.mark.parametrize('method', ['linear', 'socp'])
-def test_required_single_type_can_carry_reverse_flow(method):
+def test_required_single_type_can_carry_reverse_flow():
     network = FourBus()
     network = modified(network, corridors=tuple(replace(c, types=c.types[:1])
                          if c.id == '12' else c for c in network.corridors))
-    equations = GridPhysics(network, method)
+    equations = GridPhysics(network, [1, 1, 1])
     assert network.n_types == 13
-    problem = MasterProblem(equations, fixed_plan=REVERSE_PLAN, power=[3., 4., 5.], threads=1)
+    problem = MasterProblem(equations, power=[3., 4., 5.], threads=1)
+    fix_plan(problem, REVERSE_PLAN)
     with problem.model:
         answer = problem.solve()
-    assert answer['status'] == 'optimal'
     assert equations.network.decode_plan(answer['x']) == REVERSE_PLAN
     assert answer['state'][equations.P_slice][network.type_keys.index(('12', 'L'))] < 0.
 
 
 def test_connected_cycle_is_rejected_even_at_zero_load():
-    equations = GridPhysics(FourBus(), 'linear')
+    equations = GridPhysics(FourBus(), [1, 1, 1])
     plan = {'01': 'L', '12': 'L', '13': 'L', '02': 'L', '23': None}
-    problem = MasterProblem(equations, fixed_plan=plan, power=np.zeros(3),
-                            threads=1)
+    problem = MasterProblem(equations, power=np.zeros(3), threads=1)
+    fix_plan(problem, plan)
     with problem.model:
         assert problem.solve() is None
 
 
-@pytest.mark.parametrize('method', ['linear', 'socp'])
-def test_reverse_plan_cut_is_valid_for_every_topology(method):
-    equations = GridPhysics(FourBus(), method)
+def test_reverse_plan_cut_is_valid_for_every_topology():
+    equations = GridPhysics(FourBus(), [1, 1, 1])
     x = equations.network.encode_plan(REVERSE_PLAN)
     power = np.full(3, 40.)
     cut = SubProblem(equations, threads=1).solve(x, power)['cut']

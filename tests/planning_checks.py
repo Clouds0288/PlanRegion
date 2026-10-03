@@ -1,7 +1,18 @@
-"""生产运行状态的离线审核与无求解器的合成回放；不参与 MP/SP 的可行性分支。"""
+"""生产运行状态的离线审核、无求解器的合成回放与主线编排的替身；不参与 MP/SP 的可行性分支。"""
+from contextlib import contextmanager
 from itertools import product
+from types import SimpleNamespace
+from unittest.mock import patch
 
 import numpy as np
+
+
+@contextmanager
+def mainline_stubs():
+    """只检查 main.main 的编排与传参：替换构域、校验、收敛曲线与画图，返回各替身。"""
+    with patch('main.build_region') as build, patch('main.validate') as validate, \
+         patch('main.convergence') as curves, patch('main.draw_convergence') as draw:
+        yield SimpleNamespace(build=build, validate=validate, curves=curves, draw=draw)
 
 
 def recorded_monitor(d, output=None):
@@ -10,7 +21,7 @@ def recorded_monitor(d, output=None):
     送入 forward。返回 (monitor, x, cut)。"""
     from monitor import RunMonitor
     from Network.four_bus_five_corridor import FourBus
-    from region import clip_polytope
+    from geometry import clip_polytope
     network = FourBus(load_nodes=(1, 2, 3)[:d])
     bounds, label = np.full(d, 100.), '-'*d
     monitor = RunMonitor(output=output, algorithm='RCUT')
@@ -46,7 +57,8 @@ def recorded_monitor(d, output=None):
 
 
 def margin(equations, x, power, state):
-    """按 add_operation 的顺序复核原约束；每项余量非负表示满足，等式余量为负绝对误差。"""
+    """按 add_operation 的顺序复核原约束；power 为真实接入功率 p=sign*u（kW）。每项余量非负表示满足，
+    等式余量为负绝对误差。"""
     # 1. 将扁平输入还原成按节点、走廊和线路型号索引的物理量
     net = equations.network
     P = dict(zip(equations.keys, state[equations.P_slice]))
@@ -89,17 +101,39 @@ def margin(equations, x, power, state):
             residual.append(Q[e, k]-equations.qmin[e, k]*x[e, k])  # 型号无功下界：Q_ek >= Qmin_ek*x_ek。
             residual.append(equations.qmax[e, k]*x[e, k]-Q[e, k])  # 型号无功上界：Q_ek <= Qmax_ek*x_ek。
             residual.append(equations.ellmax[e, k]*x[e, k]-ell[e, k])  # 电流平方上界：ell_ek <= ellmax_ek*x_ek。
-            if i != net.root:
-                residual.append(equations.pmax[e, k]*x[e, k]+P[e, k]-equations.r[e, k]*ell[e, k])  # 反向有功容量：-P_ek+r_ek*ell_ek <= Pmax_ek*x_ek。
-                residual.append(equations.qmax[e, k]*x[e, k]+Q[e, k]-equations.reactance[e, k]*ell[e, k])  # 反向无功容量：-Q_ek+χ_ek*ell_ek <= Qmax_ek*x_ek。
-            if equations.method == 'socp':
-                residual.append(v[i]+ell[e, k]-np.linalg.norm([2*P[e, k], 2*Q[e, k], v[i]-ell[e, k]]))  # 支路电流锥：||(2P,2Q,v_i-ell)||₂ <= v_i+ell。
+            residual.append(equations.pmax[e, k]*x[e, k]+P[e, k]-equations.r[e, k]*ell[e, k])  # 反向有功容量：-P_ek+r_ek*ell_ek <= Pmax_ek*x_ek。
+            residual.append(equations.qmax[e, k]*x[e, k]+Q[e, k]-equations.reactance[e, k]*ell[e, k])  # 反向无功容量：-Q_ek+χ_ek*ell_ek <= Qmax_ek*x_ek。
+            residual.append(v[i]+ell[e, k]-np.linalg.norm([2*P[e, k], 2*Q[e, k], v[i]-ell[e, k]]))  # 支路电流锥：||(2P,2Q,v_i-ell)||₂ <= v_i+ell。
 
     # 5. 检查根节点电源容量，返回所有约束中的最小余量
     ps = sum(P[e, k] for e in equations.outgoing[net.root] for k in equations.types[e])
     qs = sum(Q[e, k] for e in equations.outgoing[net.root] for k in equations.types[e])
     residual.append(net.source_pmax-ps)  # 电源有功上限：P_source <= source_pmax。
     residual.append(net.source_qmax-qs)  # 电源无功上限：Q_source <= source_qmax。
-    if equations.method == 'socp':
-        residual.append(net.source_smax-np.hypot(ps, qs))  # 电源视在功率上限：sqrt(P_source²+Q_source²) <= source_smax。
+    residual.append(net.source_smax-np.hypot(ps, qs))  # 电源视在功率上限：sqrt(P_source²+Q_source²) <= source_smax。
     return float(min(residual))
+
+
+def finite_limits(network):
+    """全部型号加一个远大于各型号电流界、不起作用的有限电流限额：物理模型不变，SP 走 Gurobi 路径。"""
+    from dataclasses import fields, replace
+    from Network import Network
+    corridors = tuple(replace(c, types=tuple(replace(t, ell_limit=1e6) for t in c.types)) for c in network.corridors)
+    return Network(**{f.name: getattr(network, f.name) for f in fields(Network)} | dict(corridors=corridors))
+
+
+def fix_plan(problem, plan):
+    """把 MP 的选型固定为建设方案 plan（走廊 ID → 型号 ID 或 None），返回其型号向量。"""
+    x = problem.equations.network.encode_plan(plan)
+    problem.x.LB = problem.x.UB = x
+    return x
+
+
+def synthetic_reference(states, socp_states=None, *, bounds, axis_lower):
+    """合成的配对扫描参考（不调用求解器），字段同 vertify.scan_ac_reference 的结果；SOCP 标签缺省同 AC。"""
+    from vertify import AC_CACHE_METHOD
+    states = np.asarray(states)
+    return dict(axis_lower=np.asarray(axis_lower, float), bounds=np.asarray(bounds, float), states=states,
+                socp_states=states if socp_states is None else np.asarray(socp_states), method=AC_CACHE_METHOD,
+                metadata=dict(identity='synthetic'), scan_seconds=0., cache_path='synthetic.npz', reused_points=0,
+                computed_points=int(states.size))

@@ -7,11 +7,11 @@ import pytest
 from threadpoolctl import threadpool_limits
 
 import main
+from geometry import box_vertices, contains, halfspaces, polytope_volume
 from model import new_model
-from monitor import RunMonitor
+from monitor import CUT_ACCEPTED, RunMonitor
 from Network.case33bw import Case33, CURRENT_LIMIT
-from region import (CUT_ACCEPTED, Cone, Cutting, Radial, box_vertices, build_partition, clip_box, cone_outer,
-                    contains, halfspaces, piece, polytope_volume, sandwich, stagnated)
+from region import Cone, Cutting, Radial, build_partition, cone_outer, piece, sandwich, trailing_small_cuts
 
 
 def settings(d):
@@ -45,14 +45,15 @@ def test_cone_outer_and_sandwich_clip_network_sets_to_the_outer_bound():
         inner, _ = sandwich([(U, V, halfspace)], [('small', small)], d, {})
         assert inner == pytest.approx(polytope_volume(np.vstack([np.zeros(d), V])))
         assert len(piece(box_vertices(d)+2., U, halfspace)) == 0
-        np.testing.assert_allclose(clip_box(cone_outer(U, None)).max(axis=0), np.ones(d))
+        np.testing.assert_allclose(cone_outer(U, None).max(axis=0), np.ones(d))   # 无外界时为锥∩盒
 
 
 def test_stagnation_needs_patience_consecutive_small_cuts():
-    assert stagnated([.5, .3, .001, .005, .009], .01, 3)
-    assert not stagnated([.5, .001, .02, .005, .009], .01, 3)   # 中间一次 >= threshold 重新计数
-    assert not stagnated([.001, .001], .01, 3)
-    assert not stagnated([.5, .3, .01, .005, .009], .01, 3)     # 等于 threshold 不算小割（同主线）
+    assert trailing_small_cuts([.5, .3, .001, .005, .009], .01) == 3      # patience=3 即停滞
+    assert trailing_small_cuts([.5, .001, .02, .005, .009], .01) == 2     # 中间一次 >= threshold 重新计数
+    assert trailing_small_cuts([.001, .001], .01) == 2
+    assert trailing_small_cuts([.5, .3, .01, .005, .009], .01) == 2       # 等于 threshold 不算小割（同主线）
+    assert trailing_small_cuts([], .01) == 0
 
 
 def test_split_options_star_edge_and_longest_edge_midpoint():
@@ -60,16 +61,16 @@ def test_split_options_star_edge_and_longest_edge_midpoint():
         part = radial(code)
         d = part.d
         cone = Cone(0, tuple(range(d)), (), .5*np.eye(d))
-        cone.final = dict(point=np.full(d, 1./d)*part.bounds, x=None)
+        cone.point = np.full(d, 1./d)*part.bounds
         star, fallback = part.options(cone)
         assert len(star) == d and all(d in keys for keys in star)                 # 内部解点：星形剖分
         assert all(len(set(keys)) == d for keys in [*star, *fallback])
         assert len(fallback) == 2 and part.midpoints == {(0, 1): d+1}            # 最长棱（并列取首条）中点二分
         np.testing.assert_allclose(part.directions[d+1][:2], [2**-.5]*2)
-        cone.final = dict(point=None, x=None)
+        cone.point = None
         assert len(part.options(cone)) == 1
     near_edge = np.array([.48, .48, .04])*part.bounds   # 三维：一个锥坐标偏小，在对边上二分
-    cone.final = dict(point=near_edge, x=None)
+    cone.point = near_edge
     edge, _ = part.options(cone)
     assert len(edge) == 2 and {keys[2] for keys in edge} == {2}
 
@@ -110,10 +111,10 @@ def test_row_generation_bound_equals_the_bound_with_every_plan_tightened():
         cone = part.root()
         rows = np.linalg.inv(cone.verts.T)
         rows /= np.linalg.norm(rows, axis=1, keepdims=True)
-        lazy = part.misocp(cone.c, rows)
-        for x in budget_schemes(part.equations, part.budget):
+        lazy = part.misocp(cone.c, rows, main.MIP_GAP)
+        for x in budget_schemes(part.network, part.budget):
             part.tighten(tuple(int(v) for v in x))
-        full = part.misocp(cone.c, rows)
+        full = part.misocp(cone.c, rows, main.MIP_GAP)
     assert lazy['x'] in part.equations.boxes and lazy['bound'] == pytest.approx(full['bound'], rel=2*main.MIP_GAP)
 
 

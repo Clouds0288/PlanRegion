@@ -1,6 +1,10 @@
 # 数学符号与变量契约
 
-修改前必须阅读并遵守 [docs/notation.md](docs/notation.md) 和 [AGENTS.md](AGENTS.md) 的变量契约。同一数学量语义未变就保留代码名称；新增量先登记，改名与单位、索引、结果格式变化须显式迁移。交付前运行 `python -m unittest tests.test_notation -v`，算法变更另做相关数值回归。
+修改前必须阅读并遵守 [docs/notation.md](docs/notation.md) 和 [AGENTS.md](AGENTS.md) 的变量契约。登记只覆盖数学量与数值设置、持久化与结果格式的键、公开的函数与类；已登记的名字语义未变就保留，改名与单位、索引、格式变化须显式迁移，新增量先登记。局部量、形参与私有辅助函数是实现细节，可自由重构，不登记也不迁移。改名优先用 GitNexus rename；工具不可用时按 AGENTS.md 的手工流程（impact 列出引用、逐处修改、文本搜索复核），不做盲目的全局查找替换。交付前运行 `python -m unittest tests.test_notation -v`，算法变更另做相关数值回归。
+
+# 代码风格
+
+写科研代码追求精炼整洁，不过度嵌套冗余、兜底与防御：只为真实会发生且有明确处理的情况写分支；不为不可能的输入加缺省值、类型判断或 try/except；失败显式抛出，不静默吞掉；外部输入在边界校验一次；不保留没有调用方的参数、模式与兼容分支。细则见 [AGENTS.md](AGENTS.md)。
 
 <!-- gitnexus:start -->
 # GitNexus — Code Intelligence

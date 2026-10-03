@@ -1,4 +1,4 @@
-"""扫描缓存复用、归档路径解析，以及主线记录与扫描的端到端核对。"""
+"""扫描缓存复用，以及主线三步（构域、扫描校验、收敛过程图）的端到端核对。"""
 import gzip
 import json
 from unittest.mock import patch
@@ -7,69 +7,31 @@ import numpy as np
 import pytest
 
 import main
-import vertify
-from monitor import RunMonitor, NativeWindow
+from monitor import RunMonitor, NativeWindow, grid_comparison
+from vertify import convergence
 
 
-
-
-
-
-
-
-@pytest.mark.parametrize('force', [False, True])
-def test_main_passes_force_rescan_switch(force):
-    with patch('main.FORCE_RESCAN', force), patch('main.run') as run:
-        main.main('case33')
-    assert run.call_args.kwargs['force_rescan'] is force
-
-
-@pytest.mark.parametrize('relative_cache', [True, False])
-def test_archived_reference_resolves_cache_after_changing_working_directory(tmp_path, monkeypatch, relative_cache):
-    project = tmp_path/'project'
-    project.mkdir()
-    other = tmp_path/'elsewhere'
-    other.mkdir()
-    monkeypatch.chdir(other)
-    monkeypatch.setattr(main, 'ROOT', project)
-    cache = project/'results/scan/region.npz'
-    recording = project/'recording.json.gz'
-    stored = cache.relative_to(project) if relative_cache else cache
-    with gzip.open(recording, 'wt', encoding='utf-8') as stream:
-        json.dump(dict(version=4, history=[dict(elapsed=0., patch=dict(event='start'))],
-            validation_state=dict(validation=dict(method=vertify.AC_CACHE_METHOD, cache_path=str(stored)))), stream)
-    lower, upper = np.zeros(2), np.ones(2)
-    result = dict(inner=[], outer=[], axis_lower=lower, axis_bounds=upper)
-    reference = dict(axis_lower=lower, bounds=upper, states=np.ones((1, 1)), socp_states=np.ones((1, 1)))
-    with patch('main.build_region', return_value=result), \
-         patch('main.reference_box', return_value=(lower, upper)), \
-         patch('main.scan_ac_reference', return_value=reference), \
-         patch('main.import_ac_reference') as imported:
-        main.run(main.FourBus(load_nodes=(1, 2)), reference=recording,
-                 show_ui=False, scan_output=tmp_path/'cache')
-    assert imported.call_args.args[2] == cache
-
-
-def test_real_scan_is_reused_and_metrics_are_recomputed_for_new_result(tmp_path):
-    network = main.FourBus(load_nodes=(1, 2))
-    options = dict(budget=20000., divisions=8, show_ui=False, threads=1, workers=4, scan_workers=1,
-                   scan_output=tmp_path/'scans')
-    main.run(network, output=tmp_path/'first.json.gz', force_rescan=True,
-             reference=tmp_path/'unused.json.gz', **options)
-    with gzip.open(tmp_path/'first.json.gz', 'rt', encoding='utf-8') as stream:
+def test_real_scan_is_reused_and_metrics_are_recomputed_for_new_result(tmp_path, monkeypatch):
+    for name, value in dict(WORKERS=4, SCAN_WORKERS=1, SCAN_OUTPUT=tmp_path/'scans', SCAN_DIVISIONS={2: 8}).items():
+        monkeypatch.setattr(main, name, value)
+    main.main('fourbus', 2, show=False, output=tmp_path/'first')
+    with gzip.open(tmp_path/'first'/'mode_1'/'fourbus_1_2.json.gz', 'rt', encoding='utf-8') as stream:
         first = json.load(stream)
-    with patch('vertify.ProcessPoolExecutor', side_effect=AssertionError('Must reuse saved scan')):
-        result = main.run(network, output=tmp_path/'second.json.gz', tau=.01, **options)
-    with gzip.open(tmp_path/'second.json.gz', 'rt', encoding='utf-8') as stream:
+    monkeypatch.setattr(main, 'REGION_TAU', .01)
+    result = main.main('fourbus', 2, show=False, output=tmp_path/'second')
+    recording = tmp_path/'second'/'mode_1'/'fourbus_1_2.json.gz'
+    with gzip.open(recording, 'rt', encoding='utf-8') as stream:
         second = json.load(stream)
     a = first['validation_state']['validation']
     b = second['validation_state']['validation']
     assert (a['bounds'], a['axis_lower'], a['states']) == (b['bounds'], b['axis_lower'], b['states'])
-    check = RunMonitor()
-    check.validation(a, result)
-    assert b['metrics'] == check.validation_state['validation']['metrics']
+    assert b['computed_points'] == 0 and b['reused_points'] == np.size(b['states'])   # 第二次运行全部复用缓存
+    assert b['metrics'] == grid_comparison(a, result)['metrics']
+    assert (tmp_path/'second'/'fourbus_1_2_convergence.png').is_file()
     restored = RunMonitor()
-    restored.load_recording(tmp_path/'second.json.gz')
+    restored.load_recording(recording)
+    curves = convergence(restored)   # 只读记录：末点即校验指标
+    assert (curves['mr'][-1], curves['fr'][-1]) == pytest.approx((b['mr_percent'], b['fr_percent']))
     state = restored.state
     assert {tuple(row['sign']) for row in state['result']['outer']} == {(1, 1), (1, -1), (-1, 1), (-1, -1)}
     assert min(row[0] for part in state['result']['inner'] for row in part['vertices']) < 0.
@@ -111,13 +73,19 @@ def test_real_scan_is_reused_and_metrics_are_recomputed_for_new_result(tmp_path)
         window.close()
 
 
-def test_time_limit_retains_all_partitions_and_replay_without_scan(tmp_path):
-    output = tmp_path/'timeout.json.gz'
-    result = main.run(main.FourBus(load_nodes=(1, 2)), output=output, time_limit=0.,
-                      show_ui=False, scan=False, threads=1, workers=4)
+def test_time_limit_retains_all_partitions_and_saves_the_record_before_validation(tmp_path, monkeypatch):
+    monkeypatch.setattr(main, 'WORKERS', 4)
+    output = tmp_path/'mode_1'/'fourbus_1_2.json.gz'
+
+    def saved(monitor):
+        """校验开始时构域记录已落盘，且尚无校验内容。"""
+        with gzip.open(output, 'rt', encoding='utf-8') as stream:
+            data = json.load(stream)
+        assert data['version'] == 4 and data['validation_state'] == {} and len(data['history']) > 0
+
+    with patch('main.validate', side_effect=saved) as validate, patch('main.convergence'), patch('main.draw_convergence'):
+        result = main.main('fourbus', 2, seconds=0., show=False, output=tmp_path)
+    validate.assert_called_once()
     assert result['status'] == 'time_limit' and not result['certified']
     assert len(result['outer']) == 4 and result['inner'] == []
-    with gzip.open(output, 'rt', encoding='utf-8') as stream:
-        data = json.load(stream)
-    assert data['version'] == 4 and data['validation_state'] == {}
-    assert len(data['history']) > 0 and list(tmp_path.iterdir()) == [output]
+    assert [path for path in tmp_path.rglob('*') if path.is_file()] == [output]

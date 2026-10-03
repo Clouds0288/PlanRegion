@@ -30,7 +30,7 @@ class FourBus(Network):
     )
     power_factor, voltage_kv, voltage_min_pu = .95, .4, .93
     transformer_kva, new_corridor_cny_m = 150., 45.
-    cost_unit, budgets = '元', (20000., 40000., 60000., np.inf)
+    cost_unit = '元'
 
     def __init__(self, load_nodes=(1, 2, 3)):
         base = self.transformer_kva

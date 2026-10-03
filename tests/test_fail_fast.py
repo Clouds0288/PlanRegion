@@ -7,9 +7,10 @@ import pytest
 from gurobipy import GRB
 from scipy.spatial import QhullError
 
+import geometry
 import main
-import region
 from model import MasterProblem
+from tests.planning_checks import mainline_stubs
 
 
 @pytest.mark.parametrize('status,violation,message', [
@@ -40,21 +41,24 @@ def test_mp_quality_gate_follows_the_given_tolerance():
 
 def test_qhull_failure_is_not_retried_in_other_coordinates():
     points = np.array([[0.,0.,0.], [1.,0.,0.], [0.,1.,0.], [0.,0.,1.]])
-    with patch('region.ConvexHull', side_effect=QhullError('hull probe')) as hull:
+    with patch('geometry.ConvexHull', side_effect=QhullError('hull probe')) as hull:
         with pytest.raises(QhullError, match='hull probe'):
-            region.polytope_volume(points)
+            geometry.polytope_volume(points)
     hull.assert_called_once()
 
 
 def test_main_records_failure_and_does_not_publish_result(tmp_path):
-    output = tmp_path/'monitor.json.gz'
-    with patch('main.build_region', side_effect=RuntimeError('solver probe')) as solve:
+    with mainline_stubs() as calls:
+        calls.build.side_effect = RuntimeError('solver probe')
         with pytest.raises(RuntimeError, match='solver probe'):
-            main.run(main.FourBus(load_nodes=(1, 2)), output=output, show_ui=False, threads=1)
-    solve.assert_called_once()
+            main.main('fourbus', 2, show=False, output=tmp_path)
+    calls.build.assert_called_once()
+    calls.validate.assert_not_called()   # 构域失败时不进入校验，也不画图
+    calls.draw.assert_not_called()
+    output = tmp_path/'mode_1'/'fourbus_1_2.json.gz'
     from monitor import RunMonitor
     monitor = RunMonitor()
     monitor.load_recording(output)
     assert monitor.state['status'] == 'failed'
     assert 'result' not in monitor.state
-    assert list(tmp_path.iterdir()) == [output]
+    assert [path for path in tmp_path.rglob('*') if path.is_file()] == [output]

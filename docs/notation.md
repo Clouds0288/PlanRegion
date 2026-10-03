@@ -1,6 +1,6 @@
 # 数学符号与代码变量契约
 
-本文描述当前主线，即方法 RCUT：径向锥夹逼 R 加逐网架割平面 CUT。相同数学量必须保留登记名称、单位、索引、状态布局和结果键；不能通过删登记绕过检查。新增量先登记，语义或输出格式变化必须显式迁移并同步调用方与回归。
+本文描述当前主线，即方法 RCUT：径向锥夹逼 R 加逐网架割平面 CUT。登记的名字（范围见文末“当前登记接口索引”：数学量与数值设置、持久化与结果格式的键、公开的函数与类）在语义未变时保留名称、单位、索引与格式；改名或改格式必须显式迁移并同步调用方与回归，不能通过删登记绕过检查。新增数学量、持久化键或公开接口先登记；局部量、形参与私有辅助函数是实现细节，可自由重构。
 
 ## 维数、索引与单位
 
@@ -35,7 +35,7 @@ Case33Plan（`--case case33plan`，网架名 case33bw_plan）是扩展规划算�
 
 `receiving/sending` 形状 `(n,m)`，receiving-sending 为关联矩阵，流入为正。`E` 为 `(n,d)` 的负荷嵌入矩阵。`active_nodes` 是接入二元变量，`MasterProblem.__init__.f` 是连通虚拟流，与电功率无关。拓扑约束为每走廊至多一型号、边两端接入、`Gf=a`、`-n*z<=f<=n*z`、边数等于接入非根节点数。
 
-外部 `plan/choice/fixed_plan` 为“走廊 ID → 型号 ID 或 None”字典，通过 `encode_plan/decode_plan` 转换；`start` 是型号向量，`incumbent` 是带证书的答案字典。运行树只保存实际接入节点，`node_indices/type_indices` 回指全图，`parent/children/order/roots` 使用树局部索引；`D` 汇总下游节点。`direction=±1` 区分根向和参考方向。反向支路必须计损耗：`P=-P_tree+r*ell`，`Q=-Q_tree+reactance*ell`。
+外部 `plan/choice` 为“走廊 ID → 型号 ID 或 None”字典，通过 `encode_plan/decode_plan` 转换（测试用 `fix_plan` 把 MP 的选型固定为一个方案）。运行树只保存实际接入节点，`node_indices/type_indices` 回指全图，`parent/children/order/roots` 使用树局部索引；`D` 汇总下游节点。`direction=±1` 区分根向和参考方向。反向支路必须计损耗：`P=-P_tree+r*ell`，`Q=-Q_tree+reactance*ell`。
 
 | 状态分块 | 唯一切片 | 单位 |
 |---|---|---|
@@ -47,27 +47,27 @@ Case33Plan（`--case case33plan`，网架名 case33bw_plan）是扩展规划算�
 
 `operation.P/Q/ell/v/plus/minus` 与 `state` 是同一批变量的具名与扁平视图，根电压恒为 1。断线余量满足 `0<=s±<=drop_max*(1-z)`；未选型号功率和电流为零。全局 `y_lb_global/y_ub_global` 是割计算使用的有效盒，不替代完整运行约束。`pmin/pmax/qmin/qmax/ellmax` 是派生界，有限电流时 ellmax 同时受 ell_limit 限制。带符号模型允许源端反送。
 
-当前约束由 `GridPhysics.add_operation` 装配；数学式中的 A/B/C 不对应另一套代码属性。SOCP 电流约束为 `P²+Q²<=u*ell`；独立 AC 改为等式，其余拓扑、预算、运行约束相同。
+当前约束由 `GridPhysics.add_operation` 装配；数学式中的 A/B/C 不对应另一套代码属性。SOCP 电流约束为 `P²+Q²<=u*ell`（`GridPhysics.add_operation.current_cones` 为其句柄）；独立 AC 改为等式，其余拓扑、预算、运行约束相同。
 
 ## MP、SP、联合割与 OBBT 紧化
 
-MP2 最大化 `direction @ p`，`objective/bound` 是 kW 的可行值/全局上界；MP1 最小化费用，`objective/bound` 是费用值/全局下界。成功答案包含 `x/p/state`；明确不可行返回 None。`radial_gap_kw=1e-3` 只检查目标间隙，不改写功率。原始求解质量不合格或无可靠答案时停止，不修补或重求。
+MP2 最大化 `direction @ p`，`objective/bound` 是 kW 的可行值/全局上界；MP1 最小化费用，`objective/bound` 是费用值/全局下界。成功答案为最优解，含 `x/p/objective/bound/state`；已证不可行返回 None；超时抛 TimeoutError，其他终止状态或 MaxVio 超过 tolerance 抛 `SolveFailure`（不是不可行证明，调用方记未决），不修补或重求。`MasterProblem.__init__.relaxed`（与 power 同用）以非负 `MasterProblem.__init__.eta`（求解器名 eta）松弛功率平衡与压降等式并最小化 η，即扫描的 SOCP 定点检验；`MasterProblem.fixed_power` 是固定负荷约束的句柄，扫描逐点改其右端。
 
-SP 固定 x,p 后最小化非负 `eta`（求解器名 violation），只允许功率平衡与压降等式 ±eta，其余约束保持严格。`max(eta,0)+MaxVio<=PLANNING_TOL` 才接受原始 `state`。正 eta 通过锥的必要支撑平面 LP 生成有效联合割；`score_only=True` 保存 `cone_normals` 并延迟至 `generate_cut` 取割。超时、数值失败或无法分离均不能作为不可行证书。
+SP 固定 x,p 后最小化非负 `eta`（求解器名 violation），只允许功率平衡与压降等式 ±eta，其余约束保持严格。`max(eta,0)+MaxVio<=PLANNING_TOL` 才接受原始 `state`。正 eta 通过锥的必要支撑平面 LP 生成有效联合割；`score_only=True` 保存 `cone_normals` 并延迟至 `generate_cut` 取割。超时、数值失败（`SolveFailure`）或无法分离均不能作为不可行证书。
 
 唯一联合割方向是 `alpha + beta @ p + delta @ x >= 0`，数组布局 `[alpha, *beta, *delta]`，长度 `1+d+t`；beta 作用于 kW（分区内为幅值 u）。`_separating_cut.dual` 按求解器线性行排列，`coefficients` 按变量索引，`h` 提取全部 state 列。采用 Gurobi 行乘子方向，固定 x/p 的等式乘子先置零：`alpha=-dual@rhs + max(h,0)@y_ub_global + min(h,0)@y_lb_global`。正比例归一化后截距加 `1e-10` 保守补偿。`calls/cut_calls` 分别计 SP 与取割 LP 次数。
 
-方案紧化：方案首次使用时 `GridPhysics.obbt` 在独立功率 `[0,bounds]` 内对选中型号的 P/Q/ell 与节点 v 做 `OBBT_ROUNDS` 轮 OBBT，盒存于 `GridPhysics.boxes[tuple(x)]`，键 `(量名, 型号键或节点)`、标幺；端点外扩 `OBBT_PAD`，未证得最优的端点保留原界（首轮为全局界）。`add_operation(..., scheme=x)` 对已紧化方案追加盒约束与反向锥包络割 `u_L*ell+ell_L*u-u_L*ell_L <= (P_L+P_U)P-P_L*P_U+(Q_L+Q_U)Q-Q_L*Q_U+ENVELOPE_MARGIN`（另一条取 u_U、ell_U，u 为参考送端电压平方），每行右端加 `M*H(x)`：H 为 x 与该方案的汉明距离，M 为该行在全局界上的最大违反量，故联合割对全部 x 仍有效。SP、射线与割 LP 传入 scheme；锥 MISOCP 同时带全部已紧化方案的提升行。含紧化行的模型和 OBBT 用 `OBBT_CONV_TOL`。`obbt_extremes` 以 `settings.obbt_workers` 份模型副本并行求解，结果与串行逐位相同。
+方案紧化：方案首次使用时 `GridPhysics.obbt` 在独立功率 `[0,bounds]` 内对选中型号的 P/Q/ell 与节点 v 做 `OBBT_ROUNDS` 轮 OBBT，盒存于 `GridPhysics.boxes[tuple(x)]`，键 `(量名, 型号键或节点)`、标幺；端点外扩 `OBBT_PAD`，未证得最优的端点保留原界（首轮为全局界）。`add_operation(..., scheme=x)` 对已紧化方案追加盒约束与反向锥包络割 `u_L*ell+ell_L*u-u_L*ell_L <= (P_L+P_U)P-P_L*P_U+(Q_L+Q_U)Q-Q_L*Q_U+ENVELOPE_MARGIN`（另一条取 u_U、ell_U，u 为参考送端电压平方），每行右端加 `M*H(x)`：H 为 x 与该方案的汉明距离，M 为该行在全局界上的最大违反量，故联合割对全部 x 仍有效。SP、射线与割 LP 传入 scheme；锥 MISOCP 同时带全部已紧化方案的提升行。含紧化行的模型和 OBBT 用 `OBBT_CONV_TOL`。`obbt_extremes` 以 workers // 仍在计算的分区数 份模型副本并行求解，结果与串行逐位相同。
 
-有限逐线路电流的 Port SP 固定使用既有 Gurobi 连续 SOCP；其他 Port SP 和射线使用 Clarabel。`solve_conic.basis/offset` 表示消元坐标，`cone_scale` 只是等价锥缩放。射线内域见证使用既有 `1e-6` 锥裕量，有限电流界同时扣除相同裕量；原物理残差仍按 `1e-8` 验收。`numeric_focus` 是求解设置，不改变数学可行性。
+电流限额全有限的网架，SP 用 Gurobi 连续 SOCP；其他网架的 SP（`SubProblem._solve_conic`）和射线用 Clarabel。`solve_conic.basis/offset` 表示消元坐标，锥的 `scale` 只是等价锥缩放。分区模型一律由 `GridPhysics.new_model` 建立（齐次化障碍法、不聚合，Case33 另开缩放）；SP 的 BarQCPConvTol 在 `SubProblem._build` 给出：已紧化方案取 `OBBT_CONV_TOL`，否则 1e-9。射线内域见证使用既有 `1e-6` 锥裕量，有限电流界同时扣除相同裕量；原物理残差仍按 `1e-8` 验收。`Network.case33_numerics` 为真（Case33）时用其数值设置：Gurobi ScaleFlag=1、Clarabel 支路锥按电流界缩放、AC 扫描 NumericFocus=3 与 Presolve 设置；这些只是求解设置，不改变数学可行性。Case33Plan 沿用默认，与归档运行一致。
 
 ## 符号分区与几何坐标
 
-主线只用符号分区：`PortPhysics.sign` 为 ±1 向量，内部非负幅值 u，真实 p=sign*u；负荷 PF=0.95、光伏 PF=1，允许反送。`main.mode=1` 只传给扫描接口（`vertify` 的缓存身份仍区分 mode）。输出、回放和扫描始终是真实 kW；割只在所属符号区有效，联合割在分区内共享。
+主线只用符号分区：`GridPhysics.sign` 为 ±1 向量，内部非负幅值 u，真实 p=sign*u；负荷 PF=0.95、光伏 PF=1，允许反送。独立扫描同样只用符号分区（`vertify.q_ratio` 逐点取功率因数）；缓存身份中的 mode=1 保留，以维持既有缓存。`GridPhysics` 只在网络的浅副本上写入分区的 q_ratio 与 power_limit，调用方的网络不变。输出、回放和扫描始终是真实 kW；割只在所属符号区有效，联合割在分区内共享。
 
 `bounds=port_bounds(network)` 为公共正数坐标尺度 b（kW），内部点 `xi=u/bounds∈[0,1]^d` 无量纲；分区盒即 `[0,1]^d`。结果 `bound` 是查询目标的标量界，不能与 bounds 混用。叶锥、K^IN_k、N^CUT_x 与测度都在 xi 中计算，`build_partition` 返回前乘回 bounds 得 kW 幅值，`build_region` 再乘 sign 得带符号 kW。
 
-`halfspaces/contains/clip_polytope` 不自动换算。面方程为 `F@xi+g<=0`；裁剪接口为 `constant+coefficient@xi>=0`。固定 x 的联合割在 xi 中为 `alpha+delta@x+(beta*bounds)@xi>=0`（`Cutting.clip`）。`covered` 先按包围盒筛点再逐行 `contains`，结果与逐行判定相同。`clip_box` 裁到 xi<=1（xi>=0 由锥保证），`cone_clip` 裁到锥 `U⁻¹xi>=0`，`box_vertices` 为分区盒顶点。
+凸多面体几何在 geometry.py，`halfspaces/contains/clip_polytope` 不自动换算。面方程为 `F@xi+g<=0`；裁剪接口为 `constant+coefficient@xi>=0`。固定 x 的联合割在 xi 中为 `alpha+delta@x+(beta*bounds)@xi>=0`（`Cutting.clip`）。`covered` 先按包围盒筛点再逐行 `contains`，结果与逐行判定相同。`clip_box` 裁到 xi<=1（xi>=0 由锥保证），`cone_clip` 裁到锥 `U⁻¹xi>=0`，`box_vertices` 为分区盒顶点。
 
 ## 径向锥夹逼（R）
 
@@ -79,6 +79,7 @@ SP 固定 x,p 后最小化非负 `eta`（求解器名 violation），只允许�
 | v_{k,i}、Q | `Cone.verts` | `(d,d)`，第 i 行 v_{k,i}=ρ_x̂(u_i)·u_i（xi），即 R^SOCP_x̂ 沿 u_i 的边界点；Q=verts.T |
 | c | `Cone.c` | c=1ᵀQ⁻¹，锥内 xi=Σα_i v_i 时 Σα_i=c@xi |
 | μ_k | `Cone.mu`、`Cone.inherited` | 外界因子：锥 MISOCP 的 ObjBound；未求解时沿用父锥 (c, μ_k) |
+| ξ*、x* | `Cone.point`、`Cone.x_star` | 锥 MISOCP 的解点（kW 幅值，定剖分方向）与解点网架（子锥 x̂ 的候选，进入 X*） |
 | K^IN_k、K^OUT_k | `Cone.halfspace`、`cone_outer` | K^IN_k=conv(0, v_{k,1..d})；K^OUT_k={xi∈K_k: c@xi<=μ_k}∩盒=μ_k·K^IN_k∩盒 ⊇ **R**^SOCP∩K_k |
 | Δ_k | `Radial.delta` | (μ_k^d-1)·vol(K^IN_k)，xi^d |
 | ΣΔ_k/Σvol(K^IN_k) | `Radial.volume_ratio` | 体积缺口比；尚无锥时为 inf |
@@ -86,11 +87,11 @@ SP 固定 x,p 后最小化非负 `eta`（求解器名 violation），只允许�
 
 内域证书 `Radial.inner`：x̂ 原点可行时 K^IN_k ⊆ R^SOCP_x̂；否则需原点可行的 y 在每个生成方向的射线半径不小于 x̂ 的近端半径，K^IN_k ⊆ R^SOCP_x̂ ∪ R^SOCP_y。证书针对 OBBT 紧化 SOCP 模型，K^IN_k 不保证在 **R**^AC 内（松弛残余）。`Radial.vertex` 从原点朝分区盒边界点 `bounds*u/max(u)` 做紧化射线，半径小于 `MIN_RADIUS` 视为没有顶点；`Radial.near` 是从远端朝原点的反向射线。单次射线与原点 SP 的时限不超过 `RAY_SECONDS`。
 
-外界 `cone_misocp`：x 自由的完整 MP（全部选型、拓扑、预算、运行约束），在 xi 上最大化 `objective`；`rows` 给锥约束 `rows@xi>=0` 与分区盒，缺省时为中心射线 xi_1=…=xi_d 并以 no-good 排除 `exclude`。它用行生成，一次分支定界、不枚举方案：模型不预先带紧化行，每找到一个新的现任网架，若其盒约束与反向锥包络行尚不在模型中，先调用 `cone_misocp.tighten`（`Radial.incumbent`：记一步 lazy 并确保该网架已紧化，必要时 OBBT），再把这些行按汉明距离提升后以惰性约束（`GridPhysics._tighten.add` 取 `cbLazy`）加入，分支定界继续。没有行的网架为纯 SOCP，故任何终止状态下的 ObjBound 都是 **R**^SOCP 在该锥上的有效上界；达到 mip_gap 时现任网架都带行。回调中的异常（分区到时、取消）在求解结束后重新抛出。`CONE_CONV_TOL` 是它的 barrier 收敛容差。返回 `status/bound/x/point`（point 为 kW 幅值），尚无界时 bound=inf。`Radial.misocp` 即一次 `cone_misocp`：单次时限 `settings.mip_seconds`，相对间隙 `settings.mip_gap`；中心射线求解用 mip_gap=0。
+外界 `cone_misocp`：x 自由的完整 MP（全部选型、拓扑、预算、运行约束），在 xi 上最大化 `objective`；`rows` 给锥约束 `rows@xi>=0`，分区盒总在；中心射线写成成对的不等式行 ±(e_1−e_j)/√2；no-good 排除 `exclude`。它用行生成，一次分支定界、不枚举方案：模型不预先带紧化行，每找到一个新的现任网架，若其盒约束与反向锥包络行尚不在模型中，先调用 `cone_misocp.tighten`（`Radial.incumbent`：记一步 lazy 并确保该网架已紧化，必要时 OBBT），再把这些行按汉明距离提升后以惰性约束（`GridPhysics._tighten.add` 取 `cbLazy`）加入，分支定界继续。没有行的网架为纯 SOCP，故任何终止状态下的 ObjBound 都是 **R**^SOCP 在该锥上的有效上界；达到 mip_gap 时现任网架都带行。回调中的异常（分区到时、取消）在求解结束后重新抛出。`CONE_CONV_TOL` 是它的 barrier 收敛容差。返回 `status/bound/x/point`（point 为 kW 幅值），尚无界时 bound=inf。`Radial.misocp` 即一次 `cone_misocp`：单次时限 `settings.mip_seconds`，相对间隙由调用方给出（锥用 `settings.mip_gap`，中心射线用 0）。
 
 初始网架 `Radial.initial`：中心射线 MISOCP 的胜出网架（行生成保证已紧化）原点不可行时以 no-good 排除后重解。
 
-`Radial.run(epsilon, check)` 用体积准则细分：每次取 Δ_k 最大的锥，ΣΔ_k<=ε·Σvol(K^IN_k) 或 `check()` 成立即 certified。`Radial.options` 给候选剖分：解点方向的锥坐标 λ 全部 >= `SPLIT_MARGIN` 时星形剖分；三维恰有一个 λ 偏小时在对边上按 λ 投影二分；最后总有最长棱中点二分。`Radial.split` 的子锥 x̂ 取 {父 x̂, 解的方案, 父覆盖网架} 中证书成立、半径乘积最大者。锥角直径小于 `settings.min_width`、叶锥数达到 `settings.max_cones` 或没有内域证书的锥记 unresolved，不再细分。`Cone.status` 为 pending / bounded / unresolved；`Radial.run` 返回 certified / unresolved / time_limit，可续跑，阶段时限到达抛出 RegionTimeout 后保留已得证书。`Radial.schemes` 是 X*，即可能改变 **I** 的网架：先取叶锥的 x̂（按所占锥体积从大到小），再接各叶锥的覆盖网架与锥 MISOCP 解点网架（按所在锥的 Δ_k 从大到小）；只做过 OBBT 或原点测试的网架不在其中。
+`Radial.run(epsilon, check)` 用体积准则细分：每次取 Δ_k 最大的锥，ΣΔ_k<=ε·Σvol(K^IN_k) 或 `check()` 成立即 certified。`Radial.options` 给候选剖分：解点方向的锥坐标 λ 全部 >= `SPLIT_MARGIN` 时星形剖分；三维恰有一个 λ 偏小时在对边上按 λ 投影二分；最后总有最长棱中点二分。`Radial.split` 的子锥 x̂ 取 {父 x̂, 解的方案 `Cone.x_star`, 父覆盖网架} 中证书成立、半径乘积最大者；剖分方向取自解点 `Cone.point`。锥角直径小于 `settings.min_width`、叶锥数达到 `settings.max_cones` 或没有内域证书的锥记 unresolved，不再细分。`Cone.status` 为 pending / bounded / unresolved；`Radial.run` 返回 certified / unresolved / time_limit，可续跑，阶段时限到达抛出 RegionTimeout 后保留已得证书。`Radial.schemes` 是 X*，即可能改变 **I** 的网架：先取叶锥的 x̂（按所占锥体积从大到小），再接各叶锥的覆盖网架与锥 MISOCP 解点网架（按所在锥的 Δ_k 从大到小）；只做过 OBBT 或原点测试的网架不在其中。
 
 ## 逐网架割平面（CUT）
 
@@ -99,15 +100,15 @@ SP 固定 x,p 后最小化非负 `eta`（求解器名 violation），只允许�
 | N^CUT_x | `Cutting.networks`（方案 → `Cutting.cut:vertices` / `Cutting.cut:status` / `Cutting.cut:version`） | 固定方案 x 的割平面多面体（xi）：conv(**K**^OUT)∩盒被分区内共享的联合割裁剪，N^CUT_x ⊇ R^SOCP_x；version 在其他网架的新割裁剪它时加一 |
 | 共享割 | `Cutting.cuts`、`Cutting.count` | 布局 `[alpha, *beta, *delta]`，beta 作用于幅值 u（kW）；count 为分区内割序号 |
 | area_ratio | `Cutting.cut.history` | 每次割掉的体积 / 割前 vol(N^CUT_x) |
-| threshold、patience | `settings.threshold / settings.patience`，`stagnated` | 连续 patience 次 area_ratio < threshold 即停滞；等于 threshold 不算小割 |
+| threshold、patience | `settings.threshold / settings.patience`，`trailing_small_cuts` | 末尾连续小割（area_ratio < threshold）的次数达到 patience 即停滞；等于 threshold 不算小割 |
 | point_tol | `settings.point_tol`，`register_power` | kW 最大坐标差内视为同一 SP 评分点，不移动代表点 |
-| 计入内域的状态 | `CUT_ACCEPTED` | stagnated / exact / empty；empty 即 N^CUT_x=∅ |
+| 计入内域的状态 | `CUT_ACCEPTED`（monitor.py，构域与回放共用） | stagnated / exact / empty；empty 即 N^CUT_x=∅ |
 | 夹逼间隙 | `Cutting.gap`、`Cutting.measures`、`Cutting.epsilon` | vol(**K**^OUT)/vol(**I**)-1（**I** 为空时 inf）；sandwich 的逐锥测度缓存；ε=d·tau |
 | 不再割的网架 | `Cutting.declined`、`GAP_SHARE` | 某轮 CUT 中一个网架使间隙下降不足 GAP_SHARE·ε 时，本轮其余网架记入 declined |
 
-`Cutting.cut` 的一次循环：N^CUT_x 从 conv(**K**^OUT)∩盒出发（**K**^OUT ⊇ **R**^SOCP ⊇ R^SOCP_x，割的有效性不变），先被已有割裁剪；SP（固定 x，带该网架的 OBBT 盒与包络行，`score_only=True`）为 N^CUT_x 的每个顶点评分，η 最大的待割顶点由 `generate_cut` 取联合割裁剪 N^CUT_x，直到停滞（stagnated）、全部顶点可行（exact）或 N^CUT_x 为空（empty）。其余终态不计入内域：时间片用完（slice）、该点数值失败（failed）、顶点都已取过割却仍不可行（point_resolution）、本轮未及开始（skipped，下一轮重试）。`cache/powers/applied/failed/fresh` 是该循环的局部状态：SP 答案缓存、评分点代表、已取割的点、数值失败的点、本循环的新割。循环结束后新割裁剪本分区其他网架的 N^CUT_x（割对全部可行点有效）。
+`Cutting.cut` 的一次循环：N^CUT_x 从 conv(**K**^OUT)∩盒出发（**K**^OUT ⊇ **R**^SOCP ⊇ R^SOCP_x，割的有效性不变），先被已有割裁剪；SP（固定 x，带该网架的 OBBT 盒与包络行，`score_only=True`）为 N^CUT_x 的每个顶点评分，η 最大的待割顶点由 `generate_cut` 取联合割裁剪 N^CUT_x，直到停滞（stagnated）、全部顶点可行（exact）或 N^CUT_x 为空（empty，零体积即空）。其余终态不计入内域：时间片用完（slice）、该点数值失败（failed）、顶点都已取过割却仍不可行（point_resolution）。`points/verdicts/answers/history/fresh` 是该循环的局部状态：评分点代表（kW）、各点的判定（feasible / pending / applied / failed）、各点的 SP 结果、各次割的体积缩减比例、本网架的新割。循环结束后 `Cutting.share` 用新割裁剪本分区其他网架的 N^CUT_x（割对全部可行点有效）。
 
-`Cutting.run` 是一轮 CUT：间隙已达 ε 时不割；否则未割过或上轮 skipped、且不在 declined 中的网架按 X* 次序排队，每割完一个求 `Cutting.gap`，已达 ε 或降幅不足 `GAP_SHARE`·ε 即结束本轮，本轮其余网架记入 declined、之后不再割。本轮最多用分区剩余时间的 `PASS_SHARE`，单个网架不超过 `CUT_SECONDS`；`CutSlice` 表示一个网架的时间片用完。N^CUT_x 是 R^SOCP_x 的外近似，RCUT 把停滞的 N^CUT_x 当作该网架的可行域，不作内域认证。
+`Cutting.run` 是一轮 CUT：间隙已达 ε 时不割；否则未割过、且不在 declined 中的网架按 X* 次序排队，每割完一个求 `Cutting.gap`，已达 ε 或降幅不足 `GAP_SHARE`·ε 即结束本轮，本轮其余网架记入 declined、之后不再割。本轮最多用分区剩余时间的 `PASS_SHARE`，单个网架不超过 `CUT_SECONDS`，本轮时限到时其余网架留到下一轮；`CutSlice` 表示一个网架的时间片用完。N^CUT_x 是 R^SOCP_x 的外近似，RCUT 把停滞的 N^CUT_x 当作该网架的可行域，不作内域认证。
 
 结果内域 **I**=(**K**^IN ∪ **N**^CUT)∩**K**^OUT，`sandwich` 返回 (vol(**I**), vol(**K**^OUT))，单位 xi^d：二维为 shapely 并集；三维按叶锥分解（叶锥内部互不相交），每锥的并集体积按 (锥几何, 相交 N^CUT_x 的版本键 `Cutting.sets`) 缓存，并集数值失败时只计 K^IN_k（内域只会低估）。`piece` 是 N^CUT_x 与 K^OUT_k 之交，零体积时为空。分区认证 `build_partition.certified`：vol(**K**^OUT)-vol(**I**)<=ε·vol(**I**)，ε=d·tau；或锥部分自身满足 ΣΔ_k<=ε·Σvol(K^IN_k)。
 
@@ -148,15 +149,15 @@ SP 固定 x,p 后最小化非负 `eta`（求解器名 violation），只允许�
 | `build_partition:cones / networks / accepted / cuts` | 叶锥数；做过 CUT 的网架数；其中计入内域的数目；割数 |
 | `build_partition:inner / outer` | **I** 的块（各 K^IN_k 与按锥裁到 K^OUT_k 的 N^CUT_x）与 **K**^OUT 的块（各 K^OUT_k，尚无锥时为分区盒）的顶点，kW 幅值 |
 
-`build_region` 为每个分区起一个 spawn 子进程（`_partition`），并发数 min(`workers`, 2^d)，`settings.workers=workers`；OBBT 的线程数为 workers // 仍在计算的分区数，计数由主进程在通道中维护（提交分区时加一、收到结束标记时减一），子进程经 `RunMonitor.running` 读取，主进程内直接构域时为 1；后启动的分区得到剩余时间按并发比例的份额，总时限为 `seconds`。子进程的 `RunMonitor(sign=...)` 经 `_connect` 设置的通道发送事件，主进程 `RunMonitor.share` 建立通道、`RunMonitor.forward` 转发、`RunMonitor.close` 发送结束标记；主进程中断时置取消信号并读空队列。结果 `inner/outer` 为带符号 kW 的 `[dict(vertices, sign)]`，`build_region:axis_lower/axis_bounds` 为外域顶点的范围，`build_region:partitions` 为各分区摘要（去掉 inner/outer），另含 status/certified/timing。
+`build_region` 为每个分区起一个 spawn 子进程（`_partition`），并发数 min(`settings.workers`, 2^d)（main 构造 settings 时放入 WORKERS）；OBBT 的线程数为 settings.workers // 仍在计算的分区数，计数由主进程在通道中维护（提交分区时加一、收到结束标记时减一），子进程经 `RunMonitor.running` 读取，主进程内直接构域时为 1；后启动的分区得到剩余时间按并发比例的份额，总时限为 `seconds`。子进程的 `RunMonitor(sign=...)` 经 `_connect` 设置的通道 `Channel`（events / pause / step / cancel / running）发送事件，主进程 `RunMonitor.share` 建立通道、`RunMonitor.forward` 转发、`RunMonitor.close` 发送结束标记；主进程中断时置取消信号并读空队列。结果 `inner/outer` 为带符号 kW 的 `[dict(vertices, sign)]`，`build_region:axis_lower/axis_bounds` 为外域顶点的范围，`build_region:partitions` 为各分区摘要（去掉 inner/outer），另含 status/certified/timing。
 
 ## 独立扫描、结果与回放
 
-`vertify.py` 是独立 AC/SOCP 扫描入口。`ac_network` 复制完整配置，不删除限流。`budget_schemes` 仅供小算例独立 AC 参考的拓扑审计，构域不调用它。AC 单树只提供可行见证；全拓扑必要条件排除或完整 AC 不可行证书才给负标签。迭代失败、超时和未知均不可当作不可行：`scan_line` 中求解失败、超时或可行解质量超过 `SCAN_TOL` 的点保持未决（0），扫描继续。`SCAN_TOL`（1e-6，Gurobi 默认可行性容差）是扫描接受可行解的质量门槛：SOCP 为 MaxVio+η，AC 另用潮流方程复核残差与运行界（`MasterProblem.solve.tolerance` 传入同一门槛）；不可行判定（η 的下界超过 PLANNING_TOL、已证不可行）不变。它只决定原先给不出标签的点，已有标签不变，故不进入缓存身份。
+`vertify.py` 是独立 AC/SOCP 扫描库（命令行入口为 `main.py --validate`）。`budget_schemes(network, budget)` 给出预算内全部根向树方案，供 AC 见证与必要区间使用，构域不调用它。AC 单树只提供可行见证；全拓扑必要条件排除或完整 AC 不可行证书才给负标签。迭代失败、超时和未知均不可当作不可行：`scan_line` 中求解失败（`SolveFailure`）、超时或可行解质量超过 `SCAN_TOL` 的点保持未决（0），扫描继续。`SCAN_TOL`（1e-6，Gurobi 默认可行性容差）是扫描接受可行解的质量门槛：SOCP 为 MaxVio+η，AC 另用潮流方程复核残差与运行界（`MasterProblem.solve.tolerance` 传入同一门槛）；不可行判定（η 的下界超过 PLANNING_TOL、已证不可行）不变。它只决定原先给不出标签的点，已有标签不变，故不进入缓存身份。
 
 `ACPowerFlow` 接收运行树，state(power,ell) 返回 `(P,Q,v,u)`，均为 `(batch,n_tree)`，v/u 为受端/送端电压平方。内部 `_state.p/q` 是节点标幺负荷；AC 残差为 `P²+Q²-u*ell`。
 
-`AC_CACHE_METHOD=ac_socp_grid_v4`，`ac_identity` 包含物理参数、ell_limit、模式、功率因数、有序节点和预算，不含构域 tau、时间和线程。`reference_box` 用同配置完整 SOCP 的方向全局上界覆盖两种参考。`scan_problem/scan_line` 逐点独立求解；SOCP 固定点使用 eta 目标，接受与排除依赖原门槛；AC 不读取 SOCP 标签。`main.run` 的扫描框为 reference_box 与结果外域范围的并。
+`AC_CACHE_METHOD=ac_socp_grid_v4`，`ac_identity` 包含物理参数、ell_limit、模式、功率因数、有序节点和预算，不含构域 tau、时间和线程。`reference_box` 用同配置完整 SOCP 的方向全局上界覆盖两种参考。`scan_problem/scan_line` 逐点独立求解；SOCP 固定点为 `MasterProblem.__init__.relaxed` 的 η 目标（与 SP 同一 `add_operation` 松弛），接受与排除依赖原门槛；AC 把 `current_cones` 改为等式、只求可行，不读取 SOCP 标签。`reference_grid` 给出覆盖构域结果的配对参考网格，扫描框为 reference_box 与结果外域范围的并；每轴格数 `main.SCAN_DIVISIONS` 只在该配置首次扫描时决定格距，之后沿用缓存的格架。
 
 | 缓存字段 | 固定含义 |
 |---|---|
@@ -167,9 +168,9 @@ SP 固定 x,p 后最小化非负 `eta`（求解器名 violation），只允许�
 | `1 / -1 / 0` | 可行 / 已证不可行 / 未决；未决格不计入对应参考的误差率，另计格数 |
 | `cache_path` | 实际 NPZ 路径；归档记录可使用相对项目根目录的路径 |
 
-`scan_path` 给出 `results/scan/<网络>/<节点>/<身份>/`，`region_path` 由 origin/step/start/shape 生成区域摘要。扩界保留格点，部分覆盖只补算缺点；AC/SOCP 分别补零标签。`import_ac_reference` 仅接受同版本同身份数据。`force_rescan` 先备份；主进程每 `SAVE_SECONDS` 至多原子落盘一次，结束或中断时必落盘，独占锁避免并发覆盖。
+`scan_path` 给出 `results/scan/<网络>/<节点>/<身份>/`，`region_path` 由 origin/step/start/shape 生成区域摘要。缓存目录中同坐标的已有格点直接复用，同坐标标签冲突时报错、不静默合并；扩界沿用最新缓存的格架并保留格点，部分覆盖只补算缺点；AC/SOCP 分别补零标签。主进程每 `SAVE_SECONDS` 至多原子落盘一次，结束或中断时必落盘，独占锁避免并发覆盖。
 
-`RunMonitor.validation` 只接受配对的 AC/SOCP 参考：比较使用最终 inner 作为计算域，另保留 outer 指标；未决格不计入，`RunMonitor.validation:undecided_cells / socp_undecided_cells` 为 AC/SOCP 未决格数，`RunMonitor.validation:computed_states` 为内域在格心上的掩码。`comparison_metrics` 的 MR=`missed/reference`、FR=`extra/computed`，百分数，空分母 None；同时保留 missed_cells/extra_cells/reference_cells/computed_cells。`comparisons` 键为 result_ac/result_socp/socp_ac。导出版本 paired_scan_v2，NPZ 的 power 为 `(N,d)` kW，ac_states/socp_states/inner/outer 对应同坐标；CSV 标签列为 ac_state/socp_state。网格误差不是连续体积证明。RCUT 的 **I** 含 **N**^CUT 外近似，相对 AC 的 FR 是外侧估计误差。
+`grid_comparison(reference, result)` 是格心上的纯计算，返回 inner、outer 掩码、metrics、comparisons 与两种参考的未决格数；`RunMonitor.validation` 把它与参考的来源字段记入回放并返回它，`export_comparison` 复用其掩码与指标，导出到记录旁的 `<记录名>_comparison/`。只接受配对的 AC/SOCP 参考（字段同 `scan_ac_reference` 的结果）：比较使用最终 inner 作为计算域，另保留 outer 指标；未决格不计入，`RunMonitor.validation:undecided_cells / socp_undecided_cells` 为 AC/SOCP 未决格数，`RunMonitor.validation:computed_states` 为内域在格心上的掩码。`comparison_metrics` 的 MR=`missed/reference`、FR=`extra/computed`，百分数，空分母 None；同时保留 missed_cells/extra_cells/reference_cells/computed_cells。`comparisons` 键为 result_ac/result_socp/socp_ac。导出版本 paired_scan_v2，NPZ 的 power 为 `(N,d)` kW，ac_states/socp_states/inner/outer 对应同坐标；CSV 标签列为 ac_state/socp_state。网格误差不是连续体积证明。RCUT 的 **I** 含 **N**^CUT 外近似，相对 AC 的 FR 是外侧估计误差。
 
 回放 version=4：history 保存增量过程，validation_state 保存最终扫描。子进程事件为 phase_start、step、cone、network、point、cut、partition_end，主进程另有 start、region_end；N^CUT_x 每个顶点的 SP 评分是一个 point 帧，取割是一个 cut 帧；η、可行与否、割掉比例与连续小割数都在 step 中。`RunMonitor.frame` 从每 `FRAME_STRIDE` 帧一份的快照 `RunMonitor.snapshots` 向后合并。`MERGED` 中的 schemes/cones/cut_history 按键增量合并，键带分区前缀 `<分区>:`（如 `+-:3`），坐标在 `signed_values` 中乘 sign：
 
@@ -183,7 +184,7 @@ SP 固定 x,p 后最小化非负 `eta`（求解器名 violation），只允许�
 
 判据步（check）与分区结束步（end）另带数值 `gap`（夹逼间隙，**I** 为空时为 null）。每次求解或判定在其完成时记为一帧的 `step`（`Radial.step:kind / text`，几何为 kW 幅值的点 `p` 与折线 `vertices`、点所属网架 `scheme`，`forward` 乘 sign 并给 scheme 加分区前缀；`step` 不在 MERGED 中，帧状态保留最近一次）。kind 依流程为：center（中心射线 MISOCP，max Σξ）、obbt、origin（p=0 的 SP）、ray（射线 max t，线段 0→v）、near（反向射线，线段远端→近端）、root（根锥 K_0）、cone（锥 MISOCP max c·ξ，点为解点 ξ*，折线为 K^OUT_k 的远端面 μ_k·v_{k,i}，`Radial.far_face`）、lazy（行生成：分支定界的新现任网架尚无紧化行，附当前上界与现任点，随后确保紧化并以惰性约束加入）、split（细分 Δ_k 最大的锥）、network（开始割网架 x）、sp（顶点评分 min η，附 feasible）、cut（取割）、network_end、check（夹逼判据）、end（分区结束）。
 
-收敛过程：`convergence` 由一份回放与其校验扫描网格求各分区夹逼间隙随时间（分区尚无计入 **I** 的 N^CUT_x 时 **I**=**K**^IN，由锥行体积直接求；之后取判据步的 gap），以及全部分区内域相对 AC 的 MR/FR 随时间（按 `CONVERGENCE_SAMPLES` 个等分时刻采样，只重算变化过的分区），返回 `convergence:time / mr / fr / gaps / ends`。`draw_convergence` 把多次运行画在同一张图上，`main.py --convergence 记录…`（`convergence_figure`）输出 `<案例>_<节点>_convergence.png` 到各运行目录的公共上级。
+收敛过程：`convergence` 由一份记录求各分区夹逼间隙随时间（分区尚无计入 **I** 的 N^CUT_x 时 **I**=**K**^IN，由锥行体积直接求；之后取判据步的 gap），以及全部分区内域相对 AC 的 MR/FR 随时间（扫描网格取记录中校验所用的网格；按 `CONVERGENCE_SAMPLES` 个等分时刻采样，只重算变化过的分区；每个多面体覆盖哪些格点只判定一次，且按格架只判定其包围盒内的格点；锥体积每行只算一次），返回 `convergence:time / mr / fr / gaps / ends`。`draw_convergence` 画单次运行的收敛过程图（间隙虚线为 ε=d·tau，图例为获证分区数、最慢分区结束时刻与最终内域 MR/FR），存为 `<输出目录>/<案例>_<节点>_convergence.png`（记录在 `<输出目录>/mode_1/`）。`main.main` 在窗口关闭后画，`main.py --validate 记录` 在校验后重画。
 
 窗口：A 是全部分区的全局总图，坐标 `NativeWindow.limits` 由 `NativeWindow._fit_limits` 取最新帧全部 K^OUT_k 的范围（两侧各 10%；可勾选取整个分区盒）；回放时即最终外界、全程不变，实时运行中只在内容超出或某一维缩到范围的 `FIT_SHRINK` 以下时重设。网架面板取其中本分区所在的卦限，新网架追加在末页、默认不跟随当前网架。`NativeWindow._draw_steps` 在 A 上画所选分区最近 `STEP_TRAIL` 个步骤（plot.py 的 `STEP_STYLE` 给标记、颜色与短标签；坐标外的点贴边画空心），网架面板只画当前步骤中属于本网架的点，并描出当前帧新建或求界的锥与切割中的 N^CUT_x；步骤栏列出 `STEP_LOG` 行，点击跳转。“逐步跟踪”选定分区后，上一步/下一步、上一割/下一割与播放只停在该分区的帧（`NativeWindow.frame_meta` 记各帧的分区、事件与是否步骤）。校验面板是逐格对比：参考可行格为浅色（三维画其表面），遗漏格红色、多余格橙色，可在计算域—AC、计算域—SOCP、SOCP—AC 之间切换。仅当前帧之前的锥、网架、割与点出现在过程图；最终扫描独立显示。result 包含 status/certified/inner/outer/partitions/timing，分区证书在 partition_end；数值未决和时限未完不能改成 certified。JSON 非有限值为 null，仅预算 null 可按 inf 解释。
 
@@ -200,7 +201,7 @@ SP 固定 x,p 后最小化非负 `eta`（求解器名 violation），只允许�
 | `CONE_CONV_TOL` | 1e-6；锥 MISOCP 的 barrier 收敛容差 |
 | `AC_TOL / FIXED_POINT_TOL / SCAN_TOL` | 1e-9 / 1e-12 / 1e-6；SCAN_TOL 只用于参考扫描接受可行解 |
 | `REGION_TAU` | 0.005；体积目标 ε=d·tau，不是物理容差 |
-| `NETWORK / DIMENSION / mode` | Case33 / 3 / 1 |
+| `CASE / DIMENSION` | case33 / 3 |
 | `CASE_TIME_LIMIT / WORKERS / SOLVER_THREADS` | 300 秒 / 16 / 1；总时限不含事后扫描 |
 | `DISCOVERY_EPS / DISCOVERY_SHARE` | 0.15 / 0.25 |
 | `MIP_SECONDS / MIP_GAP` | 60 秒 / 1e-3 |
@@ -209,11 +210,80 @@ SP 固定 x,p 后最小化非负 `eta`（求解器名 violation），只允许�
 | `CUT_THRESHOLD / CUT_PATIENCE / POINT_TOL` | 0.01 / 3 / 0.01 kW |
 | `CUT_SECONDS / PASS_SHARE` | 30 秒 / 0.75 |
 | `GAP_SHARE` | 0.1；一轮 CUT 的间隙降幅门槛（乘 ε） |
-| `DIVISIONS / SCAN_DIVISIONS / SCAN_WORKERS / SAVE_SECONDS` | 160 / {2:160,3:80} / 20 / 30 秒；每扫描进程一个求解线程 |
+| `SCAN_DIVISIONS / SCAN_WORKERS / SAVE_SECONDS` | {2:160,3:80} / 20 / 30 秒；格数只在某配置首次扫描时决定格距，每扫描进程一个求解线程 |
 | `FRAME_STRIDE` | 64 帧；回放状态快照间隔 |
 | `STEP_TRAIL / STEP_LOG / FIT_SHRINK` | 6 / 8 / 0.6；主图保留的步骤数、步骤栏行数、主图收紧坐标的比例 |
 
-单次 MP/SP 的时限仍用 MP_TIME_LIMIT/SP_TIME_LIMIT，扫描单点 60 秒；AC_ITERATIONS 为 AC 见证的迭代次数。不得合并不同语义的容差。数值配置变化须同步本表和结果协议。
+单次 MP/SP 的时限为 MP_TIME_LIMIT / SP_TIME_LIMIT（20 / 10 秒），扫描单点 60 秒；AC_ITERATIONS 为 AC 见证的迭代次数。不得合并不同语义的容差。数值配置变化须同步本表和结果协议。
+
+## 显式迁移（2026-10-03：region.py 精炼）
+
+- `cone_outer` 返回 K^OUT_k∩盒（原为未裁盒，四处调用方各自再裁），与原先的裁盒结果逐位相同。`piece` 与 `Cutting.sets` 不再单独防护空集：裁剪与测度本身处理空集与零体积。
+- `stagnated(history, threshold, patience)` 改为 `trailing_small_cuts(history, threshold)`：末尾连续小割的次数，停滞即它 >= patience；回放中“连续小割”的显示与停滞规则用同一个数。
+- `Cone.c` 由每次访问都解方程的 property 改为构造时算一次的字段。子锥求解前沿用父锥的 `halfspace()`：父锥未求得外界（锥 MISOCP 无界）时沿用父锥自身沿用的外界（原为不沿用；该外界对子锥仍有效，且更紧）。
+- `build_region(network, *, budget, monitor, seconds, settings)`：并发进程数取 `settings.workers`（main 构造 settings 时放入 WORKERS），删去 workers 参数及函数内对 settings 的写入。
+- 网架状态：本轮 CUT 时限到时，其余网架不再记为 skipped（原先带着整个盒子进入 `Cutting.networks`，被其他网架的新割裁剪并显示，却从未割过），下一轮照常排队；`build_partition:networks` 只计实际割过的网架。N^CUT_x 零体积即记 empty（原先只在没有顶点时记 empty）。
+- 割循环 `Cutting.cut`：评分点的判定合为一个字典（feasible / pending / applied / failed），SP 结果一个字典；新割裁剪其他网架并记录终态提为 `Cutting.share`，时间片的剩余时间为 `Cutting.slice_time`，割平面阶段的帧经 `Cutting.emit`。`Radial.solved` 改名 `Radial.attempt`；只检查时限处用 `Radial.check_deadline`；夹角最大的棱由 `Radial.widest_edge` 给出（棱中点剖分与锥角直径共用）。
+- 验证：新旧 `cone_outer` / `piece` / `sandwich` 在随机二维、三维输入（含空集与退化集）上逐位相同；Case33 与 Case33Plan 二维重跑，各 4 个分区的摘要字段（除耗时）、内外域顶点与 MR/FR 均与归档相同。
+
+## 显式迁移（2026-10-03：物理模型合一）
+
+- 物理：`PortPhysics` 并入 `GridPhysics(network, sign)`，主线只有符号分区这一套物理。原不分符号的 `GridPhysics(network)`（网络自带的逐节点功率因数、根部走廊不反送）在主线上没有调用方，只剩测试在用，随之删除；`PortPhysics.sign` 改为 `GridPhysics.sign`。运行量的全局界只算一次（原子类先让父类算一遍再整体覆盖）；根部走廊的反送约束仍排在紧化行之后，约束顺序不变。
+- SP：`PortSubProblem` 并入 `SubProblem`。电流限额全有限的网架用 Gurobi 解 SOCP，否则由 `SubProblem._solve_conic` 交给 Clarabel；后者的 Gurobi 容器模型名由 port_SP 改为 planning_SP。
+- 求解参数：分区的数值设置（BarHomogeneous=1、Aggregate=0、Case33 的 ScaleFlag=1）由 `add_operation` 移到 `GridPhysics.new_model`，MP、SP、取割 LP、OBBT 与射线都经它建模；SP 的 BarQCPConvTol（已紧化方案 `OBBT_CONV_TOL`，否则 1e-9）在 `SubProblem._build` 一处给出；`add_operation` 只装配变量与约束。
+- `MasterProblem.choices` 删除（无读取方）。常量 `LOAD_PF / PV_PF / PV_Q_SIGN / RAY_CONE_MARGIN` 移到 model.py 顶部；`solve_conic` 中 Case33 的锥缩放系数只算一次。
+- 测试：原用不分符号物理的测试改用全为 +1 的 sign；`margin` 对各走廊都复核反送约束；需要 Gurobi SP 路径的测试用 `finite_limits`（给全部型号加一个不起作用的有限电流限额）。`test_positive_support_matches_original_model` 删除：它的比较对象（不分符号的原模型）已不存在，固定网架与独立参考的比较由 test_four_bus 覆盖；`test_sp_objective_matches_original_solver` 改为 `test_gurobi_and_clarabel_sp_agree`，在同一物理上比较两条 SP 路径。
+- 验证：在 FourBus（二维三种符号、三维）、Case33（二维两种符号、三维）、Case33Plan 二维与无限额 Case33 共 9 个场景上，逐项比对主线各类模型交给求解器的变量、线性与二次约束、目标和生效参数（MP、锥 MISOCP、扫描的 SOCP 定点 / AC / 坐标支撑、SP 未紧化与已紧化、取割 LP、两轮 OBBT、射线，共 99 个）。除射线容器模型的 BarQCPConvTol（射线由 Clarabel 求解，不读 Gurobi 参数）与 Clarabel SP 容器的模型名外全部相同。
+
+## 显式迁移（2026-10-03：主线三步）
+
+主线为三步：1 参数；2 构域 → 扫描校验（窗口实时显示）；3 收敛过程图。
+
+- 参数：`main.NETWORK`（网架类）改为 `main.CASE`（算例键 fourbus / case33 / case33plan），`default_case` 删除；`main.CASES` 第一列由网架类改为网架构造（Case33 系列为带 `CURRENT_LIMIT` 的 partial），`network_for` 删除；`main.FORCE_RESCAN` 删除。
+- 流程：`main.run` 并入 `main.main(case, dimension, *, seconds, output, show)`：构域 → 保存记录 → `validate` → 窗口关闭后画收敛过程图；load_nodes、divisions、scan、reference、force_rescan 参数删除。`main.validate(monitor)` 只取记录，扫描设置取 `SCAN_OUTPUT / SCAN_DIVISIONS / SCAN_WORKERS`，总是导出到记录旁并返回摘要。`recording_path`、`comparison_dir` 删除：记录路径在 `main.main` 中给出，对比目录由 `export_comparison` 按记录路径决定（最后一个参数由输出目录改为记录路径），收敛过程图的路径由 `draw_convergence` 决定。
+- 收敛过程图：`main.convergence_figure` 与 `vertify.convergence_runs` 删除，多次运行叠图不再有入口。`vertify.convergence(monitor)` 去掉 grid 与 samples 参数，网格取记录中的校验网格；四份归档记录的校验网格与其缓存逐格相同，收敛曲线与原按缓存求得的逐点相同。原写法 `volumes.setdefault(..., (polytope_volume(...), ...))` 每帧都重算全部锥体积，覆盖判定逐个扫描整个卦限；现在锥体积每行只算一次，覆盖判定按格架只取包围盒内的格点，三维由 455 秒、553 秒降到 18 秒、20 秒。`plot.draw_convergence(curves, epsilon, recording)` 只画单次运行，存于 `<输出目录>/<案例>_<节点>_convergence.png`，不再改动 matplotlib 的全局设置。
+- 扫描：`reference_grid` 与 `scan_ac_reference` 去掉 imported、force_rescan、refinement；`import_ac_reference`、`recorded_cache` 删除；缓存元数据不再写 imported_sources（旧缓存中的该键被忽略）。
+- 命令行：只剩 `--case / --dimension / --seconds / --output / --no-ui` 与 `--validate 记录`；`--load-nodes`、`--replay`（回放用 `monitor.py 记录`）、`--no-scan`、`--divisions`、`--reference`、`--force-rescan`、`--refine`、`--convergence` 删除。
+- 构域、扫描与对比的数值不变。
+
+## 显式迁移（2026-10-03：构域与校验分开）
+
+- `main.run(monitor, network, *, budget, ...)` 只做构域：结果与过程记入传入的记录并保存，不再带扫描参数，也不再自己开窗口会话。
+- `main.validate(monitor, *, divisions, refinement, reference, force_rescan, ...)` 只读记录：从记录取网架名与节点、预算和构域结果，按算例表重建网架，扫描覆盖结果外域范围的参考网格，对比写回记录，记录有文件路径时在旁导出；divisions 缺省按记录的维数取 `SCAN_DIVISIONS`。
+- `main.main` 编排一次运行：先 `run`，需要校验时再对同一份记录 `validate`，窗口实时显示构域，最后在对比面板呈现结果；构域失败时不进入校验。
+- `main.revalidate` 删除：`--validate 记录` 读入记录、调用 `validate`、保存；`--reference` 现在也可与 `--validate` 同用。
+
+## 显式迁移（2026-10-03：main.py 只留参数与编排）
+
+- `main.archived_cache` 移入 vertify.py，为 `recorded_cache(source, root)`；项目根目录由调用方传入。
+- `main.validate` 中的缓存步骤（定位缓存目录、导入外部缓存、SOCP 坐标界、扫描框取并集、扫描）合为 `reference_grid`；main 只决定是否导入，再取网格、对比与导出。对比目录约定提为 `comparison_dir`。
+- `main.convergence_figure` 中读记录与缓存、算收敛过程与图例的部分移入 `convergence_runs`，返回各次运行的曲线与维数 d；main 只决定输出路径与 ε=d·tau。
+- 计算行为不变；归档参考路径的测试改为替换 vertify 中的缓存函数。
+
+## 显式迁移（2026-10-03：登记范围收窄）
+
+只改登记与名称检查，代码不变。
+
+- 规则：登记只覆盖数学量与数值设置、持久化与结果格式的键、公开的函数与类。`tests.test_notation` 为每个名字记录类别，拒绝登记形参、函数内局部量（含嵌套函数）与下划线开头的私有名；`SimpleNamespace(...)` 的关键字与 `dict(...)` 一样识别为记录键。
+- 移出登记（代码不变）：全部形参与局部量，如 `Cutting.cut.history`、`MasterProblem.__init__.f`、`build_partition.certified`、`run.settings`；私有名，如 `_connect`、`GridPhysics._tighten`、`SubProblem._separating_cut`、`_clip_face`；只服务界面、进程通道或缓存的名字 `RunMonitor.label / channel / shared / snapshots`、`NativeWindow.limits / frame_meta`、`ALL_PARTITIONS`、`Cutting.measures`；绘图常量 `STEP_STYLE / SERIES`、`OBBT_PARAMS`；割循环的内部状态键 `Cutting.cut:vertices / status / version`；测试辅助函数。
+- 改为在写出格式的函数下登记：运行状态的具名视图 `GridPhysics.add_operation:P / Q / ell / v / plus / minus / state / cones / current_cones`（原登记为局部量），射线结果 `ray_support:p / ray_fraction`，扫描缓存字段 `_empty_ac_grid:axis_lower / bounds / origin / step / start / states / witness_x / residual / socp_states / socp_witness_x / socp_residual / metadata / identity` 与 `scan_ac_reference:cache_path / scan_seconds / reused_points / computed_points`（原以局部量 `scan_ac_reference.origin` 等代表），回放文件顶层键 `RunMonitor.save:version / history / validation_state`（原登记属性 `RunMonitor.validation_state`）。
+- 改名：rename 工具不可用时按 AGENTS.md 的手工流程改名；实现细节的重构不再写迁移。
+
+## 显式迁移（2026-10-03：主线精炼——几何模块、单一物理模型与去冗余接口）
+
+接口与结果格式的变化如下；数学模型、容差、缓存身份与回放 version=4 不变（四个归档算例的扫描身份逐位相同，既有缓存继续复用）。
+
+- 模块：凸多面体几何移入新模块 geometry.py（`GEOMETRY_TOL`、`polytope_vertices`、`halfspaces`、`contains`、`covered`、`clip_polytope`、`polytope_volume`、`polygon_union`、`_clip_face`、`union_volume`、`union_measure`、`box_vertices`、`clip_box`、`cone_clip`），新增扫描格心 `cell_centers`；region.py 只留锥外域、夹逼测度与割循环的工具。`RegionTimeout` 由 monitor.py 移入 region.py；`CUT_ACCEPTED` 由 region.py 移入 monitor.py（构域与回放共用）。monitor.py、vertify.py 不再在函数内导入项目模块，只保留 tkinter / matplotlib 的延迟导入（分区与扫描子进程不加载界面库）。
+- 物理模型：主线只有 SOCP，`GridPhysics(network, method)` 改为 `GridPhysics(network)`，LinDistFlow（method='linear'）及其测试退役；`SP_TIME_LIMIT` 由按 method 的字典改为标量 10 秒。`PortPhysics` 只写网络的浅副本，不再改写调用方的网络；`vertify.ac_network` 与各处防御性 deepcopy 删除。
+- MP：`MasterProblem.solve` 的 `incumbent`、`start`、`radial_gap_kw` 与 `use_incumbent`、`MasterProblem.__init__.min_total`、`fixed_plan`（测试改用 `fix_plan`）删除；返回键 `feasible`（恒真）与 `status`（恒为 optimal）删除。新增 `MasterProblem.__init__.relaxed` 与 `MasterProblem.fixed_power`：扫描的 SOCP η 松弛改由 add_operation 构造（原 `scan_problem.eta` 按约束名改写模型），η 与 SP 一样带分区上界；AC 等式改用 `GridPhysics.add_operation.current_cones` 句柄。已有扫描标签照旧复用，只有新补扫的点按此模型求解。
+- SP 与射线：`SubProblem.numeric_focus`、`ray_support.numeric_focus` 与 ray_support 的 budget 参数删除（恒为缺省或未使用）；`SubProblem.calls / cut_calls` 计数删除（无读取方）；`ray_support` 只返回 `p` 与 `ray_fraction`。`DEFAULT_SOLVER_THREADS` 删除，`MasterProblem`、`SubProblem`、`cone_misocp` 的 threads 必须给出。新增 `SolveFailure(RuntimeError)`：求解器没有合格解或证书时抛出，`Radial.solved`、`Cutting.cut` 与 `scan_line` 只把它与超时记为未决，其他 RuntimeError 不再被吞掉。
+- 锥 MISOCP：`cone_misocp` 只有一种形式（rows 必给，分区盒总在，mip_gap 由调用方给），中心射线写成成对的锥不等式；`Radial.misocp(objective, rows, mip_gap, exclude)`。`Cone.final` 改为 `Cone.point`（解点）与 `Cone.x_star`（解点网架）。A+ 的判据由 lambda 改为具名的 `build_partition.check`。
+- 测度：`piece` 与 `sandwich` 的 Qhull / GEOS 兜底删除。用四个归档记录重放测度，179544 次 piece 与 20778 次三维并集体积均无失败；此后几何失败直接报错，不再静默低估内域。
+- 扫描：`vertify` 退役 mode=0（非负负荷）路径，`scan_path / reference_box / import_ac_reference / scan_ac_reference / scan_problem / scan_line / ac_scan_line / signed_ac_witness / ac_interval_possible` 去掉 mode，缓存身份保持 mode=1；新增 `q_ratio` 逐点功率因数。`budget_schemes(network, budget)` 直接取网络；`ac_scan_line` 的 schemes 必给（只求完整 AC 用 `scan_line(ac=True)`）；`global_calls`、`errors` 与缓存元数据的 errors 删除；`load_scan` 只查方法、身份与标签数组形状；输出目录必给，`vertify.SCAN_OUTPUT` 删除。
+- 校验与回放：`RunMonitor.validation.region_key` 与回放中的 region_key 字段删除，参考字段直接读取（不再有 legacy_reference 等缺省）；新增纯计算 `grid_comparison`，`export_comparison(network, budget, result, reference, comparison, output)` 复用其掩码与指标，不再自建监视器或重复核对身份。通道改为具名 `Channel`，新增 `partition_label / partition_sign`；`RunMonitor` 的 clock 与 `_emit` 的 checkpoint 参数（无调用方）删除；`_removed_3d` 对空 N^CUT_x 不再出错；monitor.py 回放的记录参数必给。
+- 入口：`vertify.py` 的命令行并入 `main.py --validate 记录 [--refine N]`（运行后校验与补算共用 `main.validate`，补算入口 `main.revalidate`）。`main.DIVISIONS`、`main.mode` 与 `--case both` 删除，扫描格数统一取 `SCAN_DIVISIONS`，记录目录仍为 mode_1；`main.run` 的 budget 与 divisions 必须给出，`main()` 只传与缺省不同的参数。`Network.budgets` 删除；`Network.case33_numerics` 代替按网架名 'case33bw' 切换的数值设置（Case33 为真，Case33Plan 与 FourBus 为假，与原行为一致）。
+- 测试：新增 `fix_plan` 与 `synthetic_reference`；mode=0 的加密测试删除。
+- 回归：扫描在四个归档缓存上复算 2400 个格（多为可行域边界格），AC 与 SOCP 标签与缓存全部一致。四个归档算例按原时限重跑：Case33 二维、三维与 Case33Plan 二维的每个分区锥数、网架数与间隙都与归档相同，内外域 FR/MR 相同；Case33Plan 三维同为 6/8 获证，仍是 ++- 与 --+ 到时限，其中四个分区与归档相同，耗时 500–1000 秒的分区因按墙钟分配的割时间片而路径不同（内域 FR 3.968%、MR 0.311%，归档 3.884%、0.284%）。
 
 ## 显式迁移（2026-10-02：锥 MISOCP 改为行生成）
 
@@ -275,153 +345,133 @@ SP 固定 x,p 后最小化非负 `eta`（求解器名 violation），只允许�
 
 ## 当前登记接口索引
 
-以下登记当前全部现存接口，以便名称检查覆盖字段、形参和结果键。`作用域.名称` 表示字段或局部量，`函数:键` 表示返回字典键；语义按上文分组约定。
+以下只登记三类名字：代表数学量或数值设置的名字（类字段与属性、容差与默认常量）；持久化与结果格式的键（回放记录、扫描缓存、导出文件，以及交给其他模块的结果，登记在写出它的函数下）；公开的函数与类。`作用域.名称` 表示定义、字段或属性，`函数:键` 表示该函数写出的记录键。函数内局部量、形参与下划线开头的私有名是实现细节，不登记，名称检查会拒绝它们；拆函数、改局部名或形参名不需要迁移。名称检查只保证登记的名字仍在声明的作用域内，不检查单位与语义；正文中的代码名只作说明，不受检查。
 
 ### Network/case33bw.py
 
-- [CURRENT_LIMIT](../Network/case33bw.py)、[Case33](../Network/case33bw.py)、[Case33.__init__.current_limit](../Network/case33bw.py)、[Case33.switch_budget](../Network/case33bw.py)
-- [LOAD_NODES](../Network/case33bw.py)、[Case33Plan](../Network/case33bw.py)、[Case33Plan.switches](../Network/case33bw.py)、[Case33Plan.candidates](../Network/case33bw.py)
-- [Case33Plan.plan_budget](../Network/case33bw.py)、[_Case33bw](../Network/case33bw.py)、[_Case33bw._build](../Network/case33bw.py)、[_Case33bw._build.price](../Network/case33bw.py)
+- [CURRENT_LIMIT](../Network/case33bw.py)、[Case33](../Network/case33bw.py)、[Case33.switch_budget](../Network/case33bw.py)、[LOAD_NODES](../Network/case33bw.py)
+- [Case33Plan](../Network/case33bw.py)、[Case33Plan.switches](../Network/case33bw.py)、[Case33Plan.candidates](../Network/case33bw.py)、[Case33Plan.plan_budget](../Network/case33bw.py)
 
 ### vertify.py
 
-- [ACPowerFlow](../vertify.py)、[ACPowerFlow._state.p](../vertify.py)、[ACPowerFlow._state.q](../vertify.py)、[AC_CACHE_METHOD](../vertify.py)
-- [AC_ITERATIONS](../vertify.py)、[AC_TOL](../vertify.py)、[FIXED_POINT_TOL](../vertify.py)、[SCAN_TOL](../vertify.py)
-- [SCAN_FIELDS](../vertify.py)、[ac_identity](../vertify.py)
-- [ac_interval_possible](../vertify.py)、[ac_network](../vertify.py)、[ac_scan_line](../vertify.py)、[ac_scan_line:residual](../vertify.py)
-- [ac_scan_line:witness_x](../vertify.py)、[budget_schemes](../vertify.py)、[export_comparison](../vertify.py)、[import_ac_reference](../vertify.py)
+- [ACPowerFlow](../vertify.py)、[AC_CACHE_METHOD](../vertify.py)、[AC_ITERATIONS](../vertify.py)、[AC_TOL](../vertify.py)
+- [FIXED_POINT_TOL](../vertify.py)、[SCAN_TOL](../vertify.py)、[SCAN_FIELDS](../vertify.py)、[ac_identity](../vertify.py)
+- [ac_interval_possible](../vertify.py)、[q_ratio](../vertify.py)、[ac_scan_line](../vertify.py)、[ac_scan_line:residual](../vertify.py)
+- [ac_scan_line:witness_x](../vertify.py)、[budget_schemes](../vertify.py)、[export_comparison](../vertify.py)
 - [reference_box](../vertify.py)、[region_path](../vertify.py)、[save_scan](../vertify.py)、[scan_ac_reference](../vertify.py)
-- [scan_ac_reference.origin](../vertify.py)、[scan_ac_reference.start](../vertify.py)、[scan_ac_reference.states](../vertify.py)、[scan_ac_reference.step](../vertify.py)
-- [scan_line](../vertify.py)、[scan_path](../vertify.py)、[scan_problem](../vertify.py)、[scan_problem.eta](../vertify.py)
+- [scan_line](../vertify.py)、[scan_path](../vertify.py)、[scan_problem](../vertify.py)、[load_scan](../vertify.py)
+- [reference_grid](../vertify.py)
 - [signed_ac_witness](../vertify.py)、[SAVE_SECONDS](../vertify.py)、[CONVERGENCE_SAMPLES](../vertify.py)、[convergence](../vertify.py)
 - [convergence:time](../vertify.py)、[convergence:mr](../vertify.py)、[convergence:fr](../vertify.py)、[convergence:gaps](../vertify.py)
-- [convergence:ends](../vertify.py)
+- [convergence:ends](../vertify.py)、[_empty_ac_grid:axis_lower](../vertify.py)、[_empty_ac_grid:bounds](../vertify.py)、[_empty_ac_grid:origin](../vertify.py)
+- [_empty_ac_grid:step](../vertify.py)、[_empty_ac_grid:start](../vertify.py)、[_empty_ac_grid:states](../vertify.py)、[_empty_ac_grid:witness_x](../vertify.py)
+- [_empty_ac_grid:residual](../vertify.py)、[_empty_ac_grid:socp_states](../vertify.py)、[_empty_ac_grid:socp_witness_x](../vertify.py)、[_empty_ac_grid:socp_residual](../vertify.py)
+- [_empty_ac_grid:metadata](../vertify.py)、[_empty_ac_grid:identity](../vertify.py)、[scan_ac_reference:cache_path](../vertify.py)、[scan_ac_reference:scan_seconds](../vertify.py)
+- [scan_ac_reference:reused_points](../vertify.py)、[scan_ac_reference:computed_points](../vertify.py)
 
 ### monitor.py
 
-- [COMPARISONS](../monitor.py)、[MERGED](../monitor.py)、[RegionTimeout](../monitor.py)、[RunMonitor](../monitor.py)
-- [RunMonitor.__init__.sign](../monitor.py)、[RunMonitor.label](../monitor.py)、[RunMonitor.channel](../monitor.py)、[RunMonitor.shared](../monitor.py)
-- [RunMonitor.share](../monitor.py)、[RunMonitor.close](../monitor.py)、[RunMonitor.forward](../monitor.py)、[RunMonitor.forward.label](../monitor.py)
-- [RunMonitor.validation](../monitor.py)、[RunMonitor.validation.region_key](../monitor.py)、[RunMonitor.validation:comparisons](../monitor.py)、[RunMonitor.validation:metrics](../monitor.py)
-- [RunMonitor.validation:undecided_cells](../monitor.py)、[RunMonitor.validation:socp_undecided_cells](../monitor.py)、[RunMonitor.validation:computed_states](../monitor.py)、[RunMonitor.snapshots](../monitor.py)
-- [RunMonitor.frame](../monitor.py)、[FRAME_STRIDE](../monitor.py)、[STEP_TRAIL](../monitor.py)、[RunMonitor.running](../monitor.py)
-- [STEP_LOG](../monitor.py)、[FIT_SHRINK](../monitor.py)、[ALL_PARTITIONS](../monitor.py)、[NativeWindow](../monitor.py)
-- [NativeWindow.limits](../monitor.py)、[NativeWindow._fit_limits](../monitor.py)、[NativeWindow._draw_steps](../monitor.py)、[NativeWindow.frame_meta](../monitor.py)
-- [RunMonitor.validation_state](../monitor.py)、[_connect](../monitor.py)、[signed_values](../monitor.py)、[accepted](../monitor.py)
-- [comparison_metrics](../monitor.py)、[comparison_metrics:computed_cells](../monitor.py)
-- [comparison_metrics:extra_cells](../monitor.py)、[comparison_metrics:fr_percent](../monitor.py)、[comparison_metrics:missed_cells](../monitor.py)、[comparison_metrics:mr_percent](../monitor.py)
-- [comparison_metrics:reference_cells](../monitor.py)
+- [COMPARISONS](../monitor.py)、[MERGED](../monitor.py)、[CUT_ACCEPTED](../monitor.py)、[RunMonitor](../monitor.py)
+- [RunMonitor.share](../monitor.py)、[RunMonitor.close](../monitor.py)、[RunMonitor.forward](../monitor.py)、[RunMonitor.validation](../monitor.py)
+- [grid_comparison](../monitor.py)、[RunMonitor.validation:comparisons](../monitor.py)、[RunMonitor.validation:metrics](../monitor.py)、[RunMonitor.validation:undecided_cells](../monitor.py)
+- [RunMonitor.validation:socp_undecided_cells](../monitor.py)、[RunMonitor.validation:computed_states](../monitor.py)、[RunMonitor.frame](../monitor.py)、[FRAME_STRIDE](../monitor.py)
+- [STEP_TRAIL](../monitor.py)、[RunMonitor.running](../monitor.py)、[STEP_LOG](../monitor.py)、[FIT_SHRINK](../monitor.py)
+- [NativeWindow](../monitor.py)、[signed_values](../monitor.py)、[accepted](../monitor.py)、[comparison_metrics](../monitor.py)
+- [comparison_metrics:computed_cells](../monitor.py)、[comparison_metrics:extra_cells](../monitor.py)、[comparison_metrics:fr_percent](../monitor.py)、[comparison_metrics:missed_cells](../monitor.py)
+- [comparison_metrics:mr_percent](../monitor.py)、[comparison_metrics:reference_cells](../monitor.py)、[grid_comparison:masks](../monitor.py)、[Channel](../monitor.py)
+- [partition_label](../monitor.py)、[partition_sign](../monitor.py)、[RunMonitor.save:version](../monitor.py)、[RunMonitor.save:history](../monitor.py)
+- [RunMonitor.save:validation_state](../monitor.py)
 
 ### model.py
 
-- [DEFAULT_SOLVER_THREADS](../model.py)、[GridPhysics](../model.py)、[GridPhysics.P_slice](../model.py)、[GridPhysics.Q_slice](../model.py)
-- [GridPhysics.add_operation](../model.py)、[GridPhysics.add_operation.P](../model.py)、[GridPhysics.add_operation.Q](../model.py)、[GridPhysics.add_operation.ell](../model.py)
-- [GridPhysics.add_operation.minus](../model.py)、[GridPhysics.add_operation.plus](../model.py)、[GridPhysics.add_operation.v](../model.py)、[GridPhysics.cost](../model.py)
-- [GridPhysics.drop_max](../model.py)、[GridPhysics.ell_slice](../model.py)、[GridPhysics.ellmax](../model.py)、[GridPhysics.ends](../model.py)
-- [GridPhysics.incoming](../model.py)、[GridPhysics.keys](../model.py)、[GridPhysics.outgoing](../model.py)、[GridPhysics.pmax](../model.py)
-- [GridPhysics.pmin](../model.py)、[GridPhysics.qmax](../model.py)、[GridPhysics.qmin](../model.py)、[GridPhysics.r](../model.py)
-- [GridPhysics.reactance](../model.py)、[GridPhysics.slack_slice](../model.py)、[GridPhysics.types](../model.py)、[GridPhysics.v_slice](../model.py)
-- [GridPhysics.vmax](../model.py)、[GridPhysics.vmin](../model.py)、[GridPhysics.y_lb_global](../model.py)、[GridPhysics.y_ub_global](../model.py)
-- [MP_TIME_LIMIT](../model.py)、[MasterProblem.__init__.budget](../model.py)、[MasterProblem.__init__.direction](../model.py)、[MasterProblem.__init__.f](../model.py)
-- [MasterProblem.__init__.min_total](../model.py)、[MasterProblem.__init__.power](../model.py)、[MasterProblem.active_nodes](../model.py)、[MasterProblem.choices](../model.py)
-- [MasterProblem.direction](../model.py)、[MasterProblem.loads](../model.py)、[MasterProblem.operation](../model.py)、[MasterProblem.power](../model.py)
-- [MasterProblem.solve.incumbent](../model.py)、[MasterProblem.solve.radial_gap_kw](../model.py)、[MasterProblem.solve.start](../model.py)、[MasterProblem.solve.tolerance](../model.py)、[MasterProblem.solve:bound](../model.py)
-- [MasterProblem.solve:feasible](../model.py)、[MasterProblem.solve:objective](../model.py)、[MasterProblem.solve:p](../model.py)、[MasterProblem.solve:state](../model.py)
-- [MasterProblem.solve:status](../model.py)、[MasterProblem.solve:x](../model.py)、[MasterProblem.state](../model.py)、[MasterProblem.x](../model.py)
-- [PLANNING_TOL](../model.py)、[PortPhysics.sign](../model.py)、[SP_TIME_LIMIT](../model.py)、[SubProblem._build](../model.py)
-- [SubProblem._build.eta](../model.py)、[SubProblem._cut](../model.py)、[SubProblem._separating_cut.coefficients](../model.py)、[SubProblem._separating_cut.cut](../model.py)
-- [SubProblem._separating_cut.dual](../model.py)、[SubProblem._separating_cut.h](../model.py)、[SubProblem._separating_cut.rows](../model.py)、[SubProblem.cut_calls](../model.py)
-- [SubProblem.generate_cut](../model.py)、[SubProblem.numeric_focus](../model.py)、[SubProblem.solve](../model.py)、[SubProblem.solve.cone_normals](../model.py)
-- [SubProblem.solve.eta](../model.py)、[SubProblem.solve.score_only](../model.py)、[SubProblem.solve:cone_normals](../model.py)、[SubProblem.solve:cut](../model.py)
+- [SolveFailure](../model.py)、[GridPhysics](../model.py)、[GridPhysics.P_slice](../model.py)、[GridPhysics.Q_slice](../model.py)
+- [GridPhysics.add_operation](../model.py)、[GridPhysics.cost](../model.py)、[GridPhysics.drop_max](../model.py)、[GridPhysics.ell_slice](../model.py)
+- [GridPhysics.ellmax](../model.py)、[GridPhysics.ends](../model.py)、[GridPhysics.incoming](../model.py)、[GridPhysics.keys](../model.py)
+- [GridPhysics.outgoing](../model.py)、[GridPhysics.pmax](../model.py)、[GridPhysics.pmin](../model.py)、[GridPhysics.qmax](../model.py)
+- [GridPhysics.qmin](../model.py)、[GridPhysics.r](../model.py)、[GridPhysics.reactance](../model.py)、[GridPhysics.slack_slice](../model.py)
+- [GridPhysics.types](../model.py)、[GridPhysics.v_slice](../model.py)、[GridPhysics.vmax](../model.py)、[GridPhysics.vmin](../model.py)
+- [GridPhysics.y_lb_global](../model.py)、[GridPhysics.y_ub_global](../model.py)、[MP_TIME_LIMIT](../model.py)、[MasterProblem.active_nodes](../model.py)
+- [MasterProblem.direction](../model.py)、[MasterProblem.loads](../model.py)、[MasterProblem.operation](../model.py)
+- [MasterProblem.power](../model.py)、[MasterProblem.fixed_power](../model.py)、[MasterProblem.solve:bound](../model.py)、[MasterProblem.solve:objective](../model.py)
+- [MasterProblem.solve:p](../model.py)、[MasterProblem.solve:state](../model.py)、[MasterProblem.solve:x](../model.py)、[MasterProblem.state](../model.py)
+- [MasterProblem.x](../model.py)、[PLANNING_TOL](../model.py)、[GridPhysics.sign](../model.py)、[SP_TIME_LIMIT](../model.py)
+- [SubProblem.generate_cut](../model.py)、[SubProblem.solve](../model.py)、[SubProblem.solve:cone_normals](../model.py)、[SubProblem.solve:cut](../model.py)
 - [SubProblem.solve:eta](../model.py)、[SubProblem.solve:feasible](../model.py)、[SubProblem.solve:state](../model.py)、[port_bounds](../model.py)
-- [ray_support](../model.py)、[ray_support.numeric_focus](../model.py)、[ray_support.ray_fraction](../model.py)、[solve_conic.basis](../model.py)
-- [solve_conic.cone_scale](../model.py)、[solve_conic.offset](../model.py)、[voltage_flow_bounds](../model.py)、[OBBT_ROUNDS](../model.py)
-- [OBBT_PAD](../model.py)、[ENVELOPE_MARGIN](../model.py)、[OBBT_CONV_TOL](../model.py)、[OBBT_PARAMS](../model.py)
-- [obbt_pool](../model.py)、[obbt_extremes](../model.py)、[GridPhysics.boxes](../model.py)、[GridPhysics.obbt](../model.py)
-- [GridPhysics.add_operation.scheme](../model.py)、[CONE_CONV_TOL](../model.py)、[cone_misocp](../model.py)、[cone_misocp.objective](../model.py)
-- [cone_misocp.tighten](../model.py)、[GridPhysics._tighten](../model.py)、[GridPhysics._tighten.add](../model.py)
-- [cone_misocp.rows](../model.py)、[cone_misocp.exclude](../model.py)、[cone_misocp.mip_gap](../model.py)、[cone_misocp:status](../model.py)
-- [cone_misocp:bound](../model.py)、[cone_misocp:x](../model.py)、[cone_misocp:point](../model.py)
+- [ray_support](../model.py)、[voltage_flow_bounds](../model.py)、[OBBT_ROUNDS](../model.py)、[OBBT_PAD](../model.py)
+- [ENVELOPE_MARGIN](../model.py)、[OBBT_CONV_TOL](../model.py)、[obbt_pool](../model.py)、[obbt_extremes](../model.py)
+- [GridPhysics.boxes](../model.py)、[GridPhysics.obbt](../model.py)、[GridPhysics.new_model](../model.py)、[CONE_CONV_TOL](../model.py)、[cone_misocp](../model.py)
+- [cone_misocp:status](../model.py)、[cone_misocp:bound](../model.py)、[cone_misocp:x](../model.py)、[cone_misocp:point](../model.py)
+- [GridPhysics.add_operation:P](../model.py)、[GridPhysics.add_operation:Q](../model.py)、[GridPhysics.add_operation:ell](../model.py)、[GridPhysics.add_operation:v](../model.py)
+- [GridPhysics.add_operation:plus](../model.py)、[GridPhysics.add_operation:minus](../model.py)、[GridPhysics.add_operation:state](../model.py)、[GridPhysics.add_operation:cones](../model.py)
+- [GridPhysics.add_operation:current_cones](../model.py)、[ray_support:p](../model.py)、[ray_support:ray_fraction](../model.py)
 
 ### Network/__init__.py
 
 - [Corridor.endpoints](../Network/__init__.py)、[Corridor.existing_type](../Network/__init__.py)、[Corridor.id](../Network/__init__.py)、[Corridor.initial_active](../Network/__init__.py)
 - [Corridor.switchable](../Network/__init__.py)、[Corridor.types](../Network/__init__.py)、[Network.E](../Network/__init__.py)、[Network.base](../Network/__init__.py)
-- [Network.budgets](../Network/__init__.py)、[Network.capacity](../Network/__init__.py)、[Network.corridor_types](../Network/__init__.py)、[Network.corridors](../Network/__init__.py)
+- [Network.case33_numerics](../Network/__init__.py)、[Network.capacity](../Network/__init__.py)、[Network.corridor_types](../Network/__init__.py)、[Network.corridors](../Network/__init__.py)
 - [Network.cost](../Network/__init__.py)、[Network.cost_offset](../Network/__init__.py)、[Network.cost_unit](../Network/__init__.py)、[Network.decode_plan](../Network/__init__.py)
 - [Network.ell_limit](../Network/__init__.py)、[Network.encode_plan](../Network/__init__.py)、[Network.fixed_p](../Network/__init__.py)、[Network.fixed_q](../Network/__init__.py)
-- [Network.load_nodes](../Network/__init__.py)、[Network.loads](../Network/__init__.py)、[Network.n](../Network/__init__.py)
-- [Network.n_corridors](../Network/__init__.py)、[Network.n_types](../Network/__init__.py)、[Network.node_index](../Network/__init__.py)、[Network.nodes](../Network/__init__.py)
-- [Network.original_p](../Network/__init__.py)、[Network.original_q](../Network/__init__.py)、[Network.power_limit](../Network/__init__.py)、[Network.q_ratio](../Network/__init__.py)
-- [Network.r](../Network/__init__.py)、[Network.reactance](../Network/__init__.py)、[Network.receivers](../Network/__init__.py)、[Network.receiving](../Network/__init__.py)
-- [Network.required](../Network/__init__.py)、[Network.road_allowed](../Network/__init__.py)、[Network.root](../Network/__init__.py)、[Network.selected](../Network/__init__.py)
-- [Network.senders](../Network/__init__.py)、[Network.sending](../Network/__init__.py)、[Network.source_pmax](../Network/__init__.py)、[Network.source_qmax](../Network/__init__.py)
-- [Network.source_smax](../Network/__init__.py)、[Network.tree](../Network/__init__.py)、[Network.type_corridor](../Network/__init__.py)、[Network.type_keys](../Network/__init__.py)
-- [Network.type_slices](../Network/__init__.py)、[Network.vmax](../Network/__init__.py)、[Network.vmin](../Network/__init__.py)、[Network.voltage_kv](../Network/__init__.py)
-- [OperatingTree.D](../Network/__init__.py)、[OperatingTree.children](../Network/__init__.py)、[OperatingTree.direction](../Network/__init__.py)、[OperatingTree.ell_limit](../Network/__init__.py)
-- [OperatingTree.n](../Network/__init__.py)、[OperatingTree.node_indices](../Network/__init__.py)、[OperatingTree.order](../Network/__init__.py)、[OperatingTree.parent](../Network/__init__.py)
-- [OperatingTree.roots](../Network/__init__.py)、[OperatingTree.type_indices](../Network/__init__.py)、[TypeParameters.capacity](../Network/__init__.py)、[TypeParameters.ell_limit](../Network/__init__.py)
-- [TypeParameters.id](../Network/__init__.py)、[TypeParameters.investment_cost](../Network/__init__.py)、[TypeParameters.r](../Network/__init__.py)、[TypeParameters.reactance](../Network/__init__.py)
+- [Network.load_nodes](../Network/__init__.py)、[Network.loads](../Network/__init__.py)、[Network.n](../Network/__init__.py)、[Network.n_corridors](../Network/__init__.py)
+- [Network.n_types](../Network/__init__.py)、[Network.node_index](../Network/__init__.py)、[Network.nodes](../Network/__init__.py)、[Network.original_p](../Network/__init__.py)
+- [Network.original_q](../Network/__init__.py)、[Network.power_limit](../Network/__init__.py)、[Network.q_ratio](../Network/__init__.py)、[Network.r](../Network/__init__.py)
+- [Network.reactance](../Network/__init__.py)、[Network.receivers](../Network/__init__.py)、[Network.receiving](../Network/__init__.py)、[Network.required](../Network/__init__.py)
+- [Network.road_allowed](../Network/__init__.py)、[Network.root](../Network/__init__.py)、[Network.selected](../Network/__init__.py)、[Network.senders](../Network/__init__.py)
+- [Network.sending](../Network/__init__.py)、[Network.source_pmax](../Network/__init__.py)、[Network.source_qmax](../Network/__init__.py)、[Network.source_smax](../Network/__init__.py)
+- [Network.tree](../Network/__init__.py)、[Network.type_corridor](../Network/__init__.py)、[Network.type_keys](../Network/__init__.py)、[Network.type_slices](../Network/__init__.py)
+- [Network.vmax](../Network/__init__.py)、[Network.vmin](../Network/__init__.py)、[Network.voltage_kv](../Network/__init__.py)、[OperatingTree.D](../Network/__init__.py)
+- [OperatingTree.children](../Network/__init__.py)、[OperatingTree.direction](../Network/__init__.py)、[OperatingTree.ell_limit](../Network/__init__.py)、[OperatingTree.n](../Network/__init__.py)
+- [OperatingTree.node_indices](../Network/__init__.py)、[OperatingTree.order](../Network/__init__.py)、[OperatingTree.parent](../Network/__init__.py)、[OperatingTree.roots](../Network/__init__.py)
+- [OperatingTree.type_indices](../Network/__init__.py)、[TypeParameters.capacity](../Network/__init__.py)、[TypeParameters.ell_limit](../Network/__init__.py)、[TypeParameters.id](../Network/__init__.py)
+- [TypeParameters.investment_cost](../Network/__init__.py)、[TypeParameters.r](../Network/__init__.py)、[TypeParameters.reactance](../Network/__init__.py)
 
 ### main.py
 
 - [BUDGET](../main.py)、[CASE_TIME_LIMIT](../main.py)、[CUT_PATIENCE](../main.py)、[CUT_THRESHOLD](../main.py)
-- [DIMENSION](../main.py)、[DIVISIONS](../main.py)、[FORCE_RESCAN](../main.py)、[NETWORK](../main.py)
-- [POINT_TOL](../main.py)、[REGION_TAU](../main.py)、[SCAN_DIVISIONS](../main.py)、[SCAN_OUTPUT](../main.py)
-- [SCAN_WORKERS](../main.py)、[SOLVER_THREADS](../main.py)、[WORKERS](../main.py)、[DISCOVERY_EPS](../main.py)
-- [DISCOVERY_SHARE](../main.py)、[MIP_SECONDS](../main.py)、[MIP_GAP](../main.py)、[MIN_WIDTH](../main.py)
-- [MAX_CONES](../main.py)、[main](../main.py)、[main.case](../main.py)、[main.dimension](../main.py)
-- [main.load_nodes](../main.py)、[mode](../main.py)、[recording_path](../main.py)、[run](../main.py)
-- [run.budget](../main.py)、[run.force_rescan](../main.py)、[run.scan_output](../main.py)、[run.workers](../main.py)
-- [run.threads](../main.py)、[run.settings](../main.py)、[CASES](../main.py)、[convergence_figure](../main.py)
-- [convergence_figure.recordings](../main.py)
+- [DIMENSION](../main.py)、[CASE](../main.py)、[POINT_TOL](../main.py)
+- [REGION_TAU](../main.py)、[SCAN_DIVISIONS](../main.py)、[SCAN_OUTPUT](../main.py)、[SCAN_WORKERS](../main.py)
+- [SOLVER_THREADS](../main.py)、[WORKERS](../main.py)、[DISCOVERY_EPS](../main.py)、[DISCOVERY_SHARE](../main.py)
+- [MIP_SECONDS](../main.py)、[MIP_GAP](../main.py)、[MIN_WIDTH](../main.py)、[MAX_CONES](../main.py)
+- [main](../main.py)、[validate](../main.py)、[CASES](../main.py)
 
 ### region.py
 
-- [GEOMETRY_TOL](../region.py)、[SPLIT_MARGIN](../region.py)、[MIN_RADIUS](../region.py)、[RAY_SECONDS](../region.py)
-- [CUT_SECONDS](../region.py)、[PASS_SHARE](../region.py)、[CUT_ACCEPTED](../region.py)、[halfspaces](../region.py)
-- [GAP_SHARE](../region.py)、[polygon_union](../region.py)、[union_volume](../region.py)、[Radial.incumbent](../region.py)
-- [_clip_face](../region.py)、[Cutting.gap](../region.py)
-- [Cutting.declined](../region.py)、[Cutting.measures](../region.py)、[Cutting.epsilon](../region.py)
-- [clip_polytope.coefficient](../region.py)、[clip_polytope.constant](../region.py)、[covered](../region.py)、[union_measure](../region.py)
-- [register_power](../region.py)、[box_vertices](../region.py)、[clip_box](../region.py)、[cone_clip](../region.py)
-- [cone_outer](../region.py)、[stagnated](../region.py)、[stagnated.threshold](../region.py)、[stagnated.patience](../region.py)
-- [piece](../region.py)、[sandwich](../region.py)、[Cone](../region.py)、[Cone.keys](../region.py)
-- [Cone.x](../region.py)、[Cone.verts](../region.py)、[Cone.cover](../region.py)、[Cone.inherited](../region.py)
-- [Cone.mu](../region.py)、[Cone.final](../region.py)、[Cone.status](../region.py)、[Cone.c](../region.py)
-- [Cone.halfspace](../region.py)、[Radial](../region.py)、[Radial.bounds](../region.py)、[Radial.directions](../region.py)
-- [Radial.midpoints](../region.py)、[Radial.rays](../region.py)、[Radial.nears](../region.py)、[Radial.origin](../region.py)
-- [Radial.cones](../region.py)、[Radial.deadline](../region.py)、[Radial.U](../region.py)
-- [Radial.vertex](../region.py)、[Radial.near](../region.py)、[Radial.inner](../region.py)、[Radial.misocp](../region.py)
-- [Radial.solve](../region.py)、[Radial.options](../region.py)、[Radial.split](../region.py)、[Radial.delta](../region.py)
-- [Radial.volume_ratio](../region.py)、[Radial.run](../region.py)、[Radial.run.epsilon](../region.py)、[Radial.run.check](../region.py)
+- [RegionTimeout](../region.py)、[SPLIT_MARGIN](../region.py)、[MIN_RADIUS](../region.py)、[RAY_SECONDS](../region.py)
+- [CUT_SECONDS](../region.py)、[PASS_SHARE](../region.py)、[GAP_SHARE](../region.py)、[Radial.incumbent](../region.py)
+- [Cutting.gap](../region.py)、[Cutting.declined](../region.py)、[Cutting.epsilon](../region.py)、[register_power](../region.py)
+- [cone_outer](../region.py)、[trailing_small_cuts](../region.py)、[piece](../region.py)、[sandwich](../region.py)
+- [Cone](../region.py)、[Cone.keys](../region.py)、[Cone.x](../region.py)、[Cone.verts](../region.py)
+- [Cone.cover](../region.py)、[Cone.inherited](../region.py)、[Cone.mu](../region.py)、[Cone.point](../region.py)
+- [Cone.x_star](../region.py)、[Cone.status](../region.py)、[Cone.c](../region.py)、[Cone.halfspace](../region.py)
+- [Radial](../region.py)、[Radial.bounds](../region.py)、[Radial.directions](../region.py)、[Radial.midpoints](../region.py)
+- [Radial.rays](../region.py)、[Radial.nears](../region.py)、[Radial.origin](../region.py)、[Radial.cones](../region.py)
+- [Radial.deadline](../region.py)、[Radial.U](../region.py)、[Radial.vertex](../region.py)、[Radial.near](../region.py)
+- [Radial.inner](../region.py)、[Radial.misocp](../region.py)、[Radial.solve](../region.py)、[Radial.options](../region.py)
+- [Radial.split](../region.py)、[Radial.delta](../region.py)、[Radial.volume_ratio](../region.py)、[Radial.run](../region.py)
 - [Radial.schemes](../region.py)、[Radial.geometry](../region.py)、[Radial.publish](../region.py)、[Radial.publish:inner](../region.py)
 - [Radial.publish:outer](../region.py)、[Radial.publish:scheme](../region.py)、[Radial.publish:mu](../region.py)、[CutSlice](../region.py)
-- [Radial.publish.step](../region.py)、[Radial.step](../region.py)、[Radial.step:kind](../region.py)、[Radial.step:text](../region.py)
-- [Radial.far_face](../region.py)
+- [Radial.step](../region.py)、[Radial.step:kind](../region.py)、[Radial.step:text](../region.py)、[Radial.far_face](../region.py)
 - [Cutting](../region.py)、[Cutting.cuts](../region.py)、[Cutting.networks](../region.py)、[Cutting.count](../region.py)
 - [Cutting.clip](../region.py)、[Cutting.sets](../region.py)、[Cutting.run](../region.py)、[Cutting.cut](../region.py)
-- [Cutting.cut.history](../region.py)、[Cutting.cut:vertices](../region.py)、[Cutting.cut:status](../region.py)、[Cutting.cut:version](../region.py)
 - [Cutting.row](../region.py)、[Cutting.row:x](../region.py)、[Cutting.row:choice](../region.py)、[Cutting.row:cost](../region.py)
-- [Cutting.row:outer](../region.py)、[Cutting.row:status](../region.py)、[build_partition](../region.py)
-- [build_partition.certified](../region.py)、[build_partition:sign](../region.py)、[build_partition:status](../region.py)、[build_partition:certified](../region.py)
-- [build_partition:how](../region.py)、[build_partition:seconds](../region.py)、[build_partition:gap](../region.py)、[build_partition:volume_ratio](../region.py)
-- [build_partition:cones](../region.py)、[build_partition:networks](../region.py)、[build_partition:accepted](../region.py)、[build_partition:cuts](../region.py)
-- [build_partition:inner](../region.py)、[build_partition:outer](../region.py)、[_partition](../region.py)、[build_region](../region.py)
-- [build_region.workers](../region.py)、[build_region.seconds](../region.py)、[build_region.settings](../region.py)、[build_region:axis_lower](../region.py)
-- [build_region:axis_bounds](../region.py)、[build_region:partitions](../region.py)
+- [Cutting.row:outer](../region.py)、[Cutting.row:status](../region.py)、[build_partition](../region.py)、[build_partition:sign](../region.py)
+- [build_partition:status](../region.py)、[build_partition:certified](../region.py)、[build_partition:how](../region.py)、[build_partition:seconds](../region.py)
+- [build_partition:gap](../region.py)、[build_partition:volume_ratio](../region.py)、[build_partition:cones](../region.py)、[build_partition:networks](../region.py)
+- [build_partition:accepted](../region.py)、[build_partition:cuts](../region.py)、[build_partition:inner](../region.py)、[build_partition:outer](../region.py)
+- [build_region](../region.py)、[build_region:axis_lower](../region.py)、[build_region:axis_bounds](../region.py)、[build_region:partitions](../region.py)
+
+### geometry.py
+
+- [GEOMETRY_TOL](../geometry.py)、[polytope_vertices](../geometry.py)、[halfspaces](../geometry.py)、[contains](../geometry.py)
+- [covered](../geometry.py)、[clip_polytope](../geometry.py)、[polytope_volume](../geometry.py)、[polygon_union](../geometry.py)
+- [union_volume](../geometry.py)、[union_measure](../geometry.py)、[box_vertices](../geometry.py)、[clip_box](../geometry.py)
+- [cone_clip](../geometry.py)、[cell_centers](../geometry.py)
 
 ### plot.py
 
-- [STEP_STYLE](../plot.py)、[cut_segment](../plot.py)、[cut_segment.axis_lower](../plot.py)、[cut_polygon](../plot.py)
-- [cut_polygon.axis_lower](../plot.py)、[hull_geometry](../plot.py)、[draw_3d](../plot.py)、[voxel_faces](../plot.py)
-- [cap](../plot.py)、[draw_geometry](../plot.py)、[SERIES](../plot.py)、[draw_convergence](../plot.py)
+- [cut_segment](../plot.py)、[cut_polygon](../plot.py)、[hull_geometry](../plot.py)、[draw_3d](../plot.py)
+- [voxel_faces](../plot.py)、[cap](../plot.py)、[draw_geometry](../plot.py)、[draw_convergence](../plot.py)
 
 ### Network/four_bus_five_corridor.py
 
-- [FourBus.__init__.load_nodes](../Network/four_bus_five_corridor.py)、[LineType.cable_cny_m](../Network/four_bus_five_corridor.py)、[LineType.capacity_kw](../Network/four_bus_five_corridor.py)、[LineType.r_ohm_km](../Network/four_bus_five_corridor.py)
-- [LineType.x_ohm_km](../Network/four_bus_five_corridor.py)
-
-### tests/planning_checks.py
-
-- [margin](../tests/planning_checks.py)、[recorded_monitor](../tests/planning_checks.py)
+- [LineType.cable_cny_m](../Network/four_bus_five_corridor.py)、[LineType.capacity_kw](../Network/four_bus_five_corridor.py)、[LineType.r_ohm_km](../Network/four_bus_five_corridor.py)、[LineType.x_ohm_km](../Network/four_bus_five_corridor.py)

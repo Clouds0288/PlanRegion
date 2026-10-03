@@ -1,7 +1,8 @@
-"""绘图基元：回放窗口各面板的配色与步骤样式，二维几何、三维凸域、锥远端面片、体素表面与联合割截线的绘制。
-只画图，不做构域计算；几何并集等计算在 region.py。"""
+"""绘图基元：回放窗口各面板的配色与步骤样式，二维几何、三维凸域、锥远端面片、体素表面与联合割截线的绘制，
+以及每次运行的收敛过程图。只画图，不做构域计算；几何并集等计算在 geometry.py，收敛曲线在 vertify.py。"""
 from functools import lru_cache
 from itertools import product
+from pathlib import Path
 
 import numpy as np
 
@@ -158,47 +159,52 @@ def draw_geometry(ax, geometry, *, color, fill=False, alpha=1., linestyle='-', l
                 marker='.' if len(points) == 1 else None, linestyle=linestyle, alpha=alpha)
 
 
-SERIES = ('#2a78d6', '#eb6834', '#1baf7a', '#4a3aa7')   # 多次运行的配色（分类色前四位，两两通过色觉检验）
+CURVE = '#2a78d6'   # 收敛过程图的曲线色
 
 
-def draw_convergence(runs, epsilon, path):
-    """收敛过程图。上行：全部分区内域相对 AC 的 MR（对数）与 FR；下面每个分区一格夹逼间隙（对数，虚线为 ε，
-    圆点 / 叉为分区获证 / 未获证结束）。runs 为 {图例: vertify.convergence 的结果}，同色为同一次运行。"""
-    import matplotlib
-    matplotlib.use('Agg')
-    import matplotlib.pyplot as plt
-    plt.rcParams.update({'font.sans-serif': ['Microsoft YaHei', 'DejaVu Sans'], 'axes.unicode_minus': False,
-                         'font.size': 9, 'axes.spines.top': False, 'axes.spines.right': False,
-                         'axes.edgecolor': '#c3c2b7', 'axes.labelcolor': '#52514e', 'xtick.color': '#52514e',
-                         'ytick.color': '#52514e', 'grid.color': '#e1e0d9', 'grid.linewidth': .6})
-    # 1. 版面：上行 MR、FR 各占两列，下面每行四个分区
-    labels = list(next(iter(runs.values()))['gaps'])
-    rows = 1+(len(labels)+3)//4
-    figure = plt.figure(figsize=(14, 3.3*rows+.8))
-    grid = figure.add_gridspec(rows, 4)
-    mr_axis, fr_axis = figure.add_subplot(grid[0, :2]), figure.add_subplot(grid[0, 2:])
-    gap_axes = [figure.add_subplot(grid[1+k//4, k % 4]) for k in range(len(labels))]
-    # 2. 各次运行：MR / FR 阶梯线，各分区间隙阶梯线与结束标记
-    for color, (name, run) in zip(SERIES, runs.items()):
-        mr_axis.step(run['time'], run['mr'], where='post', color=color, lw=1.6, label=name)
-        fr_axis.step(run['time'], run['fr'], where='post', color=color, lw=1.6)
+def draw_convergence(curves, epsilon, recording):
+    """单次运行的收敛过程图，存为 <输出目录>/<记录名>_convergence.png（记录在 <输出目录>/mode_1/ 下，与归档一致），
+    返回图的路径。上行：全部分区内域相对 AC 的 MR（对数）与 FR；下面每个分区一格夹逼间隙（对数，虚线为 ε，圆点 / 叉为
+    分区获证 / 未获证结束）。curves 为 vertify.convergence 的结果。"""
+    from matplotlib import rc_context
+    from matplotlib.figure import Figure
+    recording = Path(recording)
+    path = recording.parents[1]/(recording.name.removesuffix('.json.gz')+'_convergence.png')
+    ends = curves['ends']
+    summary = (f"{sum(certified for _, certified in ends.values())}/{len(ends)} 分区获证，"
+               f"最慢分区 {max(seconds for seconds, _ in ends.values()):.0f} s 结束，"
+               f"内域 MR {curves['mr'][-1]:.3f}% / FR {curves['fr'][-1]:.3f}%")
+    with rc_context({'font.sans-serif': ['Microsoft YaHei', 'DejaVu Sans'], 'axes.unicode_minus': False,
+                     'font.size': 9, 'axes.spines.top': False, 'axes.spines.right': False,
+                     'axes.edgecolor': '#c3c2b7', 'axes.labelcolor': '#52514e', 'xtick.color': '#52514e',
+                     'ytick.color': '#52514e', 'grid.color': '#e1e0d9', 'grid.linewidth': .6}):
+        # 1. 版面：上行 MR、FR 各占两列，下面每行四个分区
+        labels = list(curves['gaps'])
+        rows = 1+(len(labels)+3)//4
+        figure = Figure(figsize=(14, 3.3*rows+.8))
+        grid = figure.add_gridspec(rows, 4)
+        mr_axis, fr_axis = figure.add_subplot(grid[0, :2]), figure.add_subplot(grid[0, 2:])
+        gap_axes = [figure.add_subplot(grid[1+k//4, k % 4]) for k in range(len(labels))]
+        # 2. MR / FR 阶梯线，各分区间隙阶梯线与结束标记
+        mr_axis.step(curves['time'], curves['mr'], where='post', color=CURVE, lw=1.6, label=summary)
+        fr_axis.step(curves['time'], curves['fr'], where='post', color=CURVE, lw=1.6)
         for axis, label in zip(gap_axes, labels):
-            time, gap = np.array(run['gaps'][label]).T
-            axis.step(time, 100*gap, where='post', color=color, lw=1.6)
-            ended, certified = run['ends'][label]
-            axis.plot(ended, 100*gap[-1], 'o' if certified else 'x', color=color, ms=5)
-    # 3. 坐标与说明：全部子图共用时间轴
-    end = 1.03*max(run['time'][-1] for run in runs.values())
-    mr_axis.set(yscale='log', xlim=(0., end), title='内域 I 相对 AC 的遗漏率 MR（对数）', xlabel='时间 (s)', ylabel='MR (%)')
-    fr_axis.set(xlim=(0., end), title='内域 I 相对 AC 的多余率 FR', xlabel='时间 (s)', ylabel='FR (%)')
-    for axis, label in zip(gap_axes, labels):
-        axis.axhline(100*epsilon, color='#898781', ls='--', lw=1)
-        axis.set(yscale='log', ylim=(.1, 1e3), xlim=(0., end), title=f'分区 {label}', xlabel='时间 (s)')
-    gap_axes[0].set_ylabel('夹逼间隙 vol(K^OUT)/vol(I)−1 (%)')
-    for axis in (mr_axis, fr_axis, *gap_axes):
-        axis.grid(True)
-    figure.legend(*mr_axis.get_legend_handles_labels(), loc='lower center', ncol=len(runs), frameon=False, fontsize=8,
-                  title=f'间隙虚线 ε={100*epsilon:g}%；圆点为分区获证、叉为未获证的结束时刻', title_fontsize=8)
-    figure.tight_layout(rect=(0, .7/(3.3*rows+.8), 1, 1))
-    figure.savefig(path, dpi=130)
-    plt.close(figure)
+            time, gap = np.array(curves['gaps'][label]).T
+            axis.step(time, 100*gap, where='post', color=CURVE, lw=1.6)
+            ended, certified = ends[label]
+            axis.plot(ended, 100*gap[-1], 'o' if certified else 'x', color=CURVE, ms=5)
+        # 3. 坐标与说明：全部子图共用时间轴
+        end = 1.03*curves['time'][-1]
+        mr_axis.set(yscale='log', xlim=(0., end), title='内域 I 相对 AC 的遗漏率 MR（对数）', xlabel='时间 (s)', ylabel='MR (%)')
+        fr_axis.set(xlim=(0., end), title='内域 I 相对 AC 的多余率 FR', xlabel='时间 (s)', ylabel='FR (%)')
+        for axis, label in zip(gap_axes, labels):
+            axis.axhline(100*epsilon, color='#898781', ls='--', lw=1)
+            axis.set(yscale='log', ylim=(.1, 1e3), xlim=(0., end), title=f'分区 {label}', xlabel='时间 (s)')
+        gap_axes[0].set_ylabel('夹逼间隙 vol(K^OUT)/vol(I)−1 (%)')
+        for axis in (mr_axis, fr_axis, *gap_axes):
+            axis.grid(True)
+        figure.legend(*mr_axis.get_legend_handles_labels(), loc='lower center', frameon=False, fontsize=8,
+                      title=f'间隙虚线 ε={100*epsilon:g}%；圆点为分区获证、叉为未获证的结束时刻', title_fontsize=8)
+        figure.tight_layout(rect=(0, .7/(3.3*rows+.8), 1, 1))
+        figure.savefig(path, dpi=130)
+    return path

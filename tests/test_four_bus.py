@@ -30,7 +30,6 @@ class FourBusTests(unittest.TestCase):  # 不生成建设组合表，审核代�
                           ((0,2),None,False),((2,3),None,False)])
         self.assertEqual([(t.name,t.r_ohm_km,t.x_ohm_km,t.capacity_kw,t.cable_cny_m) for t in c.lines],  # 原三种设备。
                          [('L',1.15,.08,35.,28.),('M',.62,.08,65.,43.),('H',.32,.08,100.,65.)])
-        self.assertEqual(c.budgets,(20000.,40000.,60000.,np.inf))  # 默认预算保持元单位。
         self.assertEqual(c.cost_unit,'元')  # 不沿用 case33 的相对投资单位。
         self.assertFalse(hasattr(c,'designs'))  # 恢复算例不恢复旧组合枚举接口。
         np.testing.assert_array_equal([t.investment_cost for t in c.corridors[0].types],[0.,9460.,14300.])
@@ -40,20 +39,18 @@ class FourBusTests(unittest.TestCase):  # 不生成建设组合表，审核代�
         c = FourBus()
         for choice in PLANS:
             tree = c.tree(c.encode_plan(choice))  # 仅创建这一棵树。
-            for method in ('linear','socp'):  # 两套规划物理假设分别核对。
-                e = GridPhysics(c,method)  # 所有候选走廊都进入紧凑模型。
-                x = e.network.encode_plan(choice)  # 只编码型号，潮流方向由功率符号决定。
-                self.assertEqual(e.network.decode_plan(x),choice)
-                direct = MasterProblem(e, threads=1)  # 保留同一套原始方程。
-                with direct.model:  # 每次查询及时释放求解器。
-                    direct.x.LB = direct.x.UB = x  # 固定指定拓扑和设备。
-                    answer = direct.solve()  # 求最大总负荷。
-                reference = dispatch_support(tree,method,np.ones(3))  # 独立消元计算。
-                self.assertEqual(answer['status'],'optimal')  # 未确定不视为通过。
-                self.assertAlmostEqual(answer['objective'],reference['value'],delta=.002)  # 边界误差不超过 0.002 kW。
+            e = GridPhysics(c, [1, 1, 1])  # 所有候选走廊都进入紧凑模型。
+            x = e.network.encode_plan(choice)  # 只编码型号，潮流方向由功率符号决定。
+            self.assertEqual(e.network.decode_plan(x),choice)
+            direct = MasterProblem(e, threads=1)  # 保留同一套原始方程。
+            with direct.model:  # 每次查询及时释放求解器。
+                direct.x.LB = direct.x.UB = x  # 固定指定拓扑和设备。
+                answer = direct.solve()  # 求最大总负荷；未证得最优即抛出。
+            reference = dispatch_support(tree,np.ones(3))  # 独立消元计算。
+            self.assertAlmostEqual(answer['objective'],reference['value'],delta=.002)  # 边界误差不超过 0.002 kW。
 
     def test_topology_rejects_island_cycle_at_zero_load(self):  # 零负荷也不能让孤岛环通过径向约束。
-        e = GridPhysics(FourBus(),'linear')  # 规划中必须供到全部非根节点。
+        e = GridPhysics(FourBus(), [1, 1, 1])  # 规划中必须供到全部非根节点。
         x = e.network.encode_plan({'01': None, '12': 'L', '13': 'L', '02': None, '23': 'L'})
         problem = MasterProblem(e,power=np.zeros(3), threads=1)  # 完整物理模型在零负荷下也必须排除孤岛环。
         with problem.model:  # 测试后释放模型。
@@ -61,17 +58,16 @@ class FourBusTests(unittest.TestCase):  # 不生成建设组合表，审核代�
             self.assertIsNone(problem.solve())  # 连通流必须给出明确不可行证明。
 
     def test_joint_queries_and_cuts_match_full_planning_model(self):  # 联合割必须适用于所有合法树和型号。
-        for method in ('linear', 'socp'):
-            e = GridPhysics(FourBus(), method)
-            x = e.network.encode_plan(e.network.initial_plan)
-            cut = SubProblem(e, threads=1).solve(x,np.array([40.,40.,40.]))['cut']  # 含型号及拓扑变量的分离割。
-            self.assertIsNotNone(cut)  # 必须实际形成分离证书。
-            direct = MasterProblem(e, threads=1)  # 遍历由求解器隐式搜索的全部合法拓扑。
-            with direct.model:  # 测试该割在整个紧凑可行域上的最小余量。
-                direct.model.setObjective(cut[0]+cut[1:4]@direct.power+cut[4:]@direct.x,GRB.MINIMIZE)  # 不加入被审核割。
-                direct.model.Params.TimeLimit = 20.  # 仅限制测试的审核时间。
-                direct.model.optimize()  # 全局下界检查，未靠抽样宣称有效。
-                self.assertGreaterEqual(direct.model.ObjBound,-1e-7)  # 不能误切任何合法树上的可行点。
+        e = GridPhysics(FourBus(), [1, 1, 1])
+        x = e.network.encode_plan(e.network.initial_plan)
+        cut = SubProblem(e, threads=1).solve(x,np.array([40.,40.,40.]))['cut']  # 含型号及拓扑变量的分离割。
+        self.assertIsNotNone(cut)  # 必须实际形成分离证书。
+        direct = MasterProblem(e, threads=1)  # 遍历由求解器隐式搜索的全部合法拓扑。
+        with direct.model:  # 测试该割在整个紧凑可行域上的最小余量。
+            direct.model.setObjective(cut[0]+cut[1:4]@direct.power+cut[4:]@direct.x,GRB.MINIMIZE)  # 不加入被审核割。
+            direct.model.Params.TimeLimit = 20.  # 仅限制测试的审核时间。
+            direct.model.optimize()  # 全局下界检查，未靠抽样宣称有效。
+            self.assertGreaterEqual(direct.model.ObjBound,-1e-7)  # 不能误切任何合法树上的可行点。
 
 
 if __name__=='__main__':  # 支持单独运行基础网架回归。

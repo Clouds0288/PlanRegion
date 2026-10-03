@@ -4,22 +4,46 @@
 符号分区在子进程中计算：子进程的 RunMonitor 经队列发送增量帧，主进程加分区前缀、乘符号后并入同一时间轴。
 二维/三维共用外包络、过程标记及回放控制，只在几何绘制处区分维数。
 """
+from bisect import bisect_right
 from pathlib import Path
+from textwrap import fill
 from threading import Condition, Event, Thread
 from time import perf_counter
+from typing import NamedTuple
 import gzip
 import json
 import multiprocessing
 
 import numpy as np
 
+from geometry import box_vertices, cell_centers, clip_polytope, covered, polygon_union
 from plot import (CUT, GLOBAL, INNER, NETWORK, OUTER, REFERENCE, SP, STEP_STYLE, cap, cut_polygon, cut_segment, draw_3d,
                   draw_geometry, voxel_faces)
 
 COMPARISONS = {'result_ac': '实验结果 — AC', 'result_socp': '实验结果 — SOCP', 'socp_ac': 'SOCP — AC'}
 MERGED = ('schemes', 'cones', 'cut_history')   # 按键增量合并的状态；锥被细分时其键置 None
+CUT_ACCEPTED = ('stagnated', 'exact', 'empty')   # 计入 N^CUT 的网架状态（empty：N^CUT_x=∅，即分区内 R^SOCP_x=∅）
 FRAME_STRIDE = 64   # 回放状态快照间隔（帧）：任一帧的状态从最近的快照向后合并
-_CHANNEL = None   # 子进程：(事件队列, 暂停, 单步, 取消)，由进程池初始化函数 _connect 设置
+_CHANNEL = None   # 子进程：与主进程共用的 Channel，由进程池初始化函数 _connect 设置
+
+
+class Channel(NamedTuple):
+    """主进程与分区子进程共用：事件队列、暂停 / 单步 / 取消信号与仍在计算的分区数。"""
+    events: object
+    pause: object
+    step: object
+    cancel: object
+    running: object
+
+
+def partition_label(sign):
+    """符号向量 → 分区标签，如 (1, -1) → '+-'。"""
+    return ''.join('+' if s > 0 else '-' for s in sign)
+
+
+def partition_sign(label):
+    """分区标签 → 符号向量，如 '+-' → [1, -1]。"""
+    return np.array([1 if s == '+' else -1 for s in label])
 
 
 def _connect(channel):
@@ -36,8 +60,21 @@ def comparison_metrics(computed, reference):
                 reference_cells=int(reference.sum()), computed_cells=int(computed.sum()))
 
 
-class RegionTimeout(RuntimeError):
-    """本次构域未在时限内取得全局证书。"""
+def grid_comparison(reference, result):
+    """配对扫描参考上的逐格对比（格心）：AC、SOCP 标签 1/-1/0 为可行/已证不可行/未决，未决格不计入对应参考。返回
+    结果 inner、outer 的格心覆盖掩码（形状同 states）、二者相对 AC 的 metrics、三组 comparisons 与两种参考的未决格数。"""
+    states, socp = np.asarray(reference['states']), np.asarray(reference['socp_states'])
+    points = cell_centers(reference)
+    known, truth = states.ravel() != 0, states.ravel() == 1
+    masks = {key: covered(points, result[key]).reshape(states.shape) for key in ('inner', 'outer')}
+    metrics = {key: comparison_metrics(mask.ravel()[known], truth[known]) for key, mask in masks.items()}
+    # 计算域—AC、计算域—SOCP、SOCP—AC：区分误差来自松弛还是模型
+    both = (socp != 0) & (states != 0)
+    comparisons = dict(result_ac=metrics['inner'],
+                       result_socp=comparison_metrics(masks['inner'][socp != 0], socp[socp != 0] == 1),
+                       socp_ac=comparison_metrics((socp == 1)[both], (states == 1)[both]))
+    return dict(masks=masks, metrics=metrics, comparisons=comparisons,
+                undecided_cells=int(np.count_nonzero(~known)), socp_undecided_cells=int(np.count_nonzero(socp == 0)))
 
 
 def _plain(value):
@@ -87,19 +124,18 @@ def signed_values(value, sign, prefix, key=''):
 class RunMonitor:
     """求解线程只提交数值；Tk 与绘图仅在主线程执行。sign 不为空时是子进程中的分区监视器。"""
 
-    def __init__(self, *, output=None, clock=perf_counter, algorithm='主线', sign=None):
+    def __init__(self, *, output=None, algorithm='主线', sign=None):
         self.output = None if output is None else Path(output)
-        self._clock = clock
         self.algorithm = algorithm
-        self.label = None if sign is None else ''.join('+' if s > 0 else '-' for s in sign)
+        self.label = None if sign is None else partition_label(sign)
         self.channel = None if sign is None else _CHANNEL
-        self.shared = None            # 主进程：与子进程共用的 (队列, 暂停, 单步, 取消)
+        self.shared = None            # 主进程：与子进程共用的 Channel
         self.condition = Condition()
         self.cancelled = Event()
         self.paused = False
         self.permits = 0
         self.paused_seconds = 0.
-        self.started = self._clock()
+        self.started = perf_counter()
         self.time_limit = np.inf
         self.state, self.history = {}, []
         self.snapshots = [{}]         # snapshots[k]：合并前 k·FRAME_STRIDE 帧后的状态
@@ -108,12 +144,12 @@ class RunMonitor:
         self.busy = False
 
     def clock(self):
-        return self._clock()-self.paused_seconds
+        return perf_counter()-self.paused_seconds
 
     def timing(self):
         return dict(total_seconds=self.clock()-self.started)
 
-    def _emit(self, event, *, checkpoint=True, **values):
+    def _emit(self, event, **values):
         """1. 只保留相对当前状态有变化的键；2. 主进程追加到时间轴，子进程送入队列；
         3. 暂停时在检查点等待，单步放行一个事件，取消时中断计算。"""
         with self.condition:
@@ -128,37 +164,37 @@ class RunMonitor:
                         del patch[key]
             patch['event'] = event
             _merge(self.state, patch)
-            before = self._clock()
+            before = perf_counter()
             if self.channel is None:
                 self.history.append(dict(elapsed=self.clock()-self.started, patch=patch))
-                while checkpoint and self.paused and not self.permits and not self.cancelled.is_set():
+                while self.paused and not self.permits and not self.cancelled.is_set():
                     self.condition.wait()
                 if self.permits:
                     self.permits -= 1
             else:
-                queue, pause, step, cancel = self.channel[:4]
-                queue.put((self.label, patch))
-                while checkpoint and pause.is_set() and not cancel.is_set() and not step.acquire(timeout=.1):
+                channel = self.channel
+                channel.events.put((self.label, patch))
+                while channel.pause.is_set() and not channel.cancel.is_set() and not channel.step.acquire(timeout=.1):
                     pass
-                if cancel.is_set():
+                if channel.cancel.is_set():
                     self.cancelled.set()
-            self.paused_seconds += self._clock()-before
+            self.paused_seconds += perf_counter()-before
             if self.cancelled.is_set():
                 raise KeyboardInterrupt()
 
     def share(self):
         """主进程：建立与分区子进程共用的事件队列、暂停 / 单步 / 取消信号与仍在计算的分区数。"""
         context = multiprocessing.get_context('spawn')
-        self.shared = context.Queue(), context.Event(), context.Semaphore(0), context.Event(), context.RawValue('i', 0)
+        self.shared = Channel(context.Queue(), context.Event(), context.Semaphore(0), context.Event(), context.RawValue('i', 0))
         return self.shared
 
     def running(self):
         """仍在计算的分区数：子进程读主进程维护的共享计数；主进程内直接构域时为 1。"""
-        return 1 if self.channel is None else self.channel[4].value
+        return 1 if self.channel is None else self.channel.running.value
 
     def close(self):
         """子进程：分区结束标记。"""
-        self.channel[0].put((self.label, None))
+        self.channel.events.put((self.label, None))
 
     def forward(self, label, patch):
         """主进程：子进程分区的增量帧加分区前缀、坐标乘符号后并入总时间轴；网架行与割行附分区符号 sign。"""
@@ -185,37 +221,20 @@ class RunMonitor:
             self.validation_state.update(values)
             self.state.update(values)
 
-    def validation(self, reference, result, *, region_key='inner'):
-        """逐格 FR/MR：配对参考的 AC 与 SOCP 标签 1/-1/0 为可行/已证不可行/未决；未决格不计入对应参考，另计格数。"""
-        from region import covered
-        # 1. 格心与两种参考
-        states, socp = np.asarray(reference['states']), np.asarray(reference['socp_states'])
-        indices = np.indices(states.shape).reshape(states.ndim, -1).T
-        lower = np.asarray(reference.get('axis_lower', np.zeros(states.ndim)))
-        points = lower+(indices+.5)*(np.asarray(reference['bounds'])-lower)/np.array(states.shape)
-        known, truth = states.ravel() != 0, states.ravel() == 1
-        # 2. 内域（主指标）与外包络相对 AC
-        metrics, masks = {}, {}
-        for key in (key for key in ('inner', 'outer') if key in result):
-            inside = covered(points, result[key])
-            metrics[key] = comparison_metrics(inside[known], truth[known])
-            masks[key] = inside.reshape(states.shape)
-        # 3. 三组对比：计算域—AC、计算域—SOCP、SOCP—AC（区分误差来自松弛还是模型）
-        both = (socp != 0) & (states != 0)
-        comparisons = dict(result_ac=metrics[region_key],
-                           result_socp=comparison_metrics(masks[region_key][socp != 0], socp[socp != 0] == 1),
-                           socp_ac=comparison_metrics((socp == 1)[both], (states == 1)[both]))
-        validation = dict(axis_lower=lower, bounds=reference['bounds'], states=states, socp_states=socp,
-                          computed_states=masks[region_key], region_key=region_key,
-                          scan_seconds=reference.get('scan_seconds'),
-                          method=reference.get('method', 'legacy_reference'),
-                          ac_identity=reference.get('metadata', {}).get('identity'),
-                          cache_path=reference.get('cache_path'),
-                          reused_points=reference.get('reused_points'), computed_points=reference.get('computed_points'),
-                          undecided_cells=int(np.count_nonzero(~known)),
-                          socp_undecided_cells=int(np.count_nonzero(socp == 0)),
-                          metrics=metrics, comparisons=comparisons, **metrics[region_key])
+    def validation(self, reference, result):
+        """记录配对扫描参考（vertify.scan_ac_reference 的结果）上的逐格对比：内域 I 为主指标，另记外域；对比面板显示
+        内域在格心上的掩码 computed_states 与两种参考。返回 grid_comparison 的结果（含 inner、outer 掩码）。"""
+        comparison = grid_comparison(reference, result)
+        validation = dict(axis_lower=reference['axis_lower'], bounds=reference['bounds'],
+                          states=np.asarray(reference['states']), socp_states=np.asarray(reference['socp_states']),
+                          computed_states=comparison['masks']['inner'], scan_seconds=reference['scan_seconds'],
+                          method=reference['method'], ac_identity=reference['metadata']['identity'],
+                          cache_path=reference['cache_path'], reused_points=reference['reused_points'],
+                          computed_points=reference['computed_points'], undecided_cells=comparison['undecided_cells'],
+                          socp_undecided_cells=comparison['socp_undecided_cells'], metrics=comparison['metrics'],
+                          comparisons=comparison['comparisons'], **comparison['metrics']['inner'])
         self._validation_update(phase='完成', status='completed', validation=validation)
+        return comparison
 
     def frame(self, index):
         """第 index 帧的状态：从最近的快照向后合并，途经步长的整数倍时补存快照（_merge 不原地修改，浅拷贝即可）。"""
@@ -241,15 +260,14 @@ class RunMonitor:
                 self.cancelled.set()
             self.condition.notify_all()
         if self.shared is not None:
-            _, pause, step, cancel = self.shared[:4]
             if action in ('pause', 'next'):
-                pause.set()
+                self.shared.pause.set()
             if action == 'next':
-                step.release()
+                self.shared.step.release()
             if action == 'continue':
-                pause.clear()
+                self.shared.pause.clear()
             if action == 'cancel':
-                cancel.set()
+                self.shared.cancel.set()
 
     def save(self):
         if self.output is None:
@@ -313,8 +331,7 @@ ALL_PARTITIONS = '全部分区'
 
 
 def accepted(row):
-    """网架行的 N^CUT_x 是否计入 I：状态在 region.CUT_ACCEPTED 中且非空。"""
-    from region import CUT_ACCEPTED
+    """网架行的 N^CUT_x 是否计入 I：状态在 CUT_ACCEPTED 中且非空。"""
     return row['status'] in CUT_ACCEPTED and len(row['outer']) > 0
 
 
@@ -323,9 +340,6 @@ class NativeWindow:
 
     def __init__(self, monitor, *, root=None, controller=None):
         import tkinter as tk
-        from tkinter import ttk
-        from matplotlib.figure import Figure
-        from matplotlib.backends.backend_tkagg import FigureCanvasTkAgg
         import matplotlib as mpl
         mpl.rcParams.update({'font.family': 'sans-serif', 'font.sans-serif': ['Microsoft YaHei', 'DejaVu Sans'],
                              'font.size': 9, 'axes.unicode_minus': False, 'svg.fonttype': 'none'})
@@ -344,6 +358,17 @@ class NativeWindow:
         self.frame_meta, self.partition_at = [], None       # 各帧 (分区, 事件, 是否步骤)；沿历史累积的当前分区
         self.log_rows = []                                  # 步骤栏各行对应的帧号
         self.scheme_page, self.focus_scheme = 0, None
+        # 界面自上而下：状态与选项行、面板（A 与步骤栏、B、C）、回放控制
+        self._build_header()
+        self._build_panels()
+        self._build_controls()
+        if controller is None:
+            self.root.after(40, self.tick)
+
+    def _build_header(self):
+        """状态行、当前步骤说明与选项行：网架页跟随、坐标取整个分区盒、逐步跟踪的分区。"""
+        import tkinter as tk
+        from tkinter import ttk
         self.status, self.step_text = tk.StringVar(value='初始化'), tk.StringVar(value='步骤：—')
         ttk.Label(self.root, textvariable=self.status, font=('Microsoft YaHei', 11)).pack(anchor='w', padx=12, pady=(8, 2))
         ttk.Label(self.root, textvariable=self.step_text, font=('Microsoft YaHei', 10, 'bold'), wraplength=1380,
@@ -360,6 +385,13 @@ class NativeWindow:
         self.partition_selector.pack(side='right')
         self.partition_selector.bind('<<ComboboxSelected>>', lambda event: self.redraw())
         ttk.Label(options, text='逐步跟踪').pack(side='right', padx=4)
+
+    def _build_panels(self):
+        """左侧 A 全局总图与步骤栏；右侧标签页 B 网架（分页、滚动的网架面板）与 C 实验 / SOCP / AC 对比。"""
+        import tkinter as tk
+        from tkinter import ttk
+        from matplotlib.figure import Figure
+        from matplotlib.backends.backend_tkagg import FigureCanvasTkAgg
         body = ttk.Panedwindow(self.root, orient='horizontal')
         body.pack(fill='both', expand=True, padx=8, pady=6)
         left, right = ttk.Frame(body), ttk.Notebook(body)
@@ -415,24 +447,25 @@ class NativeWindow:
         self.scheme_frame.bind('<Configure>', lambda event: self.scroll.configure(scrollregion=self.scroll.bbox('all')))
         self.scroll.bind('<Configure>', lambda event: self.scroll.itemconfigure(self.embedded, width=event.width))
         self.scheme_frame.columnconfigure((0, 1), weight=1)
+
+    def _build_controls(self):
+        """计算控制（暂停 / 计算一步 / 继续；双窗口同步回放时没有）、回放按钮、进度条与帧号。"""
+        import tkinter as tk
+        from tkinter import ttk
         controls = ttk.Frame(self.root)
         controls.pack(fill='x', padx=10, pady=(2, 10))
-        actions = (('暂停计算', lambda: monitor.control('pause')),
-                             ('计算一步', lambda: monitor.control('next')),
-                             ('继续计算', lambda: monitor.control('continue')),
-                             ('上一步', lambda: self.step(-1)),
-                             ('下一步', lambda: self.step(1)),
-                             ('上一割', lambda: self.seek_cut(-1)),
-                             ('下一割', lambda: self.seek_cut(1)),
+        actions = (('暂停计算', lambda: self.monitor.control('pause')),
+                   ('计算一步', lambda: self.monitor.control('next')),
+                   ('继续计算', lambda: self.monitor.control('continue')),
+                   ('上一步', lambda: self.step(-1)), ('下一步', lambda: self.step(1)),
+                   ('上一割', lambda: self.seek_cut(-1)), ('下一割', lambda: self.seek_cut(1)),
                    ('播放 / 暂停', self.play), ('实时', self.go_live))
-        for text, action in actions if controller is None else actions[3:]:
+        for text, action in actions if self.controller is None else actions[3:]:
             ttk.Button(controls, text=text, command=action).pack(side='left', padx=2)
         self.frame_text = tk.StringVar(value='0 / 0')
         ttk.Label(controls, textvariable=self.frame_text, width=15).pack(side='right')
         self.slider = ttk.Scale(controls, from_=0, to=1, command=self.slide)
         self.slider.pack(side='left', fill='x', expand=True, padx=8)
-        if controller is None:
-            self.root.after(40, self.tick)
 
     def close(self):
         if self.controller is not None:
@@ -546,16 +579,15 @@ class NativeWindow:
     @staticmethod
     def _boxes(state):
         """各分区盒（带符号 kW）：尚无锥的分区以盒为外界。"""
-        from itertools import product
-        corners = np.array(list(product((0., 1.), repeat=len(state['bounds']))))*np.asarray(state['bounds'])
-        return [corners*np.array([1 if s == '+' else -1 for s in label]) for label in state.get('partitions', [])]
+        corners = box_vertices(len(state['bounds']))*np.asarray(state['bounds'])
+        return [corners*partition_sign(label) for label in state['partitions']]
 
     def _outer_polygons(self, state):
         """外界 K^OUT：各锥外块 K^OUT_k；尚无锥的分区取分区盒。"""
         cones = {key: row for key, row in state.get('cones', {}).items() if row}
         started = {key.split(':')[0] for key in cones}
         return ([row['outer'] for row in cones.values()]
-                +[box for label, box in zip(state.get('partitions', []), self._boxes(state)) if label not in started])
+                +[box for label, box in zip(state['partitions'], self._boxes(state)) if label not in started])
 
     @staticmethod
     def _inner_polygons(state):
@@ -587,18 +619,15 @@ class NativeWindow:
             lower, upper = self.limits
             if scheme is None:
                 return lower, upper
-            sign, margin = np.array([1 if s == '+' else -1 for s in scheme.split(':')[0]]), .04*(upper-lower)
+            sign, margin = partition_sign(scheme.split(':')[0]), .04*(upper-lower)
             return np.where(sign > 0, -margin, lower), np.where(sign < 0, margin, upper)
         groups = ([row['vertices'] for key in ('inner', 'outer') for row in state.get('result', {}).get(key, [])]
                   or self._boxes(state))   # 尚无结果时取全部分区盒
         reference = state.get('validation')
         if reference:
-            truth = np.asarray(reference['states']) == 1
-            if 'socp_states' in reference:
-                truth |= np.asarray(reference['socp_states']) == 1
-            cells = np.argwhere(truth)
+            cells = np.argwhere((np.asarray(reference['states']) == 1) | (np.asarray(reference['socp_states']) == 1))
             if len(cells):
-                lower = np.asarray(reference.get('axis_lower', np.zeros(d)))
+                lower = np.asarray(reference['axis_lower'])
                 widths = (np.asarray(reference['bounds'])-lower)/np.shape(reference['states'])
                 groups.append(lower+np.array([cells.min(axis=0), cells.max(axis=0)+1])*widths)
         points = np.vstack([np.asarray(group).reshape(-1, d) for group in groups if len(group)])
@@ -701,7 +730,6 @@ class NativeWindow:
 
     def _show_steps(self):
         """当前步骤（所选分区中不晚于当前帧的最后一步）的说明，步骤栏列出它之前 STEP_LOG-3 步与之后 2 步。"""
-        from bisect import bisect_right
         steps = self._steps()
         position = bisect_right(steps, self.index)-1
         self.log_rows = steps[max(0, position-STEP_LOG+3):position+3]
@@ -778,7 +806,6 @@ class NativeWindow:
 
     def _removed(self, state, scheme=None):
         """只在加割帧显示真实前后差集；无需另存被切掉的多边形。"""
-        from region import polygon_union
         if state.get('event') != 'cut':
             return polygon_union([])
         before = self.monitor.frame(self.index-1).get('schemes', {})
@@ -790,7 +817,6 @@ class NativeWindow:
 
     def _draw_polygons(self, ax, polygons, state, *, gid=None, **style):
         """面板共用几何入口；只在此处分派二维并集和三维凸域绘制。"""
-        from region import polygon_union
         if len(state['bounds']) == 3:
             draw_3d(ax, polygons, state['bounds'], gid=gid, **style)
         else:
@@ -808,7 +834,6 @@ class NativeWindow:
 
     def _regions(self, ax, state):
         """全部分区的外界 K^OUT 与结果内域 I：二维为并集（内域再与外包络取交），三维为各锥远端面片与网架内域。"""
-        from region import polygon_union
         if len(state['bounds']) == 2:
             hull = polygon_union(self._outer_polygons(state))
             draw_geometry(ax, hull, color=OUTER, fill=True, alpha=.10)
@@ -848,7 +873,6 @@ class NativeWindow:
     def _draw_steps(self, ax, state):
         """步骤图层：所选分区最近 STEP_TRAIL 个步骤的点与线（越早越淡），当前步骤的点加短标签，落在坐标外的点
         贴边画空心；当前帧新建或求界的锥描出 K^IN_k（粗实线）与 K^OUT_k（虚线），切割中的网架描出 N^CUT_x（点线）。"""
-        from bisect import bisect_right
         d, (lower, upper) = len(state['bounds']), self.limits
         # 1. 当前帧的锥与切割中的网架
         patch = self.monitor.history[self.index]['patch']
@@ -943,7 +967,6 @@ class NativeWindow:
             self._draw_removed(ax, state, key)
             self._draw_cuts(ax, state, key)
             self._markers(ax, state, key)
-            from textwrap import fill
             initial = state.get('initial_plan', {})
             changes = [f"{edge}:{'断开' if kind is None else '并联' if kind == 'parallel' else '接入' if kind == 'existing' else kind}"
                        for edge, kind in row['choice'].items() if initial.get(edge) != kind]
@@ -956,7 +979,7 @@ class NativeWindow:
         validation = state.get('validation')
         if validation is None:
             progress = state.get('scan_progress')
-            message = (state.get('validation_note', '构域完成后独立扫描') if progress is None else
+            message = ('构域完成后独立扫描' if progress is None else
                        f'AC / SOCP 扫描  {progress[0]} / {progress[1]}  ({100*progress[0]/progress[1]:.1f}%)')
             if state.get('error'):
                 message = ('校验未完成' if progress is not None else '构域未完成')+'\n'+state['error']
@@ -1002,7 +1025,7 @@ class NativeWindow:
         fmt = lambda value: '—' if value is None else f'{value:.3f}%'
 
         def by_partition(cells):
-            labels = [''.join('+' if v >= 0 else '-' for v in point) for point in lower+(np.argwhere(cells)+.5)*step]
+            labels = [partition_label(point >= 0) for point in lower+(np.argwhere(cells)+.5)*step]
             counts = sorted(((labels.count(label), label) for label in set(labels)), reverse=True)
             return ' · '.join(f'{label} {count}' for count, label in counts) or '—'
         self.comparison_text.set('\n'.join([*(f'{label}：遗漏 {fmt(validation["comparisons"][key]["mr_percent"])}'
@@ -1013,8 +1036,7 @@ class NativeWindow:
         ax.legend(handles=handles, loc='upper right', frameon=False, fontsize=8)
 
     def _removed_3d(self, state, scheme=None):
-        """当前割在各网架旧 Nx 中实际切掉的部分，仅用于本帧显示。"""
-        from region import clip_polytope
+        """当前割在各网架旧 Nx 中实际切掉的部分，仅用于本帧显示（N^CUT_x 为空的网架得空集）。"""
         if state.get('event') != 'cut':
             return []
         before = self.monitor.frame(self.index-1).get('schemes', {})
@@ -1022,7 +1044,7 @@ class NativeWindow:
         cut = np.asarray(latest['cut'])
         bounds = np.asarray(state['bounds'])
         keys = before if scheme is None else [scheme]
-        return [clip_polytope(np.asarray(before[key]['outer'])/bounds,
+        return [clip_polytope(np.asarray(before[key]['outer']).reshape(-1, 3)/bounds,
                              -cut[0]-cut[4:]@before[key]['x'], -cut[1:4]*bounds)*bounds
                 for key in keys if key in before and np.array_equal(before[key].get('sign'), latest.get('sign'))]
 
@@ -1081,8 +1103,7 @@ class SynchronizedReplay:
 if __name__ == '__main__':
     import argparse
     parser = argparse.ArgumentParser(description='原生窗口回放，不运行优化器')
-    parser.add_argument('recording', nargs='?', type=Path,
-                        default=Path(__file__).resolve().parent/'results'/'fourbus_2d'/'monitor.json.gz')
+    parser.add_argument('recording', type=Path)
     parser.add_argument('--compare', type=Path, help='第二份轨迹；打开两窗口同步逐帧回放')
     args = parser.parse_args()
     if args.compare is not None:

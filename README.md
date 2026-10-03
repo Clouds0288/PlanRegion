@@ -39,17 +39,15 @@ N^CUT_x 是网架可行域的外近似，所以 RCUT 的结果内域 **I** 是�
 python -X utf8 main.py --case case33 --dimension 2
 python -X utf8 main.py --case case33 --dimension 3 --output results/mainline/new_run
 python -X utf8 main.py --case case33plan --dimension 3 --seconds 1000 --output results/plan/run_1
-python -X utf8 main.py --convergence results/mainline/mode_1/case33plan_18_25_30.json.gz results/plan/run_1/mode_1/case33plan_18_25_30.json.gz
 ```
 
-构域默认共享 300 秒总时限（`main.py` 的 `CASE_TIME_LIMIT`，`--seconds` 可改），`WORKERS=16` 个分区进程并行；事后扫描另计时。`--no-ui` 不开实时窗口，`--no-scan` 只构域。扫描格数默认二维 160×160、三维 80³（`--divisions`）。记录写入 `<输出目录>/mode_1/<案例>_<节点>.json.gz`，逐格对比写入旁边的 `_comparison/`。`--convergence` 把同一算例多次运行的收敛过程（各分区夹逼间隙、内域相对 AC 的 MR/FR 随时间）画成一张图，存于各运行目录的公共上级。
+每次运行分三步：构域 → 扫描校验 → 收敛过程图。构域默认共享 300 秒总时限（`main.py` 的 `CASE_TIME_LIMIT`，`--seconds` 可改），`WORKERS=16` 个分区进程并行；构域记录先落盘，再按其范围扫描校验，扫描另计时。窗口实时显示构域与扫描进度，最后在对比面板呈现结果；窗口关闭后（`--no-ui` 时紧接着）画收敛过程图：各分区夹逼间隙、内域相对 AC 的 MR/FR 随时间。记录写入 `<输出目录>/mode_1/<案例>_<节点>.json.gz`，逐格对比写入旁边的 `_comparison/`，收敛过程图为 `<输出目录>/<案例>_<节点>_convergence.png`。校验结束前关闭窗口即取消，之后可用 `--validate` 补完。
 
 ## 前端与回放
 
 计算时原生窗口实时显示，结束后同一窗口可回放；回放不重新求解。
 
 ```cmd
-python -X utf8 main.py --case case33 --dimension 3 --replay
 python -X utf8 monitor.py results/mainline/mode_1/case33_18_25_30.json.gz
 python -X utf8 monitor.py A.json.gz --compare B.json.gz
 ```
@@ -97,10 +95,10 @@ R、H、RB、RCUT2 的方法对照运行与汇总报告，以及旧主线（逐�
 
 ## 扫描复用
 
-`vertify.py` 统一管理 AC 与 SOCP。缓存位置为 `results/scan/<网络>/<节点>/<物理身份>/region_<格架摘要>.npz`；相同配置和坐标复用已有点，扩界后只补缺失点。改变电流限额、功率因数、预算、节点顺序或模式会隔离缓存。主线的扫描框为 SOCP 全局界与结果外界范围的并。
+`vertify.py` 统一管理 AC 与 SOCP 扫描（库）。校验按构域结果的外界范围（与 SOCP 全局界取并）取参考网格，缓存位置为 `results/scan/<网络>/<节点>/<物理身份>/region_<格架摘要>.npz`：已覆盖的格点直接复用；没有缓存时自动扫描；只覆盖一部分时沿用已有格架扩界，只补扫缺失的格点。扫描中每 30 秒落盘，中断后重跑会接着扫。每轴格数 `SCAN_DIVISIONS`（二维 160、三维 80）只在某配置首次扫描时决定格距，之后沿用缓存的格架。改变电流限额、功率因数、预算或节点顺序会隔离缓存。为已有记录单独校验（例如扫描被中断）用 `main.py --validate`，会改写记录中的校验、重新导出逐格对比并重画收敛过程图。
 
 ```cmd
-python -X utf8 vertify.py results/mainline/mode_1/case33_18_25.json.gz --workers 20
+python -X utf8 main.py --validate results/mainline/new_run/mode_1/case33_18_25_30.json.gz
 ```
 
 `summary.json` 中 result_ac/result_socp/socp_ac 各含遗漏率（MR）和多余率（FR）：遗漏率分母为参考可行点数，多余率分母为计算域点数；未决标签不作为不可行。扫描校验不会改写构域认证状态。
@@ -109,12 +107,13 @@ python -X utf8 vertify.py results/mainline/mode_1/case33_18_25.json.gz --workers
 
 | 文件 | 职责 |
 |---|---|
-| `main.py` | 参数、计算与回放入口 |
-| `model.py` | 物理模型、OBBT 紧化、SP 与联合割、锥 MISOCP |
-| `region.py` | 选点流程：径向锥夹逼、逐网架割平面、分区并行，以及凸多面体几何与并集测度 |
-| `monitor.py` | 过程记录与原生窗口（实时 / 回放） |
-| `plot.py` | 绘图基元：配色、二维几何、三维凸域、远端面片、体素表面、割的截线 |
-| `vertify.py` | 独立 AC/SOCP 参考、缓存、结果比较 |
+| `main.py` | 参数与主线三步：构域 → 扫描校验 → 收敛过程图；`--validate` 单独校验已有记录 |
+| `model.py` | 物理模型（SOCP）、OBBT 紧化、SP 与联合割、锥 MISOCP |
+| `region.py` | 选点流程：径向锥夹逼、逐网架割平面、分区并行与夹逼测度 |
+| `geometry.py` | 凸多面体几何：顶点、半空间、裁剪、测度与并集，扫描格心 |
+| `monitor.py` | 过程记录、逐格对比与原生窗口（实时 / 回放），回放入口 `monitor.py 记录` |
+| `plot.py` | 绘图基元：配色、二维几何、三维凸域、远端面片、体素表面、割的截线；收敛过程图 |
+| `vertify.py` | 独立 AC/SOCP 参考扫描、缓存、对比导出与收敛过程 |
 | `Network/` | FourBus、Case33、Case33Plan 与原始数据 |
 | `tests/` | 物理、构域、扫描与回放回归 |
 

@@ -4,10 +4,9 @@ import numpy as np
 import pytest
 from Network.case33bw import Case33
 from Network.four_bus_five_corridor import FourBus
-from monitor import RunMonitor
+from monitor import grid_comparison
 from vertify import (scan_ac_reference, export_comparison, ac_identity, AC_CACHE_METHOD,
-                     ac_scan_line, budget_schemes, signed_ac_witness, reference_box)
-from model import GridPhysics
+                     scan_line, budget_schemes, signed_ac_witness, reference_box)
 
 
 def test_fixed_ac_keeps_physical_point_above_artificial_current_cap(tmp_path):
@@ -25,7 +24,7 @@ def test_ac_scanner_finds_a_different_topology_than_the_initial_plan(tmp_path):
     power = np.array([-5000., -3000.])
     initial = network.encode_plan(network.initial_plan)
     assert not signed_ac_witness(network, initial, power)['feasible'][0]
-    schemes = budget_schemes(GridPhysics(network, 'socp'), 7)
+    schemes = budget_schemes(network, 7)
     assert len(schemes) == 12
     answer = scan_ac_reference(network, 7, dict(axis_lower=power-.5,bounds=power+.5,shape=(1,1)),
                                tmp_path/'ac.npz',workers=1)
@@ -43,12 +42,12 @@ def test_rectangular_export_coordinates_and_miss_denominators(tmp_path):
     vertices = np.array([[-1., -1.5], [0., -1.5], [0., 1.5], [-1., 1.5]])
     result = dict(inner=[dict(vertices=vertices)], outer=[dict(vertices=vertices)],
                   status='time_limit', certified=False)
-    summary = export_comparison(network, 7, result, ac, tmp_path)
+    summary = export_comparison(network, 7, result, ac, grid_comparison(ac, result), tmp_path/'run.json.gz')
     metrics = summary['metrics']['inner']
     assert metrics['reference_cells'] == 4 and metrics['computed_cells'] == 3
     assert metrics['missed_cells'] == 2 and metrics['extra_cells'] == 1
     assert metrics['mr_percent'] == 50. and metrics['fr_percent'] == pytest.approx(100/3)
-    csv = np.genfromtxt(tmp_path/'comparison.csv', delimiter=',', names=True)
+    csv = np.genfromtxt(tmp_path/'run_comparison'/'comparison.csv', delimiter=',', names=True)
     assert csv.dtype.names == ('p_18_kw', 'p_25_kw', 'ac_state', 'socp_state', 'inner', 'outer')
     comparisons = summary['comparisons']
     assert comparisons['result_ac'] == metrics
@@ -56,30 +55,28 @@ def test_rectangular_export_coordinates_and_miss_denominators(tmp_path):
     assert comparisons['result_socp']['fr_percent'] == 0.
     assert comparisons['socp_ac']['mr_percent'] == 0.
     assert comparisons['socp_ac']['fr_percent'] == 20.
-    with np.load(tmp_path/'comparison.npz') as saved:
+    with np.load(tmp_path/'run_comparison'/'comparison.npz') as saved:
         np.testing.assert_array_equal(saved['socp_states'], csv['socp_state'])
         np.testing.assert_array_equal(saved['power'], [[-.5,-1.],[-.5,0.],[-.5,1.],[.5,-1.],[.5,0.],[.5,1.]])
         np.testing.assert_array_equal(saved['ac_states'], csv['ac_state'])
 
 
 def test_unknown_ac_points_are_excluded_and_counted():
-    monitor = RunMonitor()
-    monitor.validation(dict(bounds=[2., 1.], states=[[0], [1]], socp_states=[[0], [1]]),
-                       dict(inner=[dict(vertices=[[1., 0.], [2., 0.], [2., 1.], [1., 1.]])]))
-    validation = monitor.state['validation']
-    assert validation['undecided_cells'] == validation['socp_undecided_cells'] == 1
-    assert validation['mr_percent'] == validation['fr_percent'] == 0.   # 只按已决的一格计算
+    comparison = grid_comparison(dict(axis_lower=[0., 0.], bounds=[2., 1.], states=[[0], [1]], socp_states=[[0], [1]]),
+                                 dict(inner=[dict(vertices=[[1., 0.], [2., 0.], [2., 1.], [1., 1.]])], outer=[]))
+    assert comparison['undecided_cells'] == comparison['socp_undecided_cells'] == 1
+    metrics = comparison['metrics']['inner']
+    assert metrics['mr_percent'] == metrics['fr_percent'] == 0.   # 只按已决的一格计算
 
 
 def test_three_dimensional_serial_parallel_and_full_ac_agree(tmp_path):
     network = FourBus()
     grid = dict(axis_lower=np.zeros(3), bounds=np.array([65.,55.,45.]), shape=(2,3,2))
-    serial = scan_ac_reference(network, 20000., grid, tmp_path/'serial.npz', workers=1, mode=0)
-    parallel = scan_ac_reference(network, 20000., grid, tmp_path/'parallel.npz', workers=2, mode=0)
+    serial = scan_ac_reference(network, 20000., grid, tmp_path/'serial.npz', workers=1)
+    parallel = scan_ac_reference(network, 20000., grid, tmp_path/'parallel.npz', workers=2)
     np.testing.assert_array_equal(serial['states'], parallel['states'])
     power = (np.indices(grid['shape']).reshape(3,-1).T+.5)*grid['bounds']/np.array(grid['shape'])
-    full = ac_scan_line((np.arange(len(power)),power),network=network,budget=20000.,schemes=None,mode=0)
-    assert not full['errors']
+    full = scan_line((np.arange(len(power)), power), network=network, budget=20000., ac=True)   # 只用完整 AC 等式
     np.testing.assert_array_equal(full['states'],serial['states'].ravel())
 
 

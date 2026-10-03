@@ -6,10 +6,10 @@ import numpy as np
 from threadpoolctl import threadpool_limits
 
 from Network.four_bus_five_corridor import FourBus
-from model import GridPhysics, MasterProblem, SubProblem
-from model import PortSubProblem, PortPhysics, port_bounds, ray_support
-from monitor import signed_values, RunMonitor
+from model import GridPhysics, MasterProblem, SubProblem, port_bounds, ray_support
+from monitor import grid_comparison, signed_values
 from plot import cut_polygon
+from tests.planning_checks import finite_limits
 
 
 class SignedPartitionTests(unittest.TestCase):
@@ -21,30 +21,17 @@ class SignedPartitionTests(unittest.TestCase):
     def tearDownClass(cls):
         cls.pool.restore_original_limits()
 
-    def test_positive_support_matches_original_model(self):
-        for d in (2, 3):
-            nodes = tuple(range(1, d+1))
-            for direction in [*np.eye(d), np.ones(d)]:
-                values = []
-                for signed in (False, True):
-                    net = FourBus(load_nodes=nodes)
-                    equations = PortPhysics(net, np.ones(d)) if signed else GridPhysics(net, 'socp')
-                    problem = MasterProblem(equations, budget=20000., direction=direction, threads=1)
-                    with problem.model:
-                        values.append(problem.solve()['objective'])
-                self.assertAlmostEqual(*values, delta=2e-4)
-
     def test_signed_active_and_fixed_pf_reactive_balances(self):
         for sign in ([1, -1], [-1, 1], [-1, -1]):
             net = FourBus(load_nodes=(1, 2))
-            equations = PortPhysics(net, sign)
+            equations = GridPhysics(net, sign)
             problem = MasterProblem(equations, power=[10., 10.], budget=20000., threads=1)
             with problem.model:
                 answer = problem.solve()
                 self.assertIsNotNone(answer)
                 operation = problem.operation
                 for flow, impedance, fixed, ratios in ((operation.P, equations.r, net.fixed_p, np.ones(2)),
-                    (operation.Q, equations.reactance, net.fixed_q, net.q_ratio)):
+                    (operation.Q, equations.reactance, net.fixed_q, equations.network.q_ratio)):
                     for j, node in enumerate(net.load_nodes):
                         balance = sum(flow[e, k].X-impedance[e, k]*operation.ell[e, k].X
                             for e in equations.incoming[node] for k in equations.types[e])
@@ -53,10 +40,10 @@ class SignedPartitionTests(unittest.TestCase):
 
     def test_cut_is_valid_for_all_topologies_in_its_partition(self):
         net = FourBus(load_nodes=(1, 2))
-        equations = PortPhysics(net, [-1, 1])
+        equations = GridPhysics(net, [-1, 1])
         x = net.encode_plan(net.initial_plan)
         power = .9*port_bounds(net)
-        answer = PortSubProblem(equations, threads=1).solve(x, power)
+        answer = SubProblem(equations, threads=1).solve(x, power)
         self.assertFalse(answer['feasible'])
         cut = answer['cut']
         self.assertLess(cut[0]+cut[1:3]@power+cut[3:]@x, -1e-9)
@@ -75,13 +62,12 @@ class SignedPartitionTests(unittest.TestCase):
         self.assertAlmostEqual(cut[0]+cut[1:4]@power+cut[4:]@x,
                                mapped[0]+mapped[1:4]@(sign*power)+mapped[4:]@x)
 
-    def test_sp_objective_matches_original_solver(self):
+    def test_gurobi_and_clarabel_sp_agree(self):
         for sign in ([1, 1], [1, -1], [-1, 1]):
             net = FourBus(load_nodes=(1, 2))
-            equations = PortPhysics(net, sign)
             x = net.encode_plan(net.initial_plan)
-            values = [solver(equations, threads=1).solve(x, [80., 80.], score_only=True)['eta']
-                      for solver in (SubProblem, PortSubProblem)]
+            values = [SubProblem(GridPhysics(network, sign), threads=1).solve(x, [80., 80.], score_only=True)['eta']
+                      for network in (finite_limits(net), net)]   # 同一物理：Gurobi 与 Clarabel 两条 SP 路径
             self.assertAlmostEqual(*values, delta=2e-7)
 
     def test_degenerate_three_dimensional_sp_points(self):
@@ -90,27 +76,26 @@ class SignedPartitionTests(unittest.TestCase):
                  ([1, 1, -1], [95.55900970476527, 0., 0.]),
                  ([1, 1, 1], [3.5127387337866605, 33.207723361860296, 8.489479055925155])]
         for sign, power in cases:
-            equations = PortPhysics(FourBus(load_nodes=(1, 2, 3)), sign)
-            answer = PortSubProblem(equations, threads=1).solve(x, power)
+            equations = GridPhysics(FourBus(load_nodes=(1, 2, 3)), sign)
+            answer = SubProblem(equations, threads=1).solve(x, power)
             self.assertFalse(answer['feasible'])
             self.assertLess(answer['cut'][0]+answer['cut'][1:4]@power+answer['cut'][4:]@x, -1e-9)
 
     def test_three_dimensional_rays_satisfy_original_constraints(self):
         for sign in ([1, 1, 1], [1, -1, 1], [-1, 1, -1], [-1, -1, -1]):
             net = FourBus(load_nodes=(1, 2, 3))
-            equations = PortPhysics(net, sign)
+            equations = GridPhysics(net, sign)
             x = net.encode_plan(net.initial_plan)
             for direction in [*np.eye(3), np.ones(3)]:
                 power = direction*port_bounds(net)
-                answer = ray_support(equations, 20000., x, np.zeros(3), power, threads=1, time_limit=10.)
+                answer = ray_support(equations, x, np.zeros(3), power, threads=1, time_limit=10.)
                 np.testing.assert_allclose(answer['p'], answer['ray_fraction']*power, atol=2e-6)
-                self.assertTrue(answer['feasible'])
-        equations = PortPhysics(FourBus(load_nodes=(1, 2, 3)), [1, 1, 1])
+        equations = GridPhysics(FourBus(load_nodes=(1, 2, 3)), [1, 1, 1])
         x = np.array([0, 0, 1, 1, 0, 0, 1, 0, 0, 0, 0, 0, 0, 0, 0])
-        answer = ray_support(equations, 20000., x,
+        answer = ray_support(equations, x,   # 原约束残差不达标时抛 SolveFailure
             np.array([40.56558247100506, 15.775955603107535, 11.992124112103376]),
             np.array([11.604715917462963, 33.208561013363024, .0010351113785352407]), threads=1, time_limit=10.)
-        self.assertTrue(answer['feasible'])
+        self.assertGreaterEqual(answer['ray_fraction'], 0.)
 
 
     def test_signed_metrics_and_three_dimensional_geometry(self):
@@ -118,9 +103,7 @@ class SignedPartitionTests(unittest.TestCase):
         reference = dict(axis_lower=[-2., -2.], bounds=[2., 2.], states=[[1, -1], [-1, -1]],
                          socp_states=[[1, -1], [-1, -1]])
         result = dict(inner=[dict(vertices=square)], outer=[dict(vertices=square)])
-        monitor = RunMonitor()
-        monitor.validation(reference, result)
-        metrics = monitor.validation_state['validation']['metrics']['inner']
+        metrics = grid_comparison(reference, result)['metrics']['inner']
         self.assertEqual(metrics['mr_percent'], 0.)
         self.assertEqual(metrics['fr_percent'], 0.)
         face = cut_polygon([0., 1., 1., 1., 0.], [1.], np.ones(3), -np.ones(3))

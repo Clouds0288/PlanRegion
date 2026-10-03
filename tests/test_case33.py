@@ -27,7 +27,6 @@ class Case33Tests(unittest.TestCase):  # 检查模型共享的数据和物理证
         np.testing.assert_allclose(q[:, network.selected]*network.base, power*network.q_ratio)
 
     def test_expansion_case_switches_candidates_and_budget(self):  # 扩展规划算例：开断免费、候选计建设费、原始方案费用 0。
-        from types import SimpleNamespace
         from Network.case33bw import Case33Plan, CURRENT_LIMIT
         from vertify import budget_schemes
         plan = Case33Plan(current_limit=CURRENT_LIMIT)
@@ -38,7 +37,7 @@ class Case33Tests(unittest.TestCase):  # 检查模型共享的数据和物理证
         x0 = plan.encode_plan(plan.initial_plan)
         self.assertEqual(plan.cost_offset+plan.cost@x0, 0.)
         np.testing.assert_allclose(plan.r, network.r)  # 线路参数与原 Case33 相同（候选即原联络线）
-        counts = [len(budget_schemes(SimpleNamespace(network=plan), budget)) for budget in (0, 2, plan.plan_budget)]
+        counts = [len(budget_schemes(plan, budget)) for budget in (0, 2, plan.plan_budget)]
         self.assertEqual(counts, [1, 11, 87])
 
 

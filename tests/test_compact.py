@@ -19,7 +19,7 @@ class CompactPlanningTests(unittest.TestCase):  # 核对物理映射、最优值
 
     def test_sp_handles_zero_flow_cones_of_unselected_types(self):
         network = FourBus()
-        equations = GridPhysics(network, 'socp')
+        equations = GridPhysics(network, [1, 1, 1])
         cases = (({'01': 'H', '12': None, '13': None, '02': 'L', '23': 'M'},
                   [47.47692657884853, 14.400743716323246, 7.840840158490067], True),
                  ({'01': 'H', '12': None, '13': 'L', '02': 'H', '23': None},

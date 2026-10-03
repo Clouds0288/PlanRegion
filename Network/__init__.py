@@ -67,7 +67,7 @@ class Network:
     cost_offset: float = 0.
 
     cost_unit = '相对投资单位'
-    budgets = (0., 1., 2., np.inf)
+    case33_numerics = False   # 数值设置（不改物理）：Gurobi ScaleFlag=1、Clarabel 支路锥按电流界缩放、扫描 NumericFocus/Presolve
 
     def __post_init__(self):
         self.nodes, self.corridors, self.load_nodes = tuple(self.nodes), tuple(self.corridors), tuple(self.load_nodes)
