@@ -19,7 +19,7 @@
 | 送端有功上限 | `capacity` | p.u.，`(t,)`；不等于电流或视在功率上限 |
 | 源端限值 | `source_pmax/source_qmax/source_smax` | p.u.，含线路损耗 |
 | 独立负荷总量界 | `power_limit` | kW |
-| 预算 | `budget`，费用 `cost_offset + cost @ x` | FourBus 为元；Case33 为开合次数 |
+| 预算 | `budget`，费用 `cost_offset + cost @ x` | FourBus 为元；Case33 为开合次数；Case33Plan、Case33S 为相对建设费 |
 
 根不占 `nodes` 和 `state` 的电压元素，父节点哨兵为 -1。型号按走廊输入顺序展开，`type_slices/type_corridor` 表示型号和走廊之间的唯一映射。具名 `loads[i]` 使用真实节点 ID，数组使用 `load_nodes` 顺序。`required` 是必须接入节点掩码；`road_allowed` 限制可用走廊。
 
@@ -28,6 +28,8 @@
 Case33 保留原 MATPOWER 线路与背景负荷，仅七条开关可变；相对初始状态的一次闭合或断开各计一次，预算 `switch_budget=7`。常闭开关成本系数为 -1，常开为 +1，`cost_offset` 补回初始常闭数。
 
 Case33Plan（`--case case33plan`，网架名 case33bw_plan）是扩展规划算例，线路参数与背景负荷同 Case33：`Case33Plan.switches` 为可开断的既有线路 S1–S5（7-8、11-12、14-15、28-29、32-33，基态闭合，开断不计费）；`Case33Plan.candidates` 为基态不建的候选走廊 C1–C5（即原五条联络线 8-21、9-15、12-22、18-33、25-29，阻抗不变，相对建设费 4、4、4、1、1）；其余线路固定。预算为所建候选的建设费之和，`Case33Plan.plan_budget=14` 即全部候选都可建，共 87 个径向方案。两个算例共用 `_Case33bw._build`：按 MATPOWER 数据建网，`cost_offset=-c@x0` 使原始方案的费用为 0。
+
+Case33S（网架名 case33bw_s）是勘察算例，为 Case33Plan 的子类：网架、费用与 87 个径向方案相同，全部线路 `Case33S.current_limit=250` A，电压 0.9–1.1 p.u.（原数据），`Case33S.status_quo` 为现状点 z^0=(90,420) kW（端口 18、25 的原负荷）。`Case33S.roads` 为 C1–C5 的走廊 ID；构造参数 `Case33S.__init__.available` 为可用候选路的序号（信息状态下的道路掩码），其余候选路的 `road_allowed` 为 False，MP 中即 z_e=0。
 
 入口共同采用 `CURRENT_LIMIT=200` A（实验指定值，不是原数据额定值）。`Case33(current_limit=...)` 可显式传标量或 37 项数组，构造器默认 inf 保留。`ell_limit=(current_limit/I_base)**2`，`I_base=base/(sqrt(3)*voltage_kv)` A；型号及树上的 `ell_limit` 始终是标幺电流平方。主线与 AC/SOCP 参考使用同一限额。
 
@@ -146,6 +148,7 @@ SP 固定 x,p 后最小化非负 `eta`（求解器名 violation），只允许�
 | `build_partition:how` | radial（锥部分自身满足体积准则）或 cut（夹逼判据） |
 | `build_partition:seconds / gap / volume_ratio` | 分区墙钟秒；vol(**K**^OUT)/vol(**I**)-1；ΣΔ_k/Σvol(K^IN_k) |
 | `build_partition:cones / networks / accepted / cuts` | 叶锥数；做过 CUT 的网架数；其中计入内域的数目；割数 |
+| `build_partition:schemes` | 结果中出现过的网架（方案元组）：X*（`Radial.schemes`，叶锥的 x̂、覆盖网架与锥 MISOCP 解点网架）与做过 CUT 的网架 |
 | `build_partition:inner / outer` | **I** 的块（各 K^IN_k 与按锥裁到 K^OUT_k 的 N^CUT_x）与 **K**^OUT 的块（各 K^OUT_k，尚无锥时为分区盒）的顶点，kW 幅值 |
 
 `build_region` 为每个分区起一个 spawn 子进程（`_partition`），并发数 min(`workers`, 2^d)，`settings.workers=workers`；OBBT 的线程数为 workers // 仍在计算的分区数，计数由主进程在通道中维护（提交分区时加一、收到结束标记时减一），子进程经 `RunMonitor.running` 读取，主进程内直接构域时为 1；后启动的分区得到剩余时间按并发比例的份额，总时限为 `seconds`。子进程的 `RunMonitor(sign=...)` 经 `_connect` 设置的通道发送事件，主进程 `RunMonitor.share` 建立通道、`RunMonitor.forward` 转发、`RunMonitor.close` 发送结束标记；主进程中断时置取消信号并读空队列。结果 `inner/outer` 为带符号 kW 的 `[dict(vertices, sign)]`，`build_region:axis_lower/axis_bounds` 为外域顶点的范围，`build_region:partitions` 为各分区摘要（去掉 inner/outer），另含 status/certified/timing。
@@ -187,6 +190,37 @@ SP 固定 x,p 后最小化非负 `eta`（求解器名 violation），只允许�
 
 窗口：A 是全部分区的全局总图，坐标 `NativeWindow.limits` 由 `NativeWindow._fit_limits` 取最新帧全部 K^OUT_k 的范围（两侧各 10%；可勾选取整个分区盒）；回放时即最终外界、全程不变，实时运行中只在内容超出或某一维缩到范围的 `FIT_SHRINK` 以下时重设。网架面板取其中本分区所在的卦限，新网架追加在末页、默认不跟随当前网架。`NativeWindow._draw_steps` 在 A 上画所选分区最近 `STEP_TRAIL` 个步骤（plot.py 的 `STEP_STYLE` 给标记、颜色与短标签；坐标外的点贴边画空心），网架面板只画当前步骤中属于本网架的点，并描出当前帧新建或求界的锥与切割中的 N^CUT_x；步骤栏列出 `STEP_LOG` 行，点击跳转。“逐步跟踪”选定分区后，上一步/下一步、上一割/下一割与播放只停在该分区的帧（`NativeWindow.frame_meta` 记各帧的分区、事件与是否步骤）。校验面板是逐格对比：参考可行格为浅色（三维画其表面），遗漏格红色、多余格橙色，可在计算域—AC、计算域—SOCP、SOCP—AC 之间切换。仅当前帧之前的锥、网架、割与点出现在过程图；最终扫描独立显示。result 包含 status/certified/inner/outer/partitions/timing，分区证书在 partition_end；数值未决和时限未完不能改成 certified。JSON 非有限值为 null，仅预算 null 可按 inf 解释。
 
+## 勘察（Case33-S）
+
+survey.py 在 Case33S 上以可行域族为价值函数做走廊估值与勘察决策，只算 ++ 分区（`SIGN`），端口 z=(p18,p25)。论文记号 x=(x^c,x^s) 为网架整数变量，代码中仍是不分块的型号向量 `x`（候选与开关都在 `type_keys` 中）；y 为运行状态 `state`；z 为端口功率 `power`（kW）。
+
+| 数学量 | 代码 | 含义 |
+|---|---|---|
+| 候选路 G={C1..C5}、子集 S | `ROADS`、掩码（第 k 位为 `ROADS[k]`）、`FULL`、`SUBSETS`、`members / subset / label` | 次序同 `Case33S.candidates` |
+| c^c、C(S) | `COST`、`cost` | 相对建设费（1 单位 = C4 造价）及子集之和 |
+| c^sur=ρ·c^c | `Survey.survey`、`RHO` | 勘察费，主设置 ρ=0.1 |
+| 预算档 b_1..b_K | `LEVELS` | 候选子集费用的全部不同值 {0,1,2,4,5,6,8,9,10,12,13,14}，Φ 的阶梯式因此精确 |
+| X(A,b) 与族 {S⊆A: C(S)≤b} | `family` | 规范代表 (A',b')：A' 为族中子集的并，b' 为族中最大费用；32×12 个 (A,b) 共 101 个族。X(A',b') 由 `Case33S(available=A')` 的 `road_allowed` 与 MP 预算 b' 实现 |
+| R(A,b) | `run_family:inner` | 族的 RCUT 内域 **I**（++ 分区，kW）；`build_partition` 单线程，时限 `FAMILY_SECONDS` |
+| 族中出现过的网架的候选集 | `run_family:networks` | `build_partition:schemes` 经 `built` 取所建候选路 |
+| P、κ(A,b) | `coverage` | P=[0,z̄1]×[0,z̄2]，z̄ 为 R(G,14) 的坐标最大值；κ=面积(R(A,b)∩P)/面积(P)，表 (32,12) |
+| Φ(A) | `value` | Σ_k b_k[κ(A,b_k)−κ(A,b_{k−1})]+B̄[1−κ(A,b_K)]，B̄=`FALLBACK`=20 |
+| C*_A(z) | `cost_map` | `RASTER`² 栅格上服务 z 的最小预算档，不可服务为 nan |
+| Beta(α0,β0)、q_s | `PRIOR`、`Survey.q` | 主设置 (3,2)；q_s=(α0+#A)/(α0+β0+#A+#B) |
+| 真值 χ 的概率 | `Survey.weights` | beta-binomial：B(α0+k,β0+5−k)/B(α0,β0)，k 为可用条数 |
+| 状态 s=(A,B)、J(s) | `STATES`、`Survey.J`、`Survey.best` | 3^5=243 个状态；`best` 为最优动作集合（None 为停止，并列容差 `TIE`） |
+| 束 G_j、Δ_j、Q_j、C_j、σ_j | `Survey.bundles` | 键 roads（束内按勘察费升序）/ delta / Q / C / sigma，按 σ 降序 |
+| 停止证书 | `Survey.certified` | Φ(A)−Φ(A∪U) ≤ min_{g∈U} c^sur_g |
+| 策略 | `Survey.bundle`（本文）、`Survey.ratio`（单路比值，次序 `Survey.order`）、`Survey.optimal`（DP） | 不勘察与全知见 `Survey.comparison`，名称 `POLICIES` |
+| 指标 | `Survey.metrics` | expected_cost=E[C^tot]、gap、gain=G、capture=η=G/VPI、surveys、survey_cost、coverage_gain、dp_agreement |
+| 示例轨迹 | `trajectory`、`EXAMPLE_TRUTH` | 真值为 C2、C3 阻断；每个状态的键 A / B / bundles / action / available / kappa / kappa_optimistic / lower / upper / spent |
+| 敏感性 | `sensitivity`、`GRID_Q0`、`GRID_RHO`、`PRIOR_WEIGHT` | 返回 [策略, q0, ρ] 的 gap（本文、单路比值） |
+| 抽查 | `network_region`、`spot_check`、`SPOT_RAYS`、`SPOT_FAMILIES` | 逐网架紧化可行域（射线远端、近端点的凸包）按族取并；relative_error=RCUT/并−1 |
+
+C^tot=Σ已测 c^sur+Φ(A_final)。DP 动作一致率按访问概率加权，每次勘察与最后的停止各算一次决策，并列最优算一致；全知为免费获知全部可用性的 E_χ[Φ(A(χ))]。
+
+输出在 results/survey/case33/：summary.json（101 个族的面积与间隙 `main:families`、`main:phi`、`main:J0`、`main:vpi`、`main:policies`、`main:sensitivity`、`main:spot_check`、`main:example` 与参数）、table1.csv（`valuation` 的键）、table2.csv（示例轨迹）、table3.csv（`Survey.metrics` 的键）、四张图 fig_layout / fig_valuation / fig_storyboard / fig_policy（pdf 与 png，`plot.draw_survey_*`），以及只为画图与复算存的族表 families.json（`run_family` 的键）。`python -X utf8 survey.py` 复用 families.json，`--rerun` 重算全部族；过程信息只打印到终端。
+
 ## 方法归档
 
 方法对照实验的精选运行归档在 `results/methods/<算例>/<方法>/workers_<w>/run_<r>/`（summary.json、metrics.json、timeline.csv、solves.csv.gz、snapshots/final.json.gz），登记于 `results/manifest.json` 的 `method_archive`、`runs`、`files`；本分支只保留 RCUT 的运行（阈值 1% 与 0.5%、2% 敏感性），R、H、RB、RCUT2 的运行与汇总报告在 tag `results-methods-v1`；各方法的代码版本由 tag `method-<方法>-v1` 固定。主线分支 main 为方法 RCUT（与分支 method-RCUT 同源）；方法 RB 的主线实现在分支 method-RB。
@@ -214,6 +248,13 @@ SP 固定 x,p 后最小化非负 `eta`（求解器名 violation），只允许�
 | `STEP_TRAIL / STEP_LOG / FIT_SHRINK` | 6 / 8 / 0.6；主图保留的步骤数、步骤栏行数、主图收紧坐标的比例 |
 
 单次 MP/SP 的时限仍用 MP_TIME_LIMIT/SP_TIME_LIMIT，扫描单点 60 秒；AC_ITERATIONS 为 AC 见证的迭代次数。不得合并不同语义的容差。数值配置变化须同步本表和结果协议。
+
+## 显式迁移（2026-10-03：勘察算例 Case33-S）
+
+- 网架：新增 `Case33S`（Case33Plan 的子类），Case33 与 Case33Plan 不变。
+- 结果：`build_partition` 增加 `build_partition:schemes`（结果中出现过的网架），`build_region:partitions` 与录制随之带此键；旧录制没有该键。
+- 设置：`main.run` 的 settings 构造抽出为 `region_settings`，数值不变，survey.py 共用。
+- 新增 survey.py（勘察层）与 plot.py 的四张勘察图 `draw_survey_layout / draw_survey_valuation / draw_survey_storyboard / draw_survey_policy`。
 
 ## 显式迁移（2026-10-02：锥 MISOCP 改为行生成）
 
@@ -282,6 +323,8 @@ SP 固定 x,p 后最小化非负 `eta`（求解器名 violation），只允许�
 - [CURRENT_LIMIT](../Network/case33bw.py)、[Case33](../Network/case33bw.py)、[Case33.__init__.current_limit](../Network/case33bw.py)、[Case33.switch_budget](../Network/case33bw.py)
 - [LOAD_NODES](../Network/case33bw.py)、[Case33Plan](../Network/case33bw.py)、[Case33Plan.switches](../Network/case33bw.py)、[Case33Plan.candidates](../Network/case33bw.py)
 - [Case33Plan.plan_budget](../Network/case33bw.py)、[_Case33bw](../Network/case33bw.py)、[_Case33bw._build](../Network/case33bw.py)、[_Case33bw._build.price](../Network/case33bw.py)
+- [Case33S](../Network/case33bw.py)、[Case33S.current_limit](../Network/case33bw.py)、[Case33S.status_quo](../Network/case33bw.py)、[Case33S.roads](../Network/case33bw.py)
+- [Case33S.__init__.available](../Network/case33bw.py)
 
 ### vertify.py
 
@@ -375,6 +418,7 @@ SP 固定 x,p 后最小化非负 `eta`（求解器名 violation），只允许�
 - [run.budget](../main.py)、[run.force_rescan](../main.py)、[run.scan_output](../main.py)、[run.workers](../main.py)
 - [run.threads](../main.py)、[run.settings](../main.py)、[CASES](../main.py)、[convergence_figure](../main.py)
 - [convergence_figure.recordings](../main.py)
+- [region_settings](../main.py)、[region_settings.d](../main.py)、[region_settings.tau](../main.py)、[region_settings.threads](../main.py)
 
 ### region.py
 
@@ -410,12 +454,16 @@ SP 固定 x,p 后最小化非负 `eta`（求解器名 violation），只允许�
 - [build_partition:inner](../region.py)、[build_partition:outer](../region.py)、[_partition](../region.py)、[build_region](../region.py)
 - [build_region.workers](../region.py)、[build_region.seconds](../region.py)、[build_region.settings](../region.py)、[build_region:axis_lower](../region.py)
 - [build_region:axis_bounds](../region.py)、[build_region:partitions](../region.py)
+- [build_partition:schemes](../region.py)
 
 ### plot.py
 
 - [STEP_STYLE](../plot.py)、[cut_segment](../plot.py)、[cut_segment.axis_lower](../plot.py)、[cut_polygon](../plot.py)
 - [cut_polygon.axis_lower](../plot.py)、[hull_geometry](../plot.py)、[draw_3d](../plot.py)、[voxel_faces](../plot.py)
 - [cap](../plot.py)、[draw_geometry](../plot.py)、[SERIES](../plot.py)、[draw_convergence](../plot.py)
+- [CATEGORY](../plot.py)、[BLUES](../plot.py)、[INK](../plot.py)、[MUTED](../plot.py)
+- [BASELINE](../plot.py)、[NEUTRAL](../plot.py)、[CASE33_LAYOUT](../plot.py)、[draw_survey_layout](../plot.py)
+- [draw_survey_valuation](../plot.py)、[draw_survey_storyboard](../plot.py)、[draw_survey_policy](../plot.py)
 
 ### Network/four_bus_five_corridor.py
 
@@ -425,3 +473,43 @@ SP 固定 x,p 后最小化非负 `eta`（求解器名 violation），只允许�
 ### tests/planning_checks.py
 
 - [margin](../tests/planning_checks.py)、[recorded_monitor](../tests/planning_checks.py)
+
+### survey.py
+
+- [OUTPUT](../survey.py)、[ROADS](../survey.py)、[COST](../survey.py)、[FULL](../survey.py)
+- [SUBSETS](../survey.py)、[STATES](../survey.py)、[SIGN](../survey.py)、[PRIOR](../survey.py)
+- [RHO](../survey.py)、[FALLBACK](../survey.py)、[GRID_Q0](../survey.py)、[GRID_RHO](../survey.py)
+- [PRIOR_WEIGHT](../survey.py)、[EXAMPLE_TRUTH](../survey.py)、[FAMILY_SECONDS](../survey.py)、[WORKERS](../survey.py)
+- [SPOT_RAYS](../survey.py)、[SPOT_FAMILIES](../survey.py)、[RASTER](../survey.py)、[TIE](../survey.py)
+- [POLICIES](../survey.py)、[LEVELS](../survey.py)、[members](../survey.py)、[subset](../survey.py)
+- [label](../survey.py)、[cost](../survey.py)、[family](../survey.py)、[built](../survey.py)
+- [run_family](../survey.py)、[run_family:roads](../survey.py)、[run_family:budget](../survey.py)、[run_family:status](../survey.py)
+- [run_family:gap](../survey.py)、[run_family:seconds](../survey.py)、[run_family:cones](../survey.py)、[run_family:networks](../survey.py)
+- [run_family:inner](../survey.py)、[compute_families](../survey.py)、[load_families](../survey.py)、[coverage](../survey.py)
+- [value](../survey.py)、[Survey](../survey.py)、[Survey.__init__.prior](../survey.py)、[Survey.__init__.rho](../survey.py)
+- [Survey.phi](../survey.py)、[Survey.kappa](../survey.py)、[Survey.networks](../survey.py)、[Survey.prior](../survey.py)
+- [Survey.survey](../survey.py)、[Survey.weights](../survey.py)、[Survey.J](../survey.py)、[Survey.best](../survey.py)
+- [Survey.order](../survey.py)、[Survey.q](../survey.py)、[Survey.bundles](../survey.py)、[Survey.bundles:roads](../survey.py)
+- [Survey.bundles:delta](../survey.py)、[Survey.bundles:Q](../survey.py)、[Survey.bundles:C](../survey.py)、[Survey.bundles:sigma](../survey.py)
+- [Survey.certified](../survey.py)、[Survey.bundle](../survey.py)、[Survey.ratio](../survey.py)、[Survey.optimal](../survey.py)
+- [Survey.evaluate](../survey.py)、[Survey.evaluate.policy](../survey.py)、[Survey.metrics](../survey.py)、[Survey.metrics:expected_cost](../survey.py)
+- [Survey.metrics:gap](../survey.py)、[Survey.metrics:gain](../survey.py)、[Survey.metrics:capture](../survey.py)、[Survey.metrics:surveys](../survey.py)
+- [Survey.metrics:survey_cost](../survey.py)、[Survey.metrics:coverage_gain](../survey.py)、[Survey.metrics:dp_agreement](../survey.py)、[Survey.comparison](../survey.py)
+- [valuation](../survey.py)、[valuation:road](../survey.py)、[valuation:c_c](../survey.py)、[valuation:c_sur](../survey.py)
+- [valuation:standalone](../survey.py)、[valuation:leave_one_out](../survey.py)、[valuation:shapley](../survey.py)、[valuation:ratio_rank](../survey.py)
+- [valuation:best_bundle](../survey.py)、[valuation:best_sigma](../survey.py)、[trajectory](../survey.py)、[trajectory:A](../survey.py)
+- [trajectory:B](../survey.py)、[trajectory:bundles](../survey.py)、[trajectory:action](../survey.py)、[trajectory:available](../survey.py)
+- [trajectory:kappa](../survey.py)、[trajectory:kappa_optimistic](../survey.py)、[trajectory:lower](../survey.py)、[trajectory:upper](../survey.py)
+- [trajectory:spent](../survey.py)、[sensitivity](../survey.py)、[network_region](../survey.py)、[spot_check](../survey.py)
+- [spot_check:family](../survey.py)、[spot_check:budget](../survey.py)、[spot_check:networks](../survey.py)、[spot_check:rcut_area](../survey.py)
+- [spot_check:union_area](../survey.py)、[spot_check:relative_error](../survey.py)、[cost_map](../survey.py)、[write_table](../survey.py)
+- [bundle_text](../survey.py)、[main](../survey.py)、[main.rerun](../survey.py)、[main:case](../survey.py)
+- [main:ports](../survey.py)、[main:partition](../survey.py)、[main:current_limit_a](../survey.py)、[main:voltage_pu](../survey.py)
+- [main:port_pf](../survey.py)、[main:radial_networks](../survey.py)、[main:status_quo_kw](../survey.py)、[main:prior](../survey.py)
+- [main:rho](../survey.py)、[main:fallback](../survey.py)、[main:levels](../survey.py)、[main:box_kw](../survey.py)
+- [main:families](../survey.py)、[main:area_kw2](../survey.py)、[main:phi](../survey.py)、[main:J0](../survey.py)
+- [main:vpi](../survey.py)、[main:policies](../survey.py)、[main:sensitivity](../survey.py)、[main:q0](../survey.py)
+- [main:bundle_gap](../survey.py)、[main:ratio_gap](../survey.py)、[main:spot_check](../survey.py)、[main:example](../survey.py)
+- [main:step](../survey.py)、[main:surveyed](../survey.py)、[main:result](../survey.py)、[main:kappa_confirmed](../survey.py)
+- [main:kappa_optimistic](../survey.py)、[main:phi_lower](../survey.py)、[main:phi_upper](../survey.py)、[main:cumulative_survey_cost](../survey.py)
+- [main:policy](../survey.py)

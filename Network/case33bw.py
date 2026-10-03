@@ -1,8 +1,9 @@
-"""MATPOWER case33bw 的两个算例，原始线路参数不升级，保持全网径向连通。
+"""MATPOWER case33bw 的算例，原始线路参数不升级，保持全网径向连通。
 
 Case33：限定七条开关，预算为相对原始状态的开合次数。
 Case33Plan：扩展规划，S1–S5 为可开断的既有线路（基态闭合、开断不计费），C1–C5 为基态不建的候选走廊
 （即原五条联络线，阻抗不变），预算为所建候选的相对建设费之和。
+Case33S：勘察算例，网架与费用同 Case33Plan，全部线路 250 A，按信息状态屏蔽不可用的候选路。
 """
 from pathlib import Path
 import re
@@ -84,6 +85,21 @@ class Case33Plan(_Case33bw):
         prices = {**{frozenset(edge): 0 for edge in self.switches},
                   **{frozenset(edge): cost for edge, cost in self.candidates.items()}}
         self._build('case33bw_plan', load_nodes, current_limit, lambda a, b, active: prices.get(frozenset((a, b))))
+
+
+class Case33S(Case33Plan):
+    """勘察算例 Case33-S：网架与费用同 Case33Plan（C1–C5 为候选路，1 单位为 C4 造价），全部线路 250 A，电压 0.9–1.1 p.u.
+    （原数据）。available 为可用候选路的序号（信息状态下的道路掩码），其余候选路的 road_allowed 为 False。"""
+    current_limit = 250.        # A，全部线路
+    status_quo = (90., 420.)    # 现状点 z^0（kW）：端口 18、25 的原负荷
+
+    def __init__(self, load_nodes=LOAD_NODES, *, available=range(5)):
+        super().__init__(load_nodes, current_limit=self.current_limit)
+        self.name = 'case33bw_s'
+        ids = {frozenset(c.endpoints): c.id for c in self.corridors}
+        self.roads = tuple(ids[frozenset(edge)] for edge in self.candidates)   # C1–C5 的走廊 ID
+        self.road_allowed = np.array([c.id not in self.roads or self.roads.index(c.id) in available
+                                      for c in self.corridors])
 
 
 network = Case33()

@@ -23,6 +23,9 @@ tmp/
 # Only the selected official archive is versioned (retired archives live in tags mainline-sequential-v1 / results-methods-v1).
 results/**
 !results/manifest.json
+!results/survey/
+!results/survey/case33/
+!results/survey/case33/*
 !results/mainline/
 !results/mainline/mode_1/
 !results/mainline/mode_1/case33_18_25.json.gz

@@ -860,7 +860,8 @@ def build_partition(network, sign, budget, monitor, settings):
                   how='radial' if radial.volume_ratio() <= epsilon else 'cut', seconds=monitor.clock()-start,
                   gap=gap if np.isfinite(gap) else None, volume_ratio=radial.volume_ratio(),
                   cones=len(radial.cones), networks=len(statuses), accepted=sum(s in CUT_ACCEPTED for s in statuses),
-                  cuts=cutting.count, inner=[r*radial.bounds for r in rows['inner']],
+                  cuts=cutting.count, schemes=list(dict.fromkeys([*radial.schemes(), *cutting.networks])),
+                  inner=[r*radial.bounds for r in rows['inner']],
                   outer=[r*radial.bounds for r in rows['outer']])
     monitor._emit('partition_end', phase='分区完成' if result['certified'] else '分区停止', status=status,
                   active_scheme=None, step=dict(kind='end', gap=result['gap'], text=f"分区结束：{status}，{result['cones']} 个锥、"

@@ -32,6 +32,7 @@ N^CUT_x 是网架可行域的外近似，所以 RCUT 的结果内域 **I** 是�
 | FourBus | 1、2 | 1、2、3 | 20000 元 |
 | Case33 | 18、25 | 18、25、30 | 7 次开合 |
 | Case33Plan | 18、25 | 18、25、30 | 相对建设费 14（全部候选可建） |
+| Case33-S（勘察） | 18、25，只算 ++ | — | 可用候选路 × 相对建设费 0–14 |
 
 正功率为负荷（PF=0.95），负功率为光伏（PF=1）。Case33 保持原线路参数与背景负荷，仅七条开关可变。Case33Plan 是扩展规划算例：S1–S5（7-8、11-12、14-15、28-29、32-33）为可开断的既有线路，基态闭合、开断不计费；C1–C5（原联络线 8-21、9-15、12-22、18-33、25-29，阻抗不变）为基态不建的候选，相对建设费 4、4、4、1、1，共 87 个径向方案。主入口、AC 与 SOCP 校验共用 `Network/case33bw.py` 的 `CURRENT_LIMIT=200` A。
 
@@ -41,6 +42,15 @@ python -X utf8 main.py --case case33 --dimension 3 --output results/mainline/new
 python -X utf8 main.py --case case33plan --dimension 3 --seconds 1000 --output results/plan/run_1
 python -X utf8 main.py --convergence results/mainline/mode_1/case33plan_18_25_30.json.gz results/plan/run_1/mode_1/case33plan_18_25_30.json.gz
 ```
+
+勘察（Case33-S，网架同 Case33Plan，全部线路 250 A）：`survey.py` 以 RCUT 可行域族为价值函数做走廊估值与勘察决策。32 个确认可用集 A × 12 档预算去重为 101 个族，各跑一次 ++ 分区的二维 RCUT；覆盖率 κ(A,b) 给出 Φ(A)，再求 DP 最优勘察成本 J(s0)，比较束指标（本文）、单路比值、不勘察与全知，期望对 2^5 种可用性真值精确求和（Beta(3,2) 共享先验，勘察费为建设费的 10%）。输出在 `results/survey/case33/`（summary.json、table1–3.csv、四张图的 pdf 与 png、族表 families.json），记号见 docs/notation.md 的“勘察（Case33-S）”。
+
+```cmd
+python -X utf8 survey.py
+python -X utf8 survey.py --rerun
+```
+
+`survey.py` 复用 families.json，`--rerun` 重算全部族（16 进程，约 2 分钟）。
 
 构域默认共享 300 秒总时限（`main.py` 的 `CASE_TIME_LIMIT`，`--seconds` 可改），`WORKERS=16` 个分区进程并行；事后扫描另计时。`--no-ui` 不开实时窗口，`--no-scan` 只构域。扫描格数默认二维 160×160、三维 80³（`--divisions`）。记录写入 `<输出目录>/mode_1/<案例>_<节点>.json.gz`，逐格对比写入旁边的 `_comparison/`。`--convergence` 把同一算例多次运行的收敛过程（各分区夹逼间隙、内域相对 AC 的 MR/FR 随时间）画成一张图，存于各运行目录的公共上级。
 
@@ -115,7 +125,8 @@ python -X utf8 vertify.py results/mainline/mode_1/case33_18_25.json.gz --workers
 | `monitor.py` | 过程记录与原生窗口（实时 / 回放） |
 | `plot.py` | 绘图基元：配色、二维几何、三维凸域、远端面片、体素表面、割的截线 |
 | `vertify.py` | 独立 AC/SOCP 参考、缓存、结果比较 |
-| `Network/` | FourBus、Case33、Case33Plan 与原始数据 |
+| `survey.py` | Case33-S 的走廊估值与勘察：可行域族、κ 与 Φ、DP、策略与指标、逐网架抽查 |
+| `Network/` | FourBus、Case33、Case33Plan、Case33S 与原始数据 |
 | `tests/` | 物理、构域、扫描与回放回归 |
 
 ```cmd

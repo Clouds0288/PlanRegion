@@ -51,17 +51,21 @@ def recording_path(case, output=OUTPUT, load_nodes=None, dimension=DIMENSION, mo
     return Path(output)/f"mode_{mode}"/f"{case}_{'_'.join(map(str, nodes))}.json.gz"
 
 
+def region_settings(d, *, tau=REGION_TAU, threads=SOLVER_THREADS):
+    """d 维 RCUT 构域设置（build_region / build_partition 的 settings）。"""
+    return SimpleNamespace(threads=threads, tau=tau, discovery_eps=DISCOVERY_EPS, discovery_share=DISCOVERY_SHARE,
+                           mip_seconds=MIP_SECONDS, mip_gap=MIP_GAP, min_width=MIN_WIDTH[d],
+                           max_cones=MAX_CONES[d], threshold=CUT_THRESHOLD, patience=CUT_PATIENCE,
+                           point_tol=POINT_TOL)
+
+
 def run(network, *, budget=BUDGET, divisions=DIVISIONS, show_ui=SHOW_UI, output=None,
         tau=REGION_TAU, time_limit=CASE_TIME_LIMIT, workers=WORKERS, threads=SOLVER_THREADS,
         scan=True, reference=None, scan_workers=SCAN_WORKERS,
         force_rescan=FORCE_RESCAN, scan_output=SCAN_OUTPUT):
     monitor = RunMonitor(output=output, algorithm='RCUT · 径向夹逼 + 割平面')
     ac = ac_network(network)
-    d = len(network.load_nodes)
-    settings = SimpleNamespace(threads=threads, tau=tau, discovery_eps=DISCOVERY_EPS, discovery_share=DISCOVERY_SHARE,
-                               mip_seconds=MIP_SECONDS, mip_gap=MIP_GAP, min_width=MIN_WIDTH[d],
-                               max_cones=MAX_CONES[d], threshold=CUT_THRESHOLD, patience=CUT_PATIENCE,
-                               point_tol=POINT_TOL)
+    settings = region_settings(len(network.load_nodes), tau=tau, threads=threads)
 
     def calculate():
         # 1. 符号分区并行构域，保存过程回放
